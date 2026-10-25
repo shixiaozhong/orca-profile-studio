@@ -85,11 +85,7 @@ fn build_rows(catalog: &Catalog, edits: &Edits, left: usize, right: usize) -> Ve
                         repo.preset(link).name().to_owned(),
                     ),
                 };
-                let mut value = display_value(layer.value);
-                if !unit.is_empty() {
-                    value.push(' ');
-                    value.push_str(unit);
-                }
+                let value = crate::details::with_unit(display_value(layer.value), layer.value, unit);
                 Layer { source, value }
             })
             .collect()
@@ -393,6 +389,7 @@ impl CompareView {
             .test_support()
             .aria_label(row.key.clone())
             .h_56()
+            .max_h(relative(0.4))
             .flex_shrink_0()
             .overflow_y_scroll()
             .p_3()
@@ -453,7 +450,7 @@ impl Render for CompareView {
             ))
             .child(div().id("compare-count").test_support().aria_label(count.clone()).text_sm().child(count));
         const NOTE: &str = concat!(
-            "Read-only · Includes unsaved changes. Reload to update inherited values. ",
+            "Read-only · Includes unsaved changes. Saving refreshes inherited values. ",
             "String/array differences are included."
         );
         let left_title = self.side_title("Left", self.left, cx);

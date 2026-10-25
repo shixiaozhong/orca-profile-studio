@@ -137,6 +137,14 @@ from the package directory).
   the whole snapshot replacement; the window retains its old data until retry or explicit discard
   of the conflicting sessions. Keep `load_generation` and `save_revision` checks when changing this
   flow, and migrate the latest state at completion so edits made during loading survive.
+- Save previews and destructive confirmations use `Root`'s `AlertDialog`: Enter commits and
+  Escape cancels. Global errors use `feedback::error`, deferred until window updates finish,
+  with stable notification IDs and a visible Dismiss action. Settings writes retry unchanged
+  values after failures. Startup without a window falls back to a system notification and stderr.
+- `lifecycle` handles application-menu/Command-Q quit across all windows; native close and
+  Command-W check one window. Both include unapplied editor text. Quit rechecks the window/file
+  scope before discarding because another window may gain edits while confirmation is open.
+  GPUI's non-cancellable system shutdown callback cannot protect direct OS termination.
 - Saving writes into the profiles directory, i.e. the OrcaSlicer checkout. UI tests that save use a
   temporary fixture (`editable_fixture` in `app.rs`), never the real profiles.
 - App preferences live in the `SettingsStore` global (`settings.rs`), saved on every change to
@@ -145,7 +153,7 @@ from the package directory).
   never touch the user's file. Resizable splits keep an `Entity<ResizableState>`; its `Resized`
   event (also emitted by `resize_panel`) is where sizes are saved.
 - Shortcuts only dispatch when something is focused: `StudioApp` focuses its root `FocusHandle` at
-  creation and takes it back through `cx.on_focus_lost` when the focused element goes away. Never
+  creation; `cx.on_focus_lost` restores the nearest surviving focus ancestor, falling back to the root. Never
   request focus from `render`.
 - Modal surfaces go through `Root`: the palette is `window.open_dialog(...)`, which traps focus,
   handles Escape and restores focus on close. The dialog builder may rerun; it only reads state.
@@ -170,7 +178,7 @@ from the package directory).
 
 [docs/roadmap.md](docs/roadmap.md) (Chinese) is the roadmap: stages and status, key design decisions
 of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
-M1–M8; next: M9–M13 (Design Guides review, batch edit, new/copy/rename
+M1–M8; M9 review/fixes are implemented and awaiting user validation in a real window. Next: M10–M13 (batch edit, new/copy/rename
 presets, Chinese UI, Git diff); the G-code viewer and OrcaSlicer sync automation are deferred. When a stage is finished, move it to "已完成" there with its design
 decisions and commit, and update the status line in README.
 

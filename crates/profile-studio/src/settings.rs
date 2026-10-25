@@ -46,14 +46,12 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// Reads `path`; a missing or invalid file gives the defaults.
-    pub fn load(path: &Path) -> Settings {
+    /// A missing file is normal on first launch; other failures are reported by the caller.
+    pub fn load(path: &Path) -> io::Result<Settings> {
         match fs::read_to_string(path) {
-            Ok(text) => serde_json::from_str(&text).unwrap_or_else(|err| {
-                eprintln!("ignoring {}: {err}", path.display());
-                Settings::default()
-            }),
-            Err(_) => Settings::default(),
+            Ok(text) => serde_json::from_str(&text).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err)),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(Settings::default()),
+            Err(err) => Err(err),
         }
     }
 
@@ -86,14 +84,28 @@ pub fn default_path() -> Option<PathBuf> {
 pub struct SettingsStore {
     path: Option<PathBuf>,
     settings: Settings,
+    load_error: Option<String>,
+    save_failed: bool,
 }
 
 impl Global for SettingsStore {}
 
 pub fn init(path: Option<PathBuf>, cx: &mut App) {
-    let settings = path.as_deref().map(Settings::load).unwrap_or_default();
-    cx.set_global(SettingsStore { path, settings });
+    let (settings, load_error) = match path.as_deref().map(Settings::load).transpose() {
+        Ok(settings) => (settings.unwrap_or_default(), None),
+        Err(err) => {
+            (Settings::default(), Some(format!("{}: {err}. Using default settings.", path.as_ref().unwrap().display())))
+        }
+    };
+    cx.set_global(SettingsStore { path, settings, load_error, save_failed: false });
     apply_theme(None, cx);
+}
+
+/// Called while creating the first view, so feedback is delivered after its Root exists.
+pub fn report_load_error(cx: &mut App) {
+    if let Some(message) = cx.global_mut::<SettingsStore>().load_error.take() {
+        crate::feedback::error("settings-load", "Could not read settings", message, cx);
+    }
 }
 
 pub fn get(cx: &App) -> &Settings {
@@ -105,13 +117,26 @@ pub fn update(cx: &mut App, change: impl FnOnce(&mut Settings)) {
     let store = cx.global_mut::<SettingsStore>();
     let before = store.settings.clone();
     change(&mut store.settings);
-    if store.settings == before {
+    if store.settings == before && !store.save_failed {
         return;
     }
-    if let Some(path) = &store.path
-        && let Err(err) = store.settings.save(path)
-    {
-        eprintln!("cannot save settings to {}: {err}", path.display());
+    let Some(path) = &store.path else { return };
+    match store.settings.save(path) {
+        Ok(()) => {
+            let recovered = store.save_failed;
+            store.save_failed = false;
+            if recovered {
+                crate::feedback::clear("settings-save", cx);
+            }
+        }
+        Err(err) => {
+            let message = format!(
+                "{}: {err}. Changes apply to this session. Check the folder's permissions and retry the setting.",
+                path.display()
+            );
+            store.save_failed = true;
+            crate::feedback::error("settings-save", "Could not save settings", message, cx);
+        }
     }
 }
 
@@ -137,7 +162,7 @@ mod tests {
     fn round_trips_and_tolerates_bad_files() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nested/settings.json");
-        assert_eq!(Settings::load(&path), Settings::default(), "a missing file gives defaults");
+        assert_eq!(Settings::load(&path).unwrap(), Settings::default(), "a missing file gives defaults");
 
         let settings = Settings {
             theme: ThemePreference::Dark,
@@ -148,12 +173,12 @@ mod tests {
             window_size: Some((1000., 700.)),
         };
         settings.save(&path).unwrap();
-        assert_eq!(Settings::load(&path), settings);
+        assert_eq!(Settings::load(&path).unwrap(), settings);
 
         std::fs::write(&path, "{ not json").unwrap();
-        assert_eq!(Settings::load(&path), Settings::default());
+        assert!(Settings::load(&path).is_err());
         // Unknown and missing fields are fine: files from other versions still load.
         std::fs::write(&path, r#"{ "theme": "light", "future": 1 }"#).unwrap();
-        assert_eq!(Settings::load(&path).theme, ThemePreference::Light);
+        assert_eq!(Settings::load(&path).unwrap().theme, ThemePreference::Light);
     }
 }

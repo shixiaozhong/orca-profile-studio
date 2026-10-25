@@ -336,6 +336,8 @@ impl Render for IssuesView {
         let count = SharedString::from(format!("{shown} of {total}"));
         let toolbar = h_flex()
             .gap_2()
+            .flex_wrap()
+            .flex_shrink_0()
             .items_center()
             .child(div().text_sm().font_semibold().child("Issues"))
             .child(
@@ -347,9 +349,35 @@ impl Render for IssuesView {
                     .text_color(muted)
                     .child(count),
             )
-            .child(Select::new(&self.severity).id("issues-severity").small().w_48())
-            .child(Select::new(&self.code).id("issues-code").small().w_64().menu_width(rems(24.)))
-            .child(Select::new(&self.vendor).id("issues-vendor").small().w_48().menu_width(rems(18.)))
+            .child(
+                div().w_48().h_8().flex_shrink_0().child(
+                    Select::new(&self.severity)
+                        .id("issues-severity")
+                        .accessibility_label("Minimum severity")
+                        .small()
+                        .w_full(),
+                ),
+            )
+            .child(
+                div().w_64().h_8().flex_shrink_0().child(
+                    Select::new(&self.code)
+                        .id("issues-code")
+                        .accessibility_label("Issue code")
+                        .small()
+                        .w_full()
+                        .menu_width(rems(24.)),
+                ),
+            )
+            .child(
+                div().w_48().h_8().flex_shrink_0().child(
+                    Select::new(&self.vendor)
+                        .id("issues-vendor")
+                        .accessibility_label("Vendor")
+                        .small()
+                        .w_full()
+                        .menu_width(rems(18.)),
+                ),
+            )
             .child(
                 Input::new(&self.search)
                     .id("issues-search")
@@ -363,6 +391,7 @@ impl Render for IssuesView {
             .child(
                 Button::new("close-issues")
                     .small()
+                    .accessibility_label("Close issues")
                     .ghost()
                     .icon(IconName::X)
                     .tooltip("Close issues")

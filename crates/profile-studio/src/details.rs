@@ -248,10 +248,11 @@ pub fn render_preset(catalog: &Catalog, index: usize, compatibility: Option<&Com
         let value = resolved.get(key).map_or_else(
             || "—".to_owned(),
             |resolved| {
-                let mut text = format_value(resolved.value);
-                if let Some(unit) = option.map(|option| option.sidetext.as_str()).filter(|unit| !unit.is_empty()) {
-                    text = format!("{text} {unit}");
-                }
+                let mut text = with_unit(
+                    format_value(resolved.value),
+                    resolved.value,
+                    option.map_or("", |option| option.sidetext.as_str()),
+                );
                 if resolved.origin == Origin::Default {
                     text.push_str("  (default)");
                 }
@@ -272,7 +273,11 @@ pub fn render_preset(catalog: &Catalog, index: usize, compatibility: Option<&Com
             .items_start()
             .text_sm()
             .child(Icon::new(IconName::TriangleAlert).small().text_color(color))
-            .child(div().w_48().flex_shrink_0().text_color(muted).child(issue.kind.code()))
+            .child(div().w_48().flex_shrink_0().text_color(muted).child(format!(
+                "{} · {}",
+                issue.severity(),
+                issue.kind.code()
+            )))
             .child(div().flex_1().min_w_0().child(issue.kind.to_string()))
     }));
 
@@ -322,9 +327,10 @@ fn header(icon: IconName, title: impl Into<SharedString>, subtitle: impl Into<Sh
 }
 
 fn section(title: &str, cx: &App) -> Div {
-    v_flex().gap_1().pt_4().child(
-        div().pb_1().text_xs().font_semibold().text_color(cx.theme().muted_foreground).child(title.to_uppercase()),
-    )
+    v_flex()
+        .gap_1()
+        .pt_4()
+        .child(div().pb_1().text_xs().font_semibold().text_color(cx.theme().muted_foreground).child(title.to_owned()))
 }
 
 fn field(label: &str, value: impl Into<SharedString>, cx: &App) -> Div {
@@ -360,5 +366,33 @@ pub fn format_value(value: &RawValue) -> String {
     match value {
         RawValue::Str(text) => text.clone(),
         RawValue::List(items) => items.join(", "),
+    }
+}
+
+/// Percent values already carry their unit; preserve that spelling without adding a second `%`.
+pub fn with_unit(text: String, value: &RawValue, unit: &str) -> String {
+    let has_percent = |value: &str| value.trim_end().ends_with('%');
+    let percent_encoded = unit == "%"
+        && match value {
+            RawValue::Str(value) => has_percent(value),
+            RawValue::List(values) => !values.is_empty() && values.iter().all(|value| has_percent(value)),
+        };
+    if unit.is_empty() || percent_encoded { text } else { format!("{text} {unit}") }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_value, with_unit};
+    use profile_core::RawValue;
+
+    #[test]
+    fn units_preserve_encoded_percentages_and_array_shape() {
+        let percent = RawValue::Str("15%".into());
+        assert_eq!(with_unit(format_value(&percent), &percent, "%"), "15%");
+        let list = RawValue::List(vec!["10%".into(), "20%".into()]);
+        assert_eq!(with_unit("[\"10%\",\"20%\"]".into(), &list, "%"), "[\"10%\",\"20%\"]");
+        let temperature = RawValue::Str("210".into());
+        assert_eq!(with_unit(format_value(&temperature), &temperature, "℃"), "210 ℃");
+        assert_eq!(with_unit("15".into(), &RawValue::Str("15".into()), "%"), "15 %");
     }
 }

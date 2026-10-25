@@ -3,7 +3,9 @@ mod catalog;
 mod compare;
 mod details;
 mod edits;
+mod feedback;
 mod issues;
+mod lifecycle;
 mod palette;
 mod settings;
 mod tree;
@@ -13,8 +15,6 @@ use std::path::{Path, PathBuf};
 
 use gpui_kit::*;
 
-actions!(profile_studio, [Quit]);
-
 fn main() {
     gpui_kit::application().with_assets(gpui_kit::assets::AllAssets).run(move |cx| {
         gpui_kit::init(cx);
@@ -22,15 +22,20 @@ fn main() {
         values::init(cx);
         app::init(cx);
         // Keys are bound before the menus are built, so the menus show the shortcuts.
-        cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
-        cx.on_action(|_: &Quit, cx| cx.quit());
         cx.set_menus([
             Menu {
                 name: "Orca Profile Studio".into(),
-                items: vec![MenuItem::action("Quit Orca Profile Studio", Quit)],
+                items: vec![MenuItem::action("Quit Orca Profile Studio", lifecycle::Quit)],
                 disabled: false,
             },
-            Menu { name: "File".into(), items: vec![MenuItem::action("New Window", app::NewWindow)], disabled: false },
+            Menu {
+                name: "File".into(),
+                items: vec![
+                    MenuItem::action("New Window…", app::NewWindow),
+                    MenuItem::action("Close Window", lifecycle::CloseWindow),
+                ],
+                disabled: false,
+            },
         ]);
 
         let profiles_dir = initial_profiles_dir(settings::get(cx).profiles_dir.clone());

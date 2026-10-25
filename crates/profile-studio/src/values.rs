@@ -11,7 +11,7 @@ use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, Textar
 use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectState};
 use gpui_kit::component::table::{Column, ColumnSort, DataTable, TableDelegate, TableEvent, TableState};
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, IndexPath, Sizable as _, StyledExt as _, h_flex, v_flex,
+    ActiveTheme as _, Disableable as _, Icon, IndexPath, Sizable as _, StyledExt as _, WindowExt as _, h_flex, v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -19,7 +19,7 @@ use profile_core::{OptionType, Origin, RawValue, Severity};
 
 use crate::catalog::Catalog;
 use crate::compare::CompareView;
-use crate::details::{format_value, severity_color};
+use crate::details::{format_value, severity_color, with_unit};
 use crate::edits::{Edits, EditsEvent};
 
 actions!(values, [UndoEdit, RedoEdit, SaveEdits]);
@@ -163,10 +163,7 @@ pub fn build_rows(catalog: &Catalog, edits: &Edits, preset: usize) -> Vec<ValueR
                         }
                         Origin::Default => Source::Default,
                     };
-                    let mut value = format_value(layer.value);
-                    if !unit.is_empty() {
-                        value = format!("{value} {unit}");
-                    }
+                    let value = with_unit(format_value(layer.value), layer.value, unit);
                     Layer { source, value }
                 })
                 .collect();
@@ -435,8 +432,6 @@ pub struct ValuesView {
     /// Key of the selected row; survives filtering.
     selected: Option<String>,
     editor: Option<Editor>,
-    /// The save confirmation is shown instead of the detail panel.
-    confirming_save: bool,
     status: Option<(bool, String)>,
     focus: FocusHandle,
     comparison: Option<Entity<CompareView>>,
@@ -465,7 +460,6 @@ impl ValuesView {
             cx.subscribe_in(&table, window, |this, table, event: &TableEvent, window, cx| {
                 if let TableEvent::SelectRow(row_ix) = event {
                     this.selected = table.read(cx).delegate().row(*row_ix).map(|row| row.key.clone());
-                    this.confirming_save = false;
                     this.sync_editor(window, cx);
                     cx.notify();
                 }
@@ -485,7 +479,6 @@ impl ValuesView {
             filter: Filter::default(),
             selected: None,
             editor: None,
-            confirming_save: false,
             status: None,
             focus: cx.focus_handle(),
             comparison: None,
@@ -496,6 +489,16 @@ impl ValuesView {
 
     pub fn preset(&self) -> usize {
         self.preset
+    }
+
+    pub fn has_unapplied_input(&self, cx: &App) -> bool {
+        let Some(editor) = &self.editor else { return false };
+        let text = match &editor.control {
+            Control::Line(input) => input.read(cx).value(),
+            Control::Text(input) => input.read(cx).value(),
+            _ => return false,
+        };
+        text.as_ref() != editor_text(&editor.source)
     }
 
     /// Keep the retained controls (including unapplied text), filter, sort and selected key.
@@ -512,7 +515,6 @@ impl ValuesView {
     /// Filters the table to `key` and selects its row, e.g. after a global search.
     pub fn reveal_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.comparing = false;
-        self.confirming_save = false;
         // set_value does not emit a change event, so update the filter directly.
         self.search.update(cx, |search, cx| search.set_value(key.to_owned(), window, cx));
         self.filter.query = key.to_owned();
@@ -613,7 +615,6 @@ impl ValuesView {
             cx.notify();
             result
         });
-        self.confirming_save = false;
         self.status = Some(match error {
             None => (true, format!("Saved {} file(s).", paths.len())),
             Some((preset, err)) => (
@@ -764,6 +765,7 @@ impl ValuesView {
             .child(
                 Button::new("undo")
                     .small()
+                    .accessibility_label("Undo edit")
                     .icon(IconName::Undo2)
                     .tooltip("Undo (⌘Z)")
                     .disabled(!can_undo)
@@ -772,6 +774,7 @@ impl ValuesView {
             .child(
                 Button::new("redo")
                     .small()
+                    .accessibility_label("Redo edit")
                     .icon(IconName::Redo2)
                     .tooltip("Redo (⇧⌘Z)")
                     .disabled(!can_redo)
@@ -780,22 +783,18 @@ impl ValuesView {
             .child(
                 Button::new("save")
                     .small()
-                    .primary()
                     .icon(IconName::Save)
                     .label(if pending == 0 { "Save…".to_owned() } else { format!("Save {pending} change(s)…") })
                     .disabled(pending == 0)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.confirming_save = true;
-                        cx.notify();
-                    })),
+                    .on_click(cx.listener(|this, _, window, cx| this.confirm_save(window, cx))),
             )
     }
 
-    fn render_confirmation(&self, cx: &mut Context<Self>) -> Div {
+    fn render_confirmation(&self, cx: &App) -> Div {
         let muted = cx.theme().muted_foreground;
         let edits = self.edits.read(cx);
         let repo = &self.catalog.repo;
-        let mut panel = v_flex().gap_1().child(div().font_semibold().child("Save these changes to disk?"));
+        let mut panel = v_flex().gap_1();
         let dirty = edits.dirty();
         for &preset in &dirty {
             let info = &repo.presets()[preset];
@@ -816,22 +815,39 @@ impl ValuesView {
                 ))));
             }
         }
-        panel.child(
-            h_flex()
-                .pt_2()
-                .gap_2()
+        panel
+    }
+
+    fn confirm_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.edits.read(cx).dirty().is_empty() || window.has_active_dialog(cx) {
+            return;
+        }
+        let view = cx.entity();
+        window.open_alert_dialog(cx, move |dialog, _, cx| {
+            let content = view.read(cx).render_confirmation(cx);
+            let count = view.read(cx).edits.read(cx).dirty().len();
+            let view = view.clone();
+            dialog
+                .title("Save changes to disk?")
+                .width(px(640.))
+                .confirm()
+                .description("Only applied edits are included. Existing file formatting is preserved.")
                 .child(
-                    Button::new("confirm-save")
-                        .small()
-                        .primary()
-                        .label(format!("Save {} file(s)", dirty.len()))
-                        .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
+                    div()
+                        .id("save-preview")
+                        .test_support()
+                        .aria_label("Changes to save")
+                        .max_h(rems(24.))
+                        .overflow_y_scroll()
+                        .text_sm()
+                        .child(content),
                 )
-                .child(Button::new("cancel-save").small().label("Cancel").on_click(cx.listener(|this, _, _, cx| {
-                    this.confirming_save = false;
-                    cx.notify();
-                }))),
-        )
+                .ok_text(format!("Save {count} file(s)"))
+                .on_ok(move |_, _, cx| {
+                    view.update(cx, |view, cx| view.save(cx));
+                    true
+                })
+        });
     }
 
     /// The area below the table; its accessible label is the key it shows.
@@ -841,6 +857,7 @@ impl ValuesView {
             .test_support()
             .aria_label(label)
             .h_72()
+            .max_h(relative(0.5))
             .flex_shrink_0()
             .mt_2()
             .pt_2()
@@ -856,7 +873,7 @@ impl ValuesView {
         let muted = cx.theme().muted_foreground;
         let key = row.key.clone();
         let mut section =
-            v_flex().gap_1().pt_1().child(div().text_xs().font_semibold().text_color(muted).child("EDIT"));
+            v_flex().gap_1().pt_1().child(div().text_xs().font_semibold().text_color(muted).child("Edit"));
         let Some(own) = &row.own else {
             let effective = row.effective.clone();
             return section.child(
@@ -883,10 +900,22 @@ impl ValuesView {
                     }))
                     .into_any_element()
             }
-            Some(Control::Enum(state)) => Select::new(state).id("value-enum").w_80().into_any_element(),
+            Some(Control::Enum(state)) => Select::new(state)
+                .id("value-enum")
+                .accessibility_label(format!("Value for {}", row.key))
+                .w_80()
+                .max_w_full()
+                .into_any_element(),
             Some(Control::Line(state)) => h_flex()
                 .gap_2()
-                .child(Input::new(state).id("value-input").aria_label("Value").small().w_80())
+                .child(
+                    Input::new(state)
+                        .id("value-input")
+                        .aria_label(format!("Value for {}", row.key))
+                        .small()
+                        .w_80()
+                        .min_w_0(),
+                )
                 .child(
                     Button::new("apply")
                         .small()
@@ -896,7 +925,7 @@ impl ValuesView {
                 .into_any_element(),
             Some(Control::Text(state)) => v_flex()
                 .gap_1()
-                .child(Textarea::new(state).aria_label("Value").h(rems(7.)))
+                .child(Textarea::new(state).aria_label(format!("Value for {}", row.key)).h(rems(7.)))
                 .child(
                     h_flex()
                         .gap_2()
@@ -949,7 +978,7 @@ impl ValuesView {
             .when(!row.tooltip.is_empty(), |panel| panel.child(div().text_color(muted).child(row.tooltip.clone())))
             .child(div().text_xs().text_color(muted).child(row.definition.clone()))
             .child(self.render_editor(&row, cx))
-            .child(div().pt_1().text_xs().font_semibold().text_color(muted).child("LAYERS (NEAREST FIRST)"))
+            .child(div().pt_1().text_xs().font_semibold().text_color(muted).child("Layers (nearest first)"))
             .children(row.layers.iter().enumerate().map(|(ix, layer)| {
                 let source = layer.source.label();
                 h_flex()
@@ -963,13 +992,13 @@ impl ValuesView {
                     .child(div().flex_1().min_w_0().child(truncate_chars(&layer.value, 2000)))
             }))
             .when(!row.issues.is_empty(), |panel| {
-                panel.child(div().pt_1().text_xs().font_semibold().text_color(muted).child("ISSUES")).children(
+                panel.child(div().pt_1().text_xs().font_semibold().text_color(muted).child("Issues")).children(
                     row.issues.iter().map(|(severity, message)| {
                         let color = severity_color(*severity, cx).unwrap_or(muted);
                         h_flex()
                             .gap_2()
                             .child(Icon::new(IconName::TriangleAlert).small().text_color(color))
-                            .child(message.clone())
+                            .child(format!("{severity}: {message}"))
                     }),
                 )
             });
@@ -1010,27 +1039,38 @@ impl Render for ValuesView {
                 .text_color(color)
                 .child(message)
         });
-        let (label, content) = if self.confirming_save {
-            ("save-confirmation".into(), self.render_confirmation(cx))
-        } else {
-            self.render_detail(cx)
-        };
+        let (label, content) = self.render_detail(cx);
         let detail = self.panel(label, content, cx);
+        let empty = self.table.read(cx).delegate().visible.is_empty();
         v_flex()
             .key_context(CONTEXT)
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &UndoEdit, _, cx| this.undo(cx)))
             .on_action(cx.listener(|this, _: &RedoEdit, _, cx| this.redo(cx)))
-            .on_action(cx.listener(|this, _: &SaveEdits, _, cx| {
-                if !this.edits.read(cx).dirty().is_empty() {
-                    this.confirming_save = true;
-                    cx.notify();
-                }
-            }))
+            .on_action(cx.listener(|this, _: &SaveEdits, window, cx| this.confirm_save(window, cx)))
             .size_full()
             .child(self.render_toolbar(cx))
             .children(status)
-            .child(div().flex_1().min_h_0().child(DataTable::new(&self.table).stripe(true)))
+            .child(
+                div()
+                    .id("values-table")
+                    .test_support()
+                    .flex_1()
+                    .min_h_0()
+                    .when(!empty, |body| body.child(DataTable::new(&self.table).stripe(true)))
+                    .when(empty, |body| {
+                        body.child(
+                            div()
+                                .id("values-empty")
+                                .test_support()
+                                .aria_label("No keys match the filters")
+                                .p_3()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("No keys match the filters. Clear the search or turn off a source filter."),
+                        )
+                    }),
+            )
             .child(detail)
             .into_any_element()
     }

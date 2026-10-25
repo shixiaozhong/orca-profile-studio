@@ -55,9 +55,16 @@ struct PaletteEntries {
 }
 
 pub fn init(cx: &mut App) {
+    crate::lifecycle::init(cx);
+    cx.set_app_identity("org.orca-profile-studio.app", "Orca Profile Studio");
     cx.bind_keys([KeyBinding::new("cmd-k", OpenPalette, None), KeyBinding::new("cmd-n", NewWindow, None)]);
     // Each window loads the directory on its own; a new one opens the directory loaded last.
     cx.on_action(|_: &NewWindow, cx| open_window(settings::get(cx).profiles_dir.clone(), cx));
+}
+
+pub fn remember_window_size(window: &Window, cx: &mut App) {
+    let size = window.window_bounds().get_bounds().size;
+    settings::update(cx, |settings| settings.window_size = Some((size.width.into(), size.height.into())));
 }
 
 /// Opens a studio window, sized as the last window was when it closed.
@@ -66,13 +73,14 @@ pub fn open_window(profiles_dir: Option<PathBuf>, cx: &mut App) {
     let bounds = Bounds::centered(None, size(px(width), px(height)), cx);
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
+        window_min_size: Some(size(px(960.), px(720.))),
         titlebar: Some(TitlebarOptions { title: Some("Orca Profile Studio".into()), ..Default::default() }),
         ..Default::default()
     };
     if let Err(err) =
         gpui_kit::open_window(options, cx, |window, cx| cx.new(|cx| StudioApp::new(profiles_dir, window, cx)))
     {
-        eprintln!("cannot open a window: {err}");
+        crate::feedback::error("open-window", "Could not open a window", format!("{err}. Try New window again."), cx);
     }
 }
 
@@ -86,8 +94,6 @@ pub struct StudioApp {
     values: Option<Entity<ValuesView>>,
     /// Unsaved edits of the loaded profiles.
     edits: Option<Entity<Edits>>,
-    /// Open was asked for while edits are unsaved; the next click discards them.
-    confirm_discard: bool,
     /// The command palette's state; created when first opened, shown in a `Root` dialog.
     palette: Option<Entity<CommandState>>,
     /// The palette's groups and what each row targets, by section and row; rebuilt when the
@@ -115,6 +121,7 @@ pub struct StudioApp {
 
 impl StudioApp {
     pub fn new(profiles_dir: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        settings::report_load_error(cx);
         let tree = cx.new(|cx| TreeState::new(cx));
         let tree_observer = cx.observe_in(&tree, window, |this, tree, window, cx| {
             let selected = tree.read(cx).selected_item().and_then(|item| Node::parse(&item.id));
@@ -133,7 +140,9 @@ impl StudioApp {
         let focus = cx.focus_handle();
         focus.focus(window, cx);
         // When the focused element goes away (a closed view, a reload), shortcuts need a new home.
-        let focus_lost = cx.on_focus_lost(window, |this, window, cx| this.focus.focus(window, cx));
+        let focus_lost = cx.on_focus_lost(window, |this, window, cx| {
+            window.focus_lost_restore_target(cx).unwrap_or_else(|| this.focus.clone()).focus(window, cx);
+        });
         let browser_layout = cx.new(|_| ResizableState::default());
         let workspace_layout = cx.new(|_| ResizableState::default());
         let subscriptions = vec![
@@ -157,11 +166,16 @@ impl StudioApp {
                 }
             }),
         ];
-        window.on_window_should_close(cx, |window, cx| {
-            // The bounds to reopen the window with, the same kind `WindowOptions` takes.
-            let size = window.window_bounds().get_bounds().size;
-            settings::update(cx, |settings| settings.window_size = Some((size.width.into(), size.height.into())));
-            true
+        let app = cx.weak_entity();
+        window.on_window_should_close(cx, move |window, cx| {
+            let Some(app) = app.upgrade() else { return true };
+            if app.read(cx).unsaved_files(cx).is_empty() {
+                remember_window_size(window, cx);
+                true
+            } else {
+                app.update(cx, |app, cx| app.request_close(window, cx));
+                false
+            }
         });
         let mut app = StudioApp {
             profiles_dir: None,
@@ -171,7 +185,6 @@ impl StudioApp {
             preset_tab: PresetTab::Overview,
             values: None,
             edits: None,
-            confirm_discard: false,
             palette: None,
             palette_entries: PaletteEntries::default(),
             compatibility: None,
@@ -204,7 +217,6 @@ impl StudioApp {
         let generation = self.load_generation;
         let revision = self.edits.as_ref().map_or(0, |edits| edits.read(cx).save_revision());
         self.profiles_dir = Some(dir.clone());
-        self.confirm_discard = false;
         self.refresh_error = None;
         self.refresh_conflicts.clear();
         if !refreshing {
@@ -340,19 +352,8 @@ impl StudioApp {
         edits.update(cx, |_, cx| cx.notify());
     }
 
-    /// Whether unsaved edits may be dropped now; the first request only arms the confirmation.
-    fn may_discard(&mut self, cx: &mut Context<Self>) -> bool {
-        let dirty = self.edits.as_ref().is_some_and(|edits| !edits.read(cx).dirty().is_empty());
-        if dirty && !self.confirm_discard {
-            self.confirm_discard = true;
-            cx.notify();
-            return false;
-        }
-        true
-    }
-
     fn choose_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.may_discard(cx) {
+        if window.has_active_dialog(cx) {
             return;
         }
         let picked = cx.prompt_for_paths(PathPromptOptions {
@@ -361,14 +362,94 @@ impl StudioApp {
             multiple: false,
             prompt: Some("Open".into()),
         });
-        cx.spawn_in(window, async move |this, cx| {
-            if let Ok(Ok(Some(mut paths))) = picked.await
-                && let Some(dir) = paths.pop()
-            {
-                this.update_in(cx, |this, window, cx| this.load(dir, window, cx)).ok();
+        cx.spawn_in(window, async move |this, cx| match picked.await {
+            Ok(Ok(Some(mut paths))) => {
+                if let Some(dir) = paths.pop() {
+                    this.update_in(cx, |this, window, cx| this.request_open(dir, window, cx)).ok();
+                }
             }
+            Ok(Err(err)) => {
+                cx.update(|_, cx| {
+                    crate::feedback::error("open-folder", "Could not choose a folder", err.to_string(), cx)
+                })
+                .ok();
+            }
+            _ => {}
         })
         .detach();
+    }
+
+    fn request_open(&mut self, dir: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let dir = dir.canonicalize().or_else(|_| std::path::absolute(&dir)).unwrap_or(dir);
+        let dirty = self.unsaved_files(cx).len();
+        if dirty == 0 || self.profiles_dir.as_ref() == Some(&dir) {
+            self.load(dir, window, cx);
+            return;
+        }
+        let app = cx.entity();
+        window.open_alert_dialog(cx, move |dialog, _, _| {
+            let app = app.clone();
+            let dir = dir.clone();
+            dialog
+                .title("Discard edits and open another folder?")
+                .confirm()
+                .description(format!(
+                    "Opening {} will discard unsaved edits or unapplied input in {dirty} preset(s).",
+                    dir.display()
+                ))
+                .ok_text("Discard edits and open")
+                .ok_variant(ButtonVariant::Danger)
+                .on_ok(move |_, window, cx| {
+                    app.update(cx, |this, cx| this.load(dir.clone(), window, cx));
+                    true
+                })
+        });
+    }
+
+    pub fn unsaved_files(&self, cx: &App) -> Vec<PathBuf> {
+        let (LoadState::Ready(catalog), Some(edits)) = (&self.state, &self.edits) else { return Vec::new() };
+        let mut presets = edits.read(cx).dirty();
+        if let Some(values) = &self.values {
+            let values = values.read(cx);
+            if values.has_unapplied_input(cx) && !presets.contains(&values.preset()) {
+                presets.push(values.preset());
+            }
+        }
+        presets.sort_unstable();
+        presets.into_iter().map(|index| catalog.repo.root().join(&catalog.repo.presets()[index].path)).collect()
+    }
+
+    fn request_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if window.has_active_dialog(cx) {
+            return;
+        }
+        let files = self.unsaved_files(cx);
+        if files.is_empty() {
+            remember_window_size(window, cx);
+            window.remove_window();
+            return;
+        }
+        window.open_alert_dialog(cx, move |dialog, _, _| {
+            dialog
+                .title("Discard edits and close this window?")
+                .width(px(640.))
+                .confirm()
+                .description("These files have unsaved edits or unapplied input. Cancel to review and save them.")
+                .child(
+                    div()
+                        .id("close-files")
+                        .max_h(rems(24.))
+                        .overflow_y_scroll()
+                        .children(files.iter().map(|path| div().child(path.display().to_string()))),
+                )
+                .ok_text("Discard edits and close")
+                .ok_variant(ButtonVariant::Danger)
+                .on_ok(|_, window, cx| {
+                    remember_window_size(window, cx);
+                    window.remove_window();
+                    true
+                })
+        });
     }
 
     fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -461,19 +542,10 @@ impl StudioApp {
                     .label("Open…")
                     .on_click(cx.listener(|this, _, window, cx| this.choose_folder(window, cx))),
             )
-            .when(self.confirm_discard, |bar| {
-                bar.child(
-                    div()
-                        .id("discard-warning")
-                        .test_support()
-                        .text_sm()
-                        .text_color(theme.warning)
-                        .child("Unsaved edits will be lost — click again to continue"),
-                )
-            })
             .child(
                 Button::new("reload")
                     .small()
+                    .accessibility_label("Reload profiles")
                     .icon(IconName::RefreshCw)
                     .tooltip("Reload from disk, keeping edits and history")
                     .disabled(self.profiles_dir.is_none() || self.load_task.is_some())
@@ -796,6 +868,7 @@ impl StudioApp {
         };
         h_flex()
             .justify_between()
+            .flex_wrap()
             .gap_4()
             .px_3()
             .py_1()
@@ -816,6 +889,9 @@ impl Render for StudioApp {
             .text_color(cx.theme().foreground)
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &OpenPalette, window, cx| this.open_palette(window, cx)))
+            .on_action(
+                cx.listener(|this, _: &crate::lifecycle::CloseWindow, window, cx| this.request_close(window, cx)),
+            )
             .child(self.render_toolbar(cx))
             .when_some(self.refresh_error.clone(), |view, message| {
                 view.child(
@@ -832,6 +908,7 @@ impl Render for StudioApp {
                                 .test_support()
                                 .aria_label(message.clone())
                                 .flex_1()
+                                .min_w_0()
                                 .text_sm()
                                 .child(message),
                         )
@@ -1209,11 +1286,11 @@ mod tests {
         // Saving asks first, then writes only the changed lines.
         click(window, "save", cx);
         cx.update_window(window.into(), |_, window, _| {
-            assert_eq!(window.find("value-detail").label(), Some("save-confirmation"));
+            assert_eq!(window.find("save-preview").label(), Some("Changes to save"));
         })
         .unwrap();
         assert_eq!(std::fs::read_to_string(&file).unwrap(), CHILD, "nothing is written before confirming");
-        click(window, "confirm-save", cx);
+        click(window, "ok", cx);
         let expected = CHILD
             .replace("\"wall_loops\": \"2\"", "\"wall_loops\": \"3\"")
             .replace("\"enable_support\": \"0\"", "\"enable_support\": \"1\",\n    \"sparse_infill_density\": \"15%\"");
@@ -1297,7 +1374,7 @@ mod tests {
         click(window, "save", cx);
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
-            window.click("confirm-save", cx);
+            window.click("ok", cx);
             // Create a new edit after the synchronous save, before the background load completes.
             let edits = app.read(cx).edits.clone().unwrap();
             edits.update(cx, |edits, cx| {
@@ -1313,7 +1390,7 @@ mod tests {
         assert!(!Arc::ptr_eq(&old, &fresh));
         assert_eq!(
             first_row(&app, cx),
-            ("sparse_infill_density".into(), "25% %".into(), "[1] fdm_process_common".into())
+            ("sparse_infill_density".into(), "25%".into(), "[1] fdm_process_common".into())
         );
         app.read_with(cx, |app, cx| {
             assert_eq!(app.selected, Some(Node::Preset(child)));
@@ -1338,7 +1415,7 @@ mod tests {
         assert_eq!(first_row(&app, cx).1, "2");
         assert_eq!(std::fs::read_to_string(dir.path().join("Acme/process/Acme 0.2.json")).unwrap(), CHILD);
         run_palette(window, "sparse_infill_density = 25%", cx);
-        assert_eq!(first_row(&app, cx).1, "25% %");
+        assert_eq!(first_row(&app, cx).1, "25%");
         assert_eq!(first_row(&app, cx).2, "this file");
     }
 
@@ -1377,7 +1454,7 @@ mod tests {
         assert_eq!(first_row(&app, cx).1, "2");
         click(window, "redo", cx);
         click(window, "save", cx);
-        click(window, "confirm-save", cx);
+        click(window, "ok", cx);
         assert!(
             std::fs::read_to_string(dir.path().join("Acme/process/Acme 0.2.json"))
                 .unwrap()
@@ -1499,7 +1576,7 @@ mod tests {
         });
         cx.run_until_parked();
         click(window, "save", cx);
-        click(window, "confirm-save", cx);
+        click(window, "ok", cx);
         app.read_with(cx, |app, cx| {
             let rows = app.values.as_ref().unwrap().read(cx).table().read(cx).dump(cx).1;
             assert_eq!(rows.iter().find(|row| row[2] == "nozzle_temperature").unwrap()[3], "210 ℃");
@@ -1585,7 +1662,7 @@ mod tests {
         )
         .unwrap();
         click(window, "save", cx);
-        click(window, "confirm-save", cx);
+        click(window, "ok", cx);
         assert!(Arc::ptr_eq(&old, &catalog(&app, cx)));
         app.read_with(cx, |app, cx| {
             assert_eq!(app.refresh_conflicts.len(), 1);
@@ -1608,7 +1685,7 @@ mod tests {
         // The standard alert dialog also confirms through the keyboard.
         cx.update_window(window.into(), |_, window, cx| window.press("enter", cx)).unwrap();
         cx.run_until_parked();
-        assert_eq!(first_row(&app, cx).1, "30% %");
+        assert_eq!(first_row(&app, cx).1, "30%");
         app.read_with(cx, |app, cx| {
             let edits = app.edits.as_ref().unwrap().read(cx);
             assert!(edits.is_dirty(base));
@@ -1808,7 +1885,7 @@ mod tests {
         .unwrap();
         cx.run_until_parked();
         click(window, "toggle-issues", cx);
-        let stored = crate::settings::Settings::load(&path);
+        let stored = crate::settings::Settings::load(&path).unwrap();
         assert!(!stored.issues_open);
         assert_eq!(stored.profiles_dir, Some(dir.path().canonicalize().unwrap()));
         assert_eq!(stored.sidebar_width, Some(320.));
@@ -1822,6 +1899,258 @@ mod tests {
         cx.run_until_parked();
         run_palette(window, "new window", cx);
         assert_eq!(cx.update(|cx| cx.windows().len()), 2);
+    }
+
+    #[gpui_kit::test]
+    fn enum_editor_and_keyboard_save_follow_focus_and_confirmation(cx: &mut TestAppContext) {
+        let dir = editable_fixture();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "Acme 0.2", cx);
+        run_palette(window, "show preset values", cx);
+        find_key(window, "wall_generator", cx);
+        click(window, "override", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.within("value-enum").click("input", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.press("down", cx);
+            window.press("enter", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(first_row(&app, cx).1, "classic");
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.click(("row", 0usize), cx);
+            window.press("cmd-z", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(first_row(&app, cx).1, "arachne");
+        cx.update_window(window.into(), |_, window, cx| window.press("cmd-shift-z", cx)).unwrap();
+        cx.run_until_parked();
+        assert_eq!(first_row(&app, cx).1, "classic");
+        cx.update_window(window.into(), |_, window, cx| window.press("cmd-s", cx)).unwrap();
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.has_active_dialog(cx));
+            assert_eq!(window.find("save-preview").label(), Some("Changes to save"));
+            window.press("escape", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(std::fs::read_to_string(dir.path().join("Acme/process/Acme 0.2.json")).unwrap(), CHILD);
+        cx.update_window(window.into(), |_, window, cx| window.press("cmd-s", cx)).unwrap();
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| window.press("enter", cx)).unwrap();
+        cx.run_until_parked();
+        let loaded = catalog(&app, cx);
+        let child = loaded.repo.find(PresetKind::Process, "Acme 0.2")[0];
+        assert_eq!(loaded.repo.lookup_scalar(child, "wall_generator"), Some("classic"));
+        app.read_with(cx, |app, cx| assert!(app.edits.as_ref().unwrap().read(cx).dirty().is_empty()));
+    }
+
+    #[gpui_kit::test]
+    fn opening_a_folder_requires_explicit_discard_and_cancellation_keeps_edits(cx: &mut TestAppContext) {
+        let dir = editable_fixture();
+        let other = editable_fixture();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "Acme 0.2", cx);
+        run_palette(window, "show preset values", cx);
+        find_key(window, "wall_loops", cx);
+        enter_value(window, "8", cx);
+        click(window, "open", cx);
+        assert!(cx.did_prompt_for_paths());
+        cx.simulate_path_prompt_response(|_| None);
+        cx.run_until_parked();
+        assert_eq!(first_row(&app, cx).1, "8");
+        click(window, "open", cx);
+        cx.simulate_path_prompt_response(|_| Some(vec![other.path().to_path_buf()]));
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.has_active_dialog(cx));
+            window.press("escape", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(first_row(&app, cx).1, "8");
+        click(window, "open", cx);
+        cx.simulate_path_prompt_response(|_| Some(vec![other.path().to_path_buf()]));
+        cx.run_until_parked();
+        click(window, "ok", cx);
+        assert_eq!(catalog(&app, cx).repo.root(), other.path().canonicalize().unwrap());
+        assert_eq!(std::fs::read_to_string(dir.path().join("Acme/process/Acme 0.2.json")).unwrap(), CHILD);
+    }
+
+    #[gpui_kit::test]
+    fn settings_save_errors_are_visible_deduplicated_and_retryable(cx: &mut TestAppContext) {
+        let dir = editable_fixture();
+        let storage = tempfile::tempdir().unwrap();
+        let folder = storage.path().join("nested");
+        let path = folder.join("settings.json");
+        let (window, _) = open_with_settings(cx, dir.path().to_path_buf(), Some(path.clone()));
+        cx.run_until_parked();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(&folder).unwrap();
+        std::fs::write(&folder, "blocked").unwrap();
+        run_palette(window, "theme: dark", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            assert!(cx.theme().is_dark(), "settings still apply in memory");
+            assert_eq!(window.notifications(cx).len(), 1);
+        })
+        .unwrap();
+        run_palette(window, "theme: dark", cx);
+        cx.update_window(window.into(), |_, window, cx| assert_eq!(window.notifications(cx).len(), 1)).unwrap();
+        std::fs::remove_file(&folder).unwrap();
+        std::fs::create_dir(&folder).unwrap();
+        run_palette(window, "theme: dark", cx);
+        assert_eq!(crate::settings::Settings::load(&path).unwrap().theme, ThemePreference::Dark);
+    }
+
+    #[gpui_kit::test]
+    fn invalid_settings_and_window_errors_have_user_visible_feedback(cx: &mut TestAppContext) {
+        let dir = editable_fixture();
+        let storage = tempfile::tempdir().unwrap();
+        let path = storage.path().join("settings.json");
+        std::fs::write(&path, "invalid json").unwrap();
+        let (window, _) = open_with_settings(cx, dir.path().to_path_buf(), Some(path));
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| assert_eq!(window.notifications(cx).len(), 1)).unwrap();
+        cx.update(|cx| crate::feedback::error("open-window", "Could not open a window", "Platform error".into(), cx));
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| assert_eq!(window.notifications(cx).len(), 2)).unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn startup_error_can_be_reported_without_a_window(cx: &mut TestAppContext) {
+        cx.update(super::init);
+        cx.update(|cx| crate::feedback::error("open-window", "Could not open a window", "Platform error".into(), cx));
+        cx.run_until_parked();
+        let notifications = cx.shown_system_notifications();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].title.as_ref(), "Could not open a window");
+    }
+
+    #[gpui_kit::test]
+    fn native_close_and_close_shortcut_protect_edits_and_unapplied_text(cx: &mut TestAppContext) {
+        let dir = editable_fixture();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "Acme 0.2", cx);
+        run_palette(window, "show preset values", cx);
+        find_key(window, "wall_loops", cx);
+        enter_value(window, "4", cx);
+        let mut visual = gpui_kit::VisualTestContext::from_window(window.into(), cx);
+        assert!(!visual.simulate_close(), "native close is held while the user decides");
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| {
+            assert!(window.has_active_dialog(cx));
+            window.press("escape", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(first_row(&app, cx).1, "4");
+        click(window, "undo", cx);
+        // Text that has not been applied is also work the close operation must protect.
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.click("value-input", cx);
+            window.press("cmd-a", cx);
+            window.input("9", cx);
+            window.press("cmd-w", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| assert!(window.has_active_dialog(cx))).unwrap();
+        click(window, "cancel", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("value-input").value(), Some("9"));
+            window.press("cmd-w", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        click(window, "ok", cx);
+        assert!(cx.windows().is_empty());
+        assert_eq!(std::fs::read_to_string(dir.path().join("Acme/process/Acme 0.2.json")).unwrap(), CHILD);
+    }
+
+    #[gpui_kit::test]
+    fn quit_checks_all_windows_and_rechecks_new_edits_before_discarding(cx: &mut TestAppContext) {
+        let dir = editable_fixture();
+        let (first, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(first, "Acme 0.2", cx);
+        run_palette(first, "show preset values", cx);
+        find_key(first, "wall_loops", cx);
+        enter_value(first, "4", cx);
+        run_palette(first, "new window", cx);
+        let second =
+            cx.windows().into_iter().find(|handle| *handle != first.into()).unwrap().downcast::<Root>().unwrap();
+        cx.update_window(second.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.press("cmd-q", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let dialog_window = [first, second]
+            .into_iter()
+            .find(|handle| cx.update_window((*handle).into(), |_, window, cx| window.has_active_dialog(cx)).unwrap())
+            .expect("quitting a clean window still finds the dirty window");
+        click(dialog_window, "cancel", cx);
+        assert_eq!(cx.windows().len(), 2);
+        assert_eq!(first_row(&app, cx).1, "4");
+        cx.update_window(second.into(), |_, window, cx| window.press("cmd-q", cx)).unwrap();
+        cx.run_until_parked();
+        let base = catalog(&app, cx).repo.find(PresetKind::Process, "fdm_process_common")[0].index();
+        app.read_with(cx, |app, _| app.edits.clone().unwrap()).update(cx, |edits, cx| {
+            edits.session_mut(base).set("wall_loops", Some(profile_core::RawValue::Str("7".into())));
+            cx.notify();
+        });
+        click(dialog_window, "ok", cx);
+        assert_eq!(cx.windows().len(), 2, "new unsaved files require a new decision");
+        cx.update_window(dialog_window.into(), |_, window, cx| assert!(window.has_active_dialog(cx))).unwrap();
+        click(dialog_window, "ok", cx);
+        assert!(cx.windows().is_empty());
+        assert_eq!(std::fs::read_to_string(dir.path().join("Acme/process/Acme 0.2.json")).unwrap(), CHILD);
+    }
+
+    #[gpui_kit::test]
+    fn small_window_and_larger_type_keep_controls_inside_their_regions(cx: &mut TestAppContext) {
+        let dir = editable_fixture();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "Acme 0.2", cx);
+        run_palette(window, "show preset values", cx);
+        find_key(window, "wall_loops", cx);
+        cx.simulate_window_resize(window.into(), size(px(960.), px(720.)));
+        cx.update(|cx| gpui_kit::component::Theme::update(cx, |theme| theme.font_size = px(20.)));
+        click(window, "toggle-issues", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            for id in ["close-issues", "issues-search", "save", "reload"] {
+                let element = window.find(id);
+                assert!(element.visible(), "{id} should remain visible");
+                assert!(element.bounds().right() <= px(960.), "{id}: {:?}", element.bounds());
+                assert!(element.bounds().bottom() <= px(720.), "{id}: {:?}", element.bounds());
+            }
+            let table = window.find("values-table").bounds();
+            let detail = window.find("value-detail").bounds();
+            assert!(table.size.height > px(0.), "the table still has a viewport: {table:?}");
+            assert!(table.bottom() <= detail.top(), "table and editor must not overlap");
+            assert_eq!(window.find("reload").label(), Some("Reload profiles"));
+            assert_eq!(window.find("undo").label(), Some("Undo edit"));
+        })
+        .unwrap();
+        click(window, "close-issues", cx);
+        assert!(!app.read_with(cx, |app, _| app.issues_open));
     }
 
     #[gpui_kit::test]

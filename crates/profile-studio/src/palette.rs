@@ -40,7 +40,7 @@ impl AppCommand {
             AppCommand::ShowOverview => "Show preset overview".to_owned(),
             AppCommand::ShowValues => "Show preset values".to_owned(),
             AppCommand::ShowIssues => "Show issues".to_owned(),
-            AppCommand::NewWindow => "New window".to_owned(),
+            AppCommand::NewWindow => "New window…".to_owned(),
             AppCommand::Theme(theme) => format!("Theme: {}", theme.label()),
         }
     }
