@@ -1,0 +1,13 @@
+[package]
+name = "profile-studio"
+description = "Desktop browser for OrcaSlicer system profiles"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+profile-core.workspace = true
+gpui-kit.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }

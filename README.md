@@ -2,16 +2,39 @@
 
 OrcaSlicer 系统配置文件（`resources/profiles`）的浏览、校验与编辑工具，也是一个 GPUI 练手项目。
 
-现在完成的是 M0：一个不依赖界面的 core 库，加一个命令行工具。图形界面（gpui-kit）从 M1 开始做。
+目前完成了 M0 和 M1：
+- M0：不依赖界面的 core 库，加一个命令行工具；
+- M1：用 gpui-kit 写的桌面浏览器。
 
 ## 结构
 
 ```
 crates/
-├── profile-core/   # 加载、继承解析、校验；不依赖任何 GUI
-└── profile-tool/   # 命令行：stats / check / resolve
-docs/reference/     # 配置格式说明（profile_format_spec.md）和参考统计脚本
+├── profile-core/    # 加载、继承解析、校验；不依赖任何 GUI
+├── profile-tool/    # 命令行：stats / check / resolve
+└── profile-studio/  # gpui-kit 桌面应用
+docs/reference/      # 配置格式说明（profile_format_spec.md）和参考统计脚本
 ```
+
+## 桌面应用
+
+```bash
+cargo run -p profile-studio -- ../OrcaSlicer/resources/profiles
+```
+
+profiles 目录按以下顺序确定：
+1. 命令行第一个参数；
+2. 环境变量 `ORCA_PROFILES_DIR`；
+3. 和本仓库同级的 `../OrcaSlicer` 目录。
+
+运行中也可以点工具栏的「Open…」换一个目录。
+
+界面说明：
+- **左侧导航树**：厂商 → 机型（→ 该机型的打印机预设）、耗材、工艺、模板。树是虚拟化的，只渲染可见的行。有 warning 及以上级别问题的预设，行尾会显示警告图标。
+- **右侧详情**：选中厂商、机型或预设后，显示文件信息、继承链、关键字段的最终值，以及该项的校验问题。
+- **后台加载**：加载在后台线程进行，界面期间保持可响应。重新加载或打开新目录时，会丢弃旧的加载结果。
+
+界面测试在 `crates/profile-studio/src/app.rs` 的 `tests` 模块里，用的是 gpui-kit 的 headless 测试：渲染真实界面，模拟点击，然后断言状态。
 
 `profile-core` 按 OrcaSlicer `PresetBundle::load_vendor_configs_from_json` 的规则加载配置，规则详见 [docs/reference/profile_format_spec.md](docs/reference/profile_format_spec.md)：
 
@@ -62,7 +85,7 @@ cargo test
 |---|---|
 | M0 ✅ | core：清单解析、继承解析、校验；CLI：stats / check / resolve |
 | M0.5 | 从 OrcaSlicer 导出 `schema.json`（各配置项的类型、默认值、范围、说明、所属类别） |
-| M1 | gpui-kit 界面：厂商 → 机型、耗材、工艺三层树，后台加载 |
+| M1 ✅ | gpui-kit 界面：厂商 → 机型、耗材、工艺三层树，后台加载 |
 | M2 | 继承链视图：每个字段的最终值和来源层 |
 | M3 | 编辑表单：修改标记、撤销和重做、保存时保留原有格式 |
 | M4 | 两个预设并排对比 |
