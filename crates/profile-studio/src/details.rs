@@ -278,7 +278,7 @@ fn join_or_dash(values: &[String]) -> String {
     if values.is_empty() { "—".to_owned() } else { values.join(", ") }
 }
 
-fn format_value(value: &RawValue) -> String {
+pub fn format_value(value: &RawValue) -> String {
     match value {
         RawValue::Str(text) => text.clone(),
         RawValue::List(items) => items.join(", "),

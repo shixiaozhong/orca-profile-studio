@@ -47,6 +47,21 @@ pub struct ResolvedValue<'a> {
     pub origin: Origin,
 }
 
+/// Every layer of an inheritance chain that sets one key, nearest first.
+///
+/// The first layer holds the effective value; the others are the values it overrides.
+#[derive(Debug, Clone)]
+pub struct KeyTrace<'a> {
+    pub key: &'a str,
+    pub layers: Vec<ResolvedValue<'a>>,
+}
+
+impl<'a> KeyTrace<'a> {
+    pub fn effective(&self) -> ResolvedValue<'a> {
+        self.layers[0]
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct Repository {
     root: PathBuf,
@@ -200,6 +215,25 @@ impl Repository {
             }
         }
         values
+    }
+
+    /// Every key with all the layers that set it, in the order of [`Repository::resolve`].
+    pub fn trace(&self, id: PresetId) -> Vec<KeyTrace<'_>> {
+        fn add<'a>(traces: &mut IndexMap<&'a str, KeyTrace<'a>>, key: &'a str, layer: ResolvedValue<'a>) {
+            let trace = traces.entry(key).or_insert_with(|| KeyTrace { key, layers: Vec::new() });
+            // Layers are added from the root down; keep the nearest first.
+            trace.layers.insert(0, layer);
+        }
+        let mut traces = IndexMap::new();
+        for (key, value) in self.defaults(self.preset(id).kind).into_iter().flatten() {
+            add(&mut traces, key, ResolvedValue { value, origin: Origin::Default });
+        }
+        for link in self.chain(id).into_iter().rev() {
+            for (key, value) in &self.preset(link).params {
+                add(&mut traces, key, ResolvedValue { value, origin: Origin::Preset(link) });
+            }
+        }
+        traces.into_values().collect()
     }
 
     fn defaults(&self, kind: PresetKind) -> Option<&IndexMap<String, RawValue>> {
@@ -849,6 +883,19 @@ mod tests {
         let resolved = repo.lookup(pla, "nozzle_temperature").unwrap();
         assert_eq!(resolved.value, &RawValue::List(vec!["210".into()]));
         assert_eq!(resolved.origin, Origin::Preset(pla));
+    }
+
+    #[test]
+    fn trace_lists_overridden_layers_nearest_first() {
+        let repo = sample().load();
+        let pla = only(&repo, PresetKind::Filament, "Acme PLA @Acme One");
+        let base = only(&repo, PresetKind::Filament, "fdm_filament_common");
+        let traces = repo.trace(pla);
+        let temperature = traces.iter().find(|trace| trace.key == "nozzle_temperature").unwrap();
+        let origins: Vec<Origin> = temperature.layers.iter().map(|layer| layer.origin).collect();
+        assert_eq!(origins, [Origin::Preset(pla), Origin::Preset(base)]);
+        assert_eq!(temperature.effective().value, &RawValue::List(vec!["210".into()]));
+        assert_eq!(traces.len(), repo.resolve(pla).len());
     }
 
     #[test]

@@ -175,6 +175,26 @@ impl IssueKind {
         }
     }
 
+    /// The config key a value issue is about.
+    pub fn key(&self) -> Option<&str> {
+        use IssueKind::*;
+        match self {
+            ObsoleteKey { key }
+            | RenamedKey { key, .. }
+            | UnknownKey { key }
+            | KeyNotForKind { key, .. }
+            | ScalarGivenList { key, .. }
+            | NilNotNullable { key }
+            | ValueUnparsable { key, .. }
+            | ItemUnparsable { key, .. }
+            | ValueSubstituted { key, .. }
+            | ValueTrailingText { key, .. }
+            | ValueOutOfRange { key, .. }
+            | InvalidValueType { key } => Some(key),
+            _ => None,
+        }
+    }
+
     /// Stable identifier for grouping and filtering.
     pub fn code(&self) -> &'static str {
         use IssueKind::*;

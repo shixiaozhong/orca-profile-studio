@@ -2,6 +2,7 @@ mod app;
 mod catalog;
 mod details;
 mod tree;
+mod values;
 
 use std::path::{Path, PathBuf};
 

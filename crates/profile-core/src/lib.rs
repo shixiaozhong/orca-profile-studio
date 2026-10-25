@@ -15,6 +15,6 @@ mod stats;
 
 pub use issue::{Issue, IssueKind, Severity};
 pub use model::{MachineModel, Preset, PresetId, PresetKind, PresetMeta, RawValue, Vendor, VendorId, derived_alias};
-pub use repository::{FILAMENT_LIBRARY, LoadError, Origin, Repository, ResolvedValue};
+pub use repository::{FILAMENT_LIBRARY, KeyTrace, LoadError, Origin, Repository, ResolvedValue};
 pub use schema::{DefaultPreset, OptionDef, OptionMode, OptionType, SCHEMA_FORMAT_VERSION, Schema, SchemaError};
 pub use stats::{KindStats, Stats};

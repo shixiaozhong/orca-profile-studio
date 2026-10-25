@@ -8,6 +8,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::list::ListItem;
 use gpui_kit::component::spinner::Spinner;
+use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::tree::{TreeEntry, TreeState, tree};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _, h_flex, h_resizable, resizable_panel,
@@ -20,6 +21,7 @@ use profile_core::{Repository, Schema, Severity};
 use crate::catalog::Catalog;
 use crate::details::{self, severity_color};
 use crate::tree::{self as nav, Node, kind_icon};
+use crate::values::ValuesView;
 
 enum LoadState {
     /// No profiles directory chosen yet.
@@ -29,11 +31,21 @@ enum LoadState {
     Failed(PathBuf, String),
 }
 
+/// Tabs of the details pane when a preset is selected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PresetTab {
+    Overview,
+    Values,
+}
+
 pub struct StudioApp {
     profiles_dir: Option<PathBuf>,
     state: LoadState,
     tree: Entity<TreeState>,
     selected: Option<Node>,
+    preset_tab: PresetTab,
+    /// The values table of the selected preset; created when the Values tab is first shown.
+    values: Option<Entity<ValuesView>>,
     load_task: Option<Task<()>>,
     _tree_observer: Subscription,
 }
@@ -53,6 +65,8 @@ impl StudioApp {
             state: LoadState::Empty,
             tree,
             selected: None,
+            preset_tab: PresetTab::Overview,
+            values: None,
             load_task: None,
             _tree_observer: tree_observer,
         };
@@ -67,6 +81,7 @@ impl StudioApp {
         self.profiles_dir = Some(dir.clone());
         self.state = LoadState::Loading(dir.clone());
         self.selected = None;
+        self.values = None;
         self.tree.update(cx, |tree, cx| tree.set_items(Vec::new(), cx));
 
         let job = cx.background_executor().spawn({
@@ -157,7 +172,7 @@ impl StudioApp {
             )
     }
 
-    fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match &self.state {
             LoadState::Empty => placeholder(
                 IconName::FolderOpen,
@@ -180,20 +195,28 @@ impl StudioApp {
             LoadState::Failed(dir, err) => {
                 placeholder(IconName::TriangleAlert, format!("Could not load {}: {err}", dir.display()), cx)
             }
-            LoadState::Ready(catalog) => self.render_browser(catalog, cx),
+            LoadState::Ready(catalog) => {
+                let catalog = catalog.clone();
+                self.render_browser(&catalog, window, cx)
+            }
         }
     }
 
-    fn render_browser(&self, catalog: &Arc<Catalog>, cx: &mut Context<Self>) -> AnyElement {
+    fn render_browser(&mut self, catalog: &Arc<Catalog>, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let rows = catalog.clone();
         let navigation = tree(&self.tree, move |ix, entry, _, _, cx| render_row(&rows, ix, entry, cx)).size_full();
+        let scrolling = |content: AnyElement| div().id("details").size_full().overflow_y_scroll().child(content);
         let details = match self.selected {
-            Some(node) => details::render(catalog, node, cx),
-            None => div()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child("Select a vendor, model or preset in the tree.")
-                .into_any_element(),
+            Some(Node::Preset(index)) => self.render_preset(catalog, index, window, cx),
+            Some(node) => scrolling(details::render(catalog, node, cx)).into_any_element(),
+            None => scrolling(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Select a vendor, model or preset in the tree.")
+                    .into_any_element(),
+            )
+            .into_any_element(),
         };
         h_resizable("browser")
             .child(
@@ -202,8 +225,46 @@ impl StudioApp {
                     .size_range(px(240.)..px(720.))
                     .child(div().size_full().py_1().child(navigation)),
             )
-            .child(resizable_panel().child(div().id("details").size_full().overflow_y_scroll().p_4().child(details)))
+            .child(resizable_panel().child(div().size_full().p_4().child(details)))
             .into_any_element()
+    }
+
+    /// A preset's details: the overview, or the values table with every key and its layers.
+    fn render_preset(
+        &mut self,
+        catalog: &Arc<Catalog>,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let tabs = TabBar::new("preset-tabs")
+            .underline()
+            .small()
+            .selected_index(self.preset_tab as usize)
+            .child(Tab::new().label("Overview"))
+            .child(Tab::new().label("Values"))
+            .on_click(cx.listener(|this, ix: &usize, _, cx| {
+                this.preset_tab = if *ix == 1 { PresetTab::Values } else { PresetTab::Overview };
+                cx.notify();
+            }));
+        let content = match self.preset_tab {
+            PresetTab::Overview => div()
+                .id("details")
+                .size_full()
+                .overflow_y_scroll()
+                .child(details::render(catalog, Node::Preset(index), cx))
+                .into_any_element(),
+            PresetTab::Values => {
+                let current = self.values.as_ref().filter(|values| values.read(cx).preset() == index).cloned();
+                let values = current.unwrap_or_else(|| {
+                    let values = cx.new(|cx| ValuesView::new(catalog, index, window, cx));
+                    self.values = Some(values.clone());
+                    values
+                });
+                div().size_full().child(values).into_any_element()
+            }
+        };
+        v_flex().size_full().child(tabs).child(div().flex_1().min_h_0().pt_3().child(content)).into_any_element()
     }
 
     fn render_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -244,13 +305,13 @@ impl StudioApp {
 }
 
 impl Render for StudioApp {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(self.render_toolbar(cx))
-            .child(div().flex_1().min_h_0().child(self.render_body(cx)))
+            .child(div().flex_1().min_h_0().child(self.render_body(window, cx)))
             .child(self.render_status(cx))
     }
 }
@@ -423,6 +484,70 @@ mod tests {
             assert_eq!(window.find("value-nozzle_diameter").label(), Some("Nozzle diameter"));
         })
         .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn values_tab_traces_each_key_to_its_layer(cx: &mut TestAppContext) {
+        let Some(dir) = profiles_dir() else { return };
+        let (window, app) = open(cx, dir);
+        cx.run_until_parked();
+        let catalog = catalog(&app, cx);
+        let repo = &catalog.repo;
+        let vendor = repo.vendors().iter().position(|vendor| vendor.name == "Snapmaker").unwrap();
+        let &[abs] = repo.find(PresetKind::Filament, "Generic ABS @U1 0.2 nozzle") else {
+            panic!("one Generic ABS @U1 0.2 nozzle")
+        };
+        click_node(window, &app, Node::Vendor(vendor), cx);
+        click_node(window, &app, Node::Group(vendor, nav::Group::Filaments), cx);
+        click_node(window, &app, Node::Preset(abs.index()), cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.within("preset-tabs").click(1usize, cx);
+        })
+        .unwrap();
+        let values = app.read_with(cx, |app, _| app.values.clone()).expect("the Values tab creates its view");
+        let dump = |cx: &mut TestAppContext| values.read_with(cx, |values, cx| values.table().read(cx).dump(cx).1);
+        assert_eq!(dump(cx).len(), repo.resolve(abs).len());
+
+        cx.update_window(window.into(), |_, window, cx| {
+            window.click("values-search", cx);
+            window.input("nozzle_temperature", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let rows = dump(cx);
+        let keys: Vec<&str> = rows.iter().map(|row| row[2].as_str()).collect();
+        assert!(keys.iter().all(|key| key.contains("nozzle_temperature")), "{keys:?}");
+        let position = keys.iter().position(|&key| key == "nozzle_temperature").expect("the key is listed");
+        assert_eq!(rows[position][4], "this file");
+
+        cx.update_window(window.into(), |_, window, cx| window.click(("row", position), cx)).unwrap();
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("value-detail").label(), Some("nozzle_temperature"));
+            assert_eq!(window.find(("layer", 0usize)).label(), Some("this file: 270 ℃"));
+            // One line per layer that sets the key, ending with the schema default.
+            let trace = repo.trace(abs).into_iter().find(|trace| trace.key == "nozzle_temperature").unwrap();
+            assert!(trace.layers.len() >= 2, "the preset overrides at least the schema default");
+            let last = window.find(("layer", trace.layers.len() - 1)).label().unwrap().to_owned();
+            assert!(last.starts_with("default: "), "{last}");
+            assert!(window.try_find(("layer", trace.layers.len())).is_none());
+        })
+        .unwrap();
+
+        // A key set by no file in the chain disappears when defaults are hidden.
+        cx.update_window(window.into(), |_, window, cx| {
+            window.click("values-search", cx);
+            window.press("cmd-a", cx);
+            window.input("filament_tower_interface_print_temp", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(dump(cx).iter().map(|row| row[4].as_str()).collect::<Vec<_>>(), ["default"]);
+        cx.update_window(window.into(), |_, window, cx| window.click("hide-defaults", cx)).unwrap();
+        cx.run_until_parked();
+        assert!(dump(cx).is_empty());
     }
 
     #[gpui_kit::test]

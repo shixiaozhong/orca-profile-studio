@@ -100,7 +100,13 @@ from the package directory).
 - Screenshots of app windows fail in this environment (no screen-recording permission). Verify UI
   with headless tests: `#[gpui_kit::test]`, `gpui_kit::test::TestWindowExt` (`find`, `click`,
   `press`), `cx.run_until_parked()` for background work. Give elements `.id(..).test_support()
-  .aria_label(..)` so tests can query them; tree rows are found by their row index.
+  .aria_label(..)` so tests can query them; tree rows are found by their row index, `DataTable`
+  rows by `("row", ix)`, tabs by index inside their bar (`window.within("preset-tabs").click(1usize)`).
+  `TableState::dump(cx)` (via `TableDelegate::cell_text`) reads table contents.
+- After a click whose effect goes through a subscription (e.g. `TableEvent::SelectRow`), call
+  `cx.run_until_parked()` and `render_frame` before asserting on the new frame.
+- Views that need a `Window` (`TableState`, `InputState`) are created lazily in `render`, e.g. the
+  preset's `ValuesView` in `StudioApp::render_preset`.
 - `TreeItem` holds `Rc` and is not `Send`: do heavy work (repository load, `Catalog::new`) on the
   background executor, build tree items on the foreground.
 
@@ -121,7 +127,7 @@ from the package directory).
 | M0 ✅ | core: manifest parsing, inheritance resolution, validation; CLI |
 | M1 ✅ | gpui-kit app: vendor → models / filaments / processes tree, background loading, details pane |
 | M0.5 ✅ | `schema.json` exported from OrcaSlicer; value checks, default layer, schema labels in the app |
-| M2 | inheritance view: every key's effective value and the layer it comes from |
+| M2 ✅ | inheritance view: Values tab with every key, its source layer and overridden values (`Repository::trace`) |
 | M3 | edit form with dirty marks, undo/redo, format-preserving save |
 | M4 | side-by-side preset diff |
 | M5 | global search and command palette |
