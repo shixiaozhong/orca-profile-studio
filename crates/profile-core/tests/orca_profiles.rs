@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use profile_core::{
-    IssueKind, KindStats, Origin, PresetKind, RawValue, Repository, Schema, SearchIndex, Severity, Stats,
+    IssueKind, KindStats, Origin, PresetKind, RawValue, Repository, Schema, SearchIndex, Severity, Stats, Verdict,
 };
 
 fn profiles_dir() -> Option<PathBuf> {
@@ -193,4 +193,29 @@ fn search_finds_presets_options_and_values() {
     let results = index.search("nozzle_temperature 270", usize::MAX);
     assert!(results.values.iter().any(|hit| hit.preset == abs && hit.key == "nozzle_temperature"));
     assert_eq!(results.total_values, results.values.len());
+}
+
+/// A baseline of the compatibility rules on real data. Not yet cross-checked against OrcaSlicer,
+/// which needs a compatibility table exported from it.
+#[test]
+fn compatibility_follows_conditions_lists_and_library_exclusion() {
+    let Some(repo) = repo_with_schema() else { return };
+    let index = repo.compatibility();
+    let one = |kind, name| repo.find(kind, name)[0];
+    let names = |preset| {
+        index.compatible_printers(repo, preset).into_iter().map(|(id, _)| repo.preset(id).name()).collect::<Vec<_>>()
+    };
+
+    // All 97 conditions parse and evaluate on every printer.
+    let condition_issues = repo.issues().iter().filter(|issue| issue.kind.code().starts_with("condition")).count();
+    assert_eq!(condition_issues, 0);
+    let detail = one(PresetKind::Process, "0.07mm DETAIL @CORE One 0.25");
+    assert_eq!(names(detail), ["Prusa CORE One 0.25 nozzle"]);
+
+    let u1 = one(PresetKind::Machine, "Snapmaker U1 (0.4 nozzle)");
+    let library_abs = one(PresetKind::Filament, "Generic ABS @System");
+    assert_eq!(index.verdict(repo, library_abs, u1), Verdict::Excluded, "Snapmaker ships its own Generic ABS");
+    assert_eq!(names(library_abs).len(), 728);
+    assert_eq!(index.compatible_with_printer(repo, u1, PresetKind::Process).len(), 16);
+    assert_eq!(index.compatible_with_printer(repo, u1, PresetKind::Filament).len(), 169);
 }

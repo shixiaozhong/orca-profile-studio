@@ -3,6 +3,7 @@ mod catalog;
 mod compare;
 mod details;
 mod edits;
+mod issues;
 mod palette;
 mod tree;
 mod values;

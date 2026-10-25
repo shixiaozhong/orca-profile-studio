@@ -14,11 +14,17 @@ pub enum AppCommand {
     Open,
     ShowOverview,
     ShowValues,
+    ShowIssues,
 }
 
 impl AppCommand {
-    const ALL: [AppCommand; 4] =
-        [AppCommand::Reload, AppCommand::Open, AppCommand::ShowOverview, AppCommand::ShowValues];
+    const ALL: [AppCommand; 5] = [
+        AppCommand::Reload,
+        AppCommand::Open,
+        AppCommand::ShowOverview,
+        AppCommand::ShowValues,
+        AppCommand::ShowIssues,
+    ];
 
     fn label(self) -> &'static str {
         match self {
@@ -26,6 +32,7 @@ impl AppCommand {
             AppCommand::Open => "Open profiles directory…",
             AppCommand::ShowOverview => "Show preset overview",
             AppCommand::ShowValues => "Show preset values",
+            AppCommand::ShowIssues => "Show issues",
         }
     }
 
@@ -35,6 +42,7 @@ impl AppCommand {
             AppCommand::Open => IconName::FolderOpen,
             AppCommand::ShowOverview => IconName::Info,
             AppCommand::ShowValues => IconName::Table,
+            AppCommand::ShowIssues => IconName::TriangleAlert,
         }
     }
 
@@ -42,7 +50,7 @@ impl AppCommand {
     fn available(self, preset_selected: bool) -> bool {
         match self {
             AppCommand::ShowOverview | AppCommand::ShowValues => preset_selected,
-            AppCommand::Reload | AppCommand::Open => true,
+            AppCommand::Reload | AppCommand::Open | AppCommand::ShowIssues => true,
         }
     }
 }

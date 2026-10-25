@@ -7,7 +7,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
-use profile_core::{Issue, Origin, PresetId, PresetKind, RawValue, Repository, Schema, SearchIndex, Severity, Stats};
+use profile_core::{
+    Issue, Origin, PresetId, PresetKind, RawValue, Repository, Schema, SearchIndex, Severity, Stats, Verdict,
+};
 
 #[derive(Parser)]
 #[command(name = "profile-tool", version, about = "Inspect and validate OrcaSlicer system profiles")]
@@ -56,6 +58,13 @@ enum Command {
         /// Also show keys no file in the chain sets (schema defaults)
         #[arg(long)]
         defaults: bool,
+    },
+    /// List the printers a filament or process is compatible with, or the presets a printer accepts
+    Compat {
+        /// Exact preset name
+        name: String,
+        #[arg(long, value_enum)]
+        kind: Option<KindArg>,
     },
     /// Search presets, options and the values preset files set; every term must match
     Search {
@@ -139,6 +148,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             resolve(&repo, &name, kind.map(Into::into), key.as_deref(), defaults)?
         }
         Command::Search { query, limit } => search(&repo, &query, limit),
+        Command::Compat { name, kind } => compat(&repo, &name, kind.map(Into::into))?,
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -208,6 +218,45 @@ fn check(repo: &Repository, min: Severity, fail_on: Severity, vendor: Option<&st
     let failing = shown.iter().filter(|issue| issue.severity() >= fail_on).count();
     println!("{} issue(s) shown, {failing} at or above {fail_on}", shown.len());
     if failing > 0 { ExitCode::FAILURE } else { ExitCode::SUCCESS }
+}
+
+fn compat(repo: &Repository, name: &str, kind: Option<PresetKind>) -> Result<()> {
+    let kinds = kind.map_or(PresetKind::ALL.to_vec(), |kind| vec![kind]);
+    let Some(&id) = kinds.iter().flat_map(|&kind| repo.find(kind, name)).next() else {
+        bail!("no preset named {name:?}");
+    };
+    let index = repo.compatibility();
+    let preset = repo.preset(id);
+    println!("{} ({} · {})", preset.name(), preset.kind, repo.vendor(preset.vendor).name);
+    if preset.kind == PresetKind::Machine {
+        for kind in [PresetKind::Process, PresetKind::Filament] {
+            let presets = index.compatible_with_printer(repo, id, kind);
+            println!("\ncompatible {kind} presets ({}):", presets.len());
+            for preset in presets {
+                println!("  {}", repo.preset(preset).name());
+            }
+        }
+        return Ok(());
+    }
+    if let Some(condition) = index.condition(id, PresetKind::Machine) {
+        match condition {
+            Ok(condition) => println!("condition: {condition}"),
+            Err(err) => println!("condition does not parse: {err}"),
+        }
+    }
+    let printers = index.compatible_printers(repo, id);
+    println!("\ncompatible printers ({}):", printers.len());
+    for (printer, verdict) in printers {
+        let reason = match verdict {
+            Verdict::Listed => "listed".to_owned(),
+            Verdict::Unrestricted => "no restriction".to_owned(),
+            Verdict::Condition(Ok(_)) => "condition".to_owned(),
+            Verdict::Condition(Err(err)) => format!("condition failed: {err}"),
+            Verdict::Excluded | Verdict::NotListed => unreachable!("only compatible printers are listed"),
+        };
+        println!("  {:<60} {reason}", repo.preset(printer).name());
+    }
+    Ok(())
 }
 
 fn search(repo: &Repository, query: &str, limit: usize) {

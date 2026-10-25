@@ -16,7 +16,7 @@ pub fn render(catalog: &Catalog, node: Node, cx: &App) -> AnyElement {
         Node::Vendor(vendor) => render_vendor(catalog, vendor, cx),
         Node::Group(vendor, group) => render_group(catalog, vendor, group, cx),
         Node::Model(model) => render_model(catalog, model, cx),
-        Node::Preset(preset) => render_preset(catalog, preset, cx),
+        Node::Preset(preset) => render_preset(catalog, preset, None, cx),
     }
 }
 
@@ -110,7 +110,82 @@ fn render_model(catalog: &Catalog, model: usize, cx: &App) -> AnyElement {
     details.into_any_element()
 }
 
-fn render_preset(catalog: &Catalog, index: usize, cx: &App) -> AnyElement {
+/// What a preset is compatible with. Computed when the preset is selected, not while rendering:
+/// a filament is checked against every printer.
+pub struct Compatibility {
+    pub preset: usize,
+    /// The condition deciding compatibility with printers, or why it does not parse.
+    pub condition: Option<Result<String, String>>,
+    /// Names of the compatible printers (filaments and processes).
+    pub printers: Vec<String>,
+    /// Compatible process and filament presets (printers).
+    pub processes: usize,
+    pub filaments: usize,
+}
+
+impl Compatibility {
+    pub fn compute(catalog: &Catalog, preset: usize) -> Self {
+        let repo = &catalog.repo;
+        let id = repo.presets()[preset].id;
+        let index = repo.compatibility();
+        let mut compatibility =
+            Compatibility { preset, condition: None, printers: Vec::new(), processes: 0, filaments: 0 };
+        if repo.presets()[preset].kind == PresetKind::Machine {
+            compatibility.processes = index.compatible_with_printer(repo, id, PresetKind::Process).len();
+            compatibility.filaments = index.compatible_with_printer(repo, id, PresetKind::Filament).len();
+        } else {
+            compatibility.condition = index.condition(id, PresetKind::Machine).map(|condition| match condition {
+                Ok(condition) => Ok(condition.source().to_owned()),
+                Err(err) => Err(err.to_string()),
+            });
+            let mut printers: Vec<String> = index
+                .compatible_printers(repo, id)
+                .into_iter()
+                .map(|(printer, _)| repo.preset(printer).name().to_owned())
+                .collect();
+            printers.sort();
+            compatibility.printers = printers;
+        }
+        compatibility
+    }
+}
+
+fn compatibility_section(
+    repo: &profile_core::Repository,
+    preset: usize,
+    compatibility: &Compatibility,
+    cx: &App,
+) -> Div {
+    let section = section("Compatibility", cx);
+    if repo.presets()[preset].kind == PresetKind::Machine {
+        let summary = format!("{} processes · {} filaments", compatibility.processes, compatibility.filaments);
+        return section
+            .child(field("Processes", compatibility.processes.to_string(), cx))
+            .child(field("Filaments", compatibility.filaments.to_string(), cx))
+            .child(div().id("compat-summary").test_support().aria_label(summary));
+    }
+    const SHOWN: usize = 12;
+    let printers = &compatibility.printers;
+    let plural = if printers.len() == 1 { "" } else { "s" };
+    let summary = format!("{} compatible printer{plural}", printers.len());
+    let mut section = section.child(div().id("compat-summary").test_support().aria_label(summary.clone()));
+    if let Some(condition) = &compatibility.condition {
+        let text = match condition {
+            Ok(source) => source.clone(),
+            Err(err) => format!("does not parse ({err}); OrcaSlicer treats it as compatible with everything"),
+        };
+        section = section.child(field("Condition", text, cx));
+    }
+    section = section.child(field("Printers", printers.len().to_string(), cx));
+    section = section.children(printers.iter().take(SHOWN).map(|name| list_line(name.clone())));
+    if printers.len() > SHOWN {
+        let more = format!("and {} more", printers.len() - SHOWN);
+        section = section.child(div().text_sm().text_color(cx.theme().muted_foreground).child(more));
+    }
+    section
+}
+
+pub fn render_preset(catalog: &Catalog, index: usize, compatibility: Option<&Compatibility>, cx: &App) -> AnyElement {
     let repo = &catalog.repo;
     let preset = &repo.presets()[index];
     let id = preset.id;
@@ -213,6 +288,11 @@ fn render_preset(catalog: &Catalog, index: usize, cx: &App) -> AnyElement {
         .child(file)
         .child(inheritance)
         .child(values)
+        .children(
+            compatibility
+                .filter(|compatibility| compatibility.preset == index)
+                .map(|compatibility| compatibility_section(repo, index, compatibility, cx)),
+        )
         .child(issue_list)
         .into_any_element()
 }

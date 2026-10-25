@@ -30,6 +30,7 @@ cargo run --release -p profile-tool -- stats
 cargo run --release -p profile-tool -- check --vendor Snapmaker --min info
 cargo run --release -p profile-tool -- resolve "Generic ABS @U1 0.2 nozzle"
 cargo run --release -p profile-tool -- search "nozzle_temperature 270"
+cargo run --release -p profile-tool -- compat "0.07mm DETAIL @CORE One 0.25"
 cargo run -p profile-studio -- ../OrcaSlicer/resources/profiles
 ```
 
@@ -109,7 +110,10 @@ from the package directory).
   `TableState::dump(cx)` (via `TableDelegate::cell_text`) reads table contents.
 - After a click whose effect goes through a subscription (e.g. `TableEvent::SelectRow`), call
   `cx.run_until_parked()` and `render_frame` before asserting on the new frame.
-- Read the gpui-kit Coding Guides (skill `gpui-kit`, `references/coding-guides.md`) before UI work.
+- Read the gpui-kit Coding Guides (skill `gpui-kit`, `references/coding-guides.md`) before UI work,
+  and the Design Guides (skill `gpui-kit-design-guides`) before designing or changing a screen.
+  Known deviation: older views size things with `px(...)`; new layout uses rem helpers (`w_48`,
+  `gap_2`, `p_4`…), keeping `px` for APIs that take `Pixels` (table column widths, panel sizes).
   `render` only reads state: views that need a `Window` (`TableState`, `InputState`) are created in
   event handlers. `StudioApp::sync_values` creates the `ValuesView` from the tree observer
   (`observe_in`), the tab handler and the palette; `ValuesView::sync_editor` rebuilds the value
@@ -146,7 +150,7 @@ from the package directory).
 
 [docs/roadmap.md](docs/roadmap.md) (Chinese) is the roadmap: stages and status, key design decisions
 of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
-M1, M2, M3, M4, M5; next: M6 (issues panel and condition expressions). When a stage is finished, move it to "已完成" there with its design
+M1, M2, M3, M4, M5, M6; next: M7 (dock layout, themes, multiple windows). When a stage is finished, move it to "已完成" there with its design
 decisions and commit, and update the status line in README.
 
 Changing the exporter is work in another repository (`../OrcaSlicer`); confirm with the user first.

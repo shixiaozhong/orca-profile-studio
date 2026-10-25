@@ -9,6 +9,7 @@ use indexmap::IndexMap;
 use serde_json::{Map, Value};
 
 use crate::check::check_params;
+use crate::compat::{CompatibilityIndex, Verdict};
 use crate::issue::{Issue, IssueKind};
 use crate::json::read_json;
 use crate::model::{MachineModel, Preset, PresetId, PresetKind, PresetMeta, RawValue, Vendor, VendorId, derived_alias};
@@ -66,6 +67,7 @@ impl<'a> KeyTrace<'a> {
 pub struct Repository {
     root: PathBuf,
     schema: Option<Arc<Schema>>,
+    compatibility: CompatibilityIndex,
     vendors: Vec<Vendor>,
     models: Vec<MachineModel>,
     presets: Vec<Preset>,
@@ -116,6 +118,8 @@ impl Repository {
         repo.check_cross_vendor_duplicates();
         repo.check_compatible_printers();
         repo.find_orphans();
+        repo.compatibility = CompatibilityIndex::build(&repo);
+        repo.check_conditions();
         Ok(repo)
     }
 
@@ -125,6 +129,11 @@ impl Repository {
 
     pub fn schema(&self) -> Option<&Schema> {
         self.schema.as_deref()
+    }
+
+    /// Which printers and processes each filament and process preset is compatible with.
+    pub fn compatibility(&self) -> &CompatibilityIndex {
+        &self.compatibility
     }
 
     pub fn vendors(&self) -> &[Vendor] {
@@ -608,6 +617,38 @@ impl Repository {
         }
         for (id, printer) in dangling {
             self.preset_issue(id, IssueKind::DanglingCompatiblePrinter { printer });
+        }
+    }
+
+    /// Reports conditions that do not parse, or that fail for some of the presets they are
+    /// evaluated against. OrcaSlicer treats both as "compatible with everything".
+    fn check_conditions(&mut self) {
+        let mut found = Vec::new();
+        for (preset, target, condition) in self.compatibility.conditions() {
+            let key = if target == PresetKind::Process {
+                "compatible_prints_condition"
+            } else {
+                "compatible_printers_condition"
+            };
+            if let Err(err) = condition {
+                found.push((preset, IssueKind::ConditionInvalid { key: key.to_owned(), message: err.to_string() }));
+                continue;
+            }
+            let targets = self.presets.iter().filter(|other| other.kind == target && self.is_selectable(other.id));
+            let mut failures = 0;
+            let mut first = None;
+            for other in targets {
+                if let Verdict::Condition(Err(err)) = self.compatibility.verdict(self, preset, other.id) {
+                    failures += 1;
+                    first.get_or_insert_with(|| format!("{}: {err}", other.name()));
+                }
+            }
+            if let Some(message) = first {
+                found.push((preset, IssueKind::ConditionFailed { key: key.to_owned(), message, failures }));
+            }
+        }
+        for (preset, kind) in found {
+            self.preset_issue(preset, kind);
         }
     }
 

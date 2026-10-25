@@ -13,8 +13,8 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::tree::{TreeEntry, TreeItem, TreeState, tree};
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _, h_flex, h_resizable, resizable_panel,
-    v_flex,
+    ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, StyledExt as _, h_flex, h_resizable,
+    resizable_panel, v_flex, v_resizable,
 };
 use gpui_kit::component::{IndexPath, WindowExt as _};
 use gpui_kit::prelude::*;
@@ -22,8 +22,9 @@ use gpui_kit::*;
 use profile_core::{Repository, Schema, Severity};
 
 use crate::catalog::Catalog;
-use crate::details::{self, severity_color};
+use crate::details::{self, Compatibility, severity_color};
 use crate::edits::Edits;
+use crate::issues::{IssuesEvent, IssuesView};
 use crate::palette::{self, AppCommand, Target};
 use crate::tree::{self as nav, Node, kind_icon};
 use crate::values::ValuesView;
@@ -72,6 +73,12 @@ pub struct StudioApp {
     /// The palette's groups and what each row targets, by section and row; rebuilt when the
     /// palette opens and when its query changes, never during render.
     palette_entries: PaletteEntries,
+    /// The selected preset's compatibility, computed when it is selected.
+    compatibility: Option<Compatibility>,
+    /// The issues panel; created when first opened.
+    issues: Option<Entity<IssuesView>>,
+    issues_open: bool,
+    _issues_events: Option<Subscription>,
     /// The window's default focus target, so app shortcuts such as ⌘K always have a dispatch path.
     focus: FocusHandle,
     _focus_lost: Subscription,
@@ -87,6 +94,12 @@ impl StudioApp {
             if selected != this.selected {
                 this.selected = selected;
                 this.sync_values(window, cx);
+                this.compatibility = match (&this.state, selected) {
+                    (LoadState::Ready(catalog), Some(Node::Preset(preset))) => {
+                        Some(Compatibility::compute(catalog, preset))
+                    }
+                    _ => None,
+                };
                 cx.notify();
             }
         });
@@ -105,6 +118,10 @@ impl StudioApp {
             confirm_discard: false,
             palette: None,
             palette_entries: PaletteEntries::default(),
+            compatibility: None,
+            issues: None,
+            issues_open: false,
+            _issues_events: None,
             focus: focus.clone(),
             _focus_lost: focus_lost,
             load_task: None,
@@ -125,6 +142,10 @@ impl StudioApp {
         self.edits = None;
         self.confirm_discard = false;
         self.palette_entries = PaletteEntries::default();
+        self.compatibility = None;
+        self.issues = None;
+        self.issues_open = false;
+        self._issues_events = None;
         self.tree.update(cx, |tree, cx| tree.set_items(Vec::new(), cx));
 
         let job = cx.background_executor().spawn({
@@ -228,6 +249,15 @@ impl StudioApp {
                     .on_click(cx.listener(|this, _, window, cx| this.open_palette(window, cx))),
             )
             .child(
+                Button::new("toggle-issues")
+                    .small()
+                    .icon(IconName::TriangleAlert)
+                    .label("Issues")
+                    .selected(self.issues_open)
+                    .disabled(!matches!(self.state, LoadState::Ready(_)))
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_issues(window, cx))),
+            )
+            .child(
                 Button::new("open")
                     .small()
                     .icon(IconName::FolderOpen)
@@ -305,14 +335,24 @@ impl StudioApp {
             )
             .into_any_element(),
         };
-        h_resizable("browser")
+        let browser = h_resizable("browser")
             .child(
                 resizable_panel()
                     .size(px(380.))
                     .size_range(px(240.)..px(720.))
                     .child(div().size_full().py_1().child(navigation)),
             )
-            .child(resizable_panel().child(div().size_full().p_4().child(details)))
+            .child(resizable_panel().child(div().size_full().p_4().child(details)));
+        let issues = self.issues.clone().filter(|_| self.issues_open);
+        v_resizable("workspace")
+            .child(resizable_panel().child(browser))
+            .when_some(issues, |workspace, issues| {
+                workspace.child(
+                    resizable_panel().size(px(280.)).size_range(px(140.)..px(720.)).child(
+                        div().size_full().px_4().pb_2().border_t_1().border_color(cx.theme().border).child(issues),
+                    ),
+                )
+            })
             .into_any_element()
     }
 
@@ -333,7 +373,7 @@ impl StudioApp {
                 .id("details")
                 .size_full()
                 .overflow_y_scroll()
-                .child(details::render(catalog, Node::Preset(index), cx))
+                .child(details::render_preset(catalog, index, self.compatibility.as_ref(), cx))
                 .into_any_element(),
             // The view is created by the handlers that select a preset or the tab (`sync_values`).
             PresetTab::Values => div()
@@ -436,14 +476,15 @@ impl StudioApp {
             Target::Command(AppCommand::Open) => self.choose_folder(cx),
             Target::Command(AppCommand::ShowOverview) => self.set_preset_tab(PresetTab::Overview, window, cx),
             Target::Command(AppCommand::ShowValues) => self.set_preset_tab(PresetTab::Values, window, cx),
-            Target::Preset(preset) => self.go_to_preset(preset, window, cx),
+            Target::Command(AppCommand::ShowIssues) => self.open_issues(window, cx),
+            Target::Preset(preset) => self.select_node(Node::Preset(preset), true, window, cx),
             Target::Option(key) => {
                 if let Some(Node::Preset(preset)) = self.selected {
                     reveal(self, preset, &key, window, cx);
                 }
             }
             Target::Value(preset, key) => {
-                self.go_to_preset(preset, window, cx);
+                self.select_node(Node::Preset(preset), true, window, cx);
                 reveal(self, preset, &key, window, cx);
             }
         }
@@ -451,13 +492,72 @@ impl StudioApp {
     }
 
     /// Selects a preset in the tree, expanding its ancestors and scrolling it into view.
-    fn go_to_preset(&mut self, preset: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let id = Node::Preset(preset).id();
+    /// Selects a node in the tree, expanding its ancestors and scrolling it into view; with
+    /// `focus`, keyboard focus moves to the tree.
+    fn select_node(&mut self, node: Node, focus: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let id = node.id();
         self.tree.update(cx, |tree, cx| {
             tree.set_selected_item(Some(&TreeItem::new(id.clone(), "")), cx);
             tree.reveal_item(&id, ScrollStrategy::Center, cx);
-            tree.focus(window, cx);
+            if focus {
+                tree.focus(window, cx);
+            }
         });
+    }
+
+    fn open_issues(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let LoadState::Ready(catalog) = &self.state else { return };
+        if self.issues.is_none() {
+            let catalog = catalog.clone();
+            let issues = cx.new(|cx| IssuesView::new(&catalog, window, cx));
+            self._issues_events = Some(cx.subscribe_in(&issues, window, |this, _, event, window, cx| match event {
+                IssuesEvent::Reveal(index) => this.reveal_issue(*index, window, cx),
+                IssuesEvent::Close => {
+                    this.issues_open = false;
+                    cx.notify();
+                }
+            }));
+            self.issues = Some(issues);
+        }
+        self.issues_open = true;
+        cx.notify();
+    }
+
+    fn toggle_issues(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.issues_open {
+            self.issues_open = false;
+            cx.notify();
+        } else {
+            self.open_issues(window, cx);
+        }
+    }
+
+    /// Shows where an issue is: its preset, and the key in the Values tab when it names one.
+    /// Keyboard focus stays in the issues list, so the arrow keys keep walking through issues.
+    fn reveal_issue(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let LoadState::Ready(catalog) = &self.state else { return };
+        let repo = &catalog.repo;
+        let issue = &repo.issues()[index];
+        // Some file-level issues are recorded before the preset gets an id.
+        let preset = issue
+            .preset
+            .map(|id| id.index())
+            .or_else(|| repo.presets().iter().position(|preset| preset.path == issue.path));
+        let key = issue.kind.key().map(str::to_owned);
+        let vendor = issue.vendor.index();
+        match preset {
+            Some(preset) => {
+                self.select_node(Node::Preset(preset), false, window, cx);
+                if let Some(key) = key {
+                    self.preset_tab = PresetTab::Values;
+                    if let Some(values) = self.ensure_values(preset, window, cx) {
+                        values.update(cx, |values, cx| values.reveal_key(&key, window, cx));
+                    }
+                }
+            }
+            None => self.select_node(Node::Vendor(vendor), false, window, cx),
+        }
+        cx.notify();
     }
 
     fn render_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -591,7 +691,7 @@ mod tests {
         AppContext as _, Bounds, Entity, Point, ScrollStrategy, TestAppContext, WindowBounds, WindowHandle,
         WindowOptions, px, size,
     };
-    use profile_core::PresetKind;
+    use profile_core::{PresetKind, Severity};
 
     use super::{Catalog, LoadState, Node, PresetTab, StudioApp, nav};
 
@@ -964,6 +1064,79 @@ mod tests {
         // A command.
         run_palette(window, "reload", cx);
         assert!(!Arc::ptr_eq(&catalog(&app, cx), &loaded), "profiles were loaded again");
+    }
+
+    #[gpui_kit::test]
+    fn issues_panel_filters_and_reveals_issues(cx: &mut TestAppContext) {
+        let Some(dir) = profiles_dir() else { return };
+        let (window, app) = open(cx, dir);
+        cx.run_until_parked();
+        let loaded = catalog(&app, cx);
+        let repo = &loaded.repo;
+
+        click(window, "toggle-issues", cx);
+        let issues = app.read_with(cx, |app, _| app.issues.clone()).expect("the panel is created when opened");
+        let rows = |cx: &mut TestAppContext| issues.read_with(cx, |issues, cx| issues.table().read(cx).dump(cx).1);
+        // Warnings and above by default.
+        let expected = repo.issues().iter().filter(|issue| issue.severity() >= Severity::Warning).count();
+        assert_eq!(rows(cx).len(), expected);
+
+        // Pick a code through its searchable select.
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.within("issues-code").click("input", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| window.input("item-unparsable", cx)).unwrap();
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.press("down", cx);
+            window.press("enter", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let filtered = rows(cx);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0][1], "item-unparsable");
+
+        // Selecting the row shows the preset and the key, without leaving the list.
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.within("issues-list").click(("row", 0usize), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let asa = repo.find(PresetKind::Filament, "Bambu ASA @BBL X1 0.6 nozzle")[0];
+        app.read_with(cx, |app, _| {
+            assert_eq!(app.selected, Some(Node::Preset(asa.index())));
+            assert_eq!(app.preset_tab, PresetTab::Values);
+        });
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("value-detail").label(), Some("textured_plate_temp_initial_layer"));
+        })
+        .unwrap();
+
+        click(window, "close-issues", cx);
+        assert!(!app.read_with(cx, |app, _| app.issues_open));
+    }
+
+    #[gpui_kit::test]
+    fn overview_shows_compatibility(cx: &mut TestAppContext) {
+        let Some(dir) = profiles_dir() else { return };
+        let (window, app) = open(cx, dir);
+        cx.run_until_parked();
+        // A process whose condition selects one printer.
+        run_palette(window, "0.07mm DETAIL @CORE One 0.25", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("compat-summary").label(), Some("1 compatible printer"));
+        })
+        .unwrap();
+        let printer = app.read_with(cx, |app, _| app.compatibility.as_ref().unwrap().printers.clone());
+        assert_eq!(printer, ["Prusa CORE One 0.25 nozzle"]);
     }
 
     #[gpui_kit::test]

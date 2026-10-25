@@ -5,6 +5,8 @@
 //! Unlike OrcaSlicer, loading never aborts: every deviation becomes an [`Issue`].
 
 mod check;
+mod compat;
+mod condition;
 mod diff;
 mod document;
 mod edit;
@@ -17,6 +19,8 @@ mod schema;
 mod search;
 mod stats;
 
+pub use compat::{CompatibilityIndex, Verdict};
+pub use condition::{Condition, ConditionError, Value, Variable};
 pub use diff::{DiffError, KeyDiff};
 pub use document::{Document, DocumentError};
 pub use edit::{Change, EditSession, SaveError};

@@ -132,6 +132,17 @@ pub enum IssueKind {
         min: Option<i64>,
         max: Option<i64>,
     },
+    // Compatibility conditions; OrcaSlicer treats a failing condition as "compatible with everything"
+    ConditionInvalid {
+        key: String,
+        message: String,
+    },
+    /// `message` describes the first failure; `failures` counts the presets it failed for.
+    ConditionFailed {
+        key: String,
+        message: String,
+        failures: usize,
+    },
 }
 
 impl IssueKind {
@@ -157,7 +168,9 @@ impl IssueKind {
             | DuplicateAcrossVendors { .. }
             | KeyNotForKind { reported: true, .. }
             | ItemUnparsable { .. }
-            | ValueSubstituted { .. } => Severity::Error,
+            | ValueSubstituted { .. }
+            | ConditionInvalid { .. }
+            | ConditionFailed { .. } => Severity::Error,
             Utf8Bom
             | TypeMismatch { .. }
             | UnexpectedFrom(Some(_))
@@ -190,6 +203,8 @@ impl IssueKind {
             | ValueSubstituted { key, .. }
             | ValueTrailingText { key, .. }
             | ValueOutOfRange { key, .. }
+            | ConditionInvalid { key, .. }
+            | ConditionFailed { key, .. }
             | InvalidValueType { key } => Some(key),
             _ => None,
         }
@@ -233,6 +248,8 @@ impl IssueKind {
             ValueSubstituted { .. } => "value-substituted",
             ValueTrailingText { .. } => "value-trailing-text",
             ValueOutOfRange { .. } => "value-out-of-range",
+            ConditionInvalid { .. } => "condition-invalid",
+            ConditionFailed { .. } => "condition-failed",
         }
     }
 }
@@ -305,6 +322,15 @@ impl fmt::Display for IssueKind {
             ValueOutOfRange { key, value, min, max } => {
                 let bound = |bound: &Option<i64>| bound.map_or_else(|| "-".to_owned(), |bound| bound.to_string());
                 write!(f, "`{key}`: {value} is outside the GUI range [{}, {}]", bound(min), bound(max))
+            }
+            ConditionInvalid { key, message } => {
+                write!(f, "`{key}` cannot be parsed ({message}); OrcaSlicer treats it as compatible with everything")
+            }
+            ConditionFailed { key, message, failures } => {
+                write!(
+                    f,
+                    "`{key}` fails for {failures} preset(s), e.g. {message}; OrcaSlicer treats those as compatible"
+                )
             }
         }
     }
