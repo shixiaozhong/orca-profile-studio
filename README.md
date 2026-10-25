@@ -2,7 +2,7 @@
 
 OrcaSlicer 系统配置文件（`resources/profiles`）的浏览、校验与编辑工具，也是一个 GPUI 练手项目。
 
-目前完成了 M0 到 M6：
+目前完成了 M0 到 M7：
 - M0：不依赖界面的 core 库，加一个命令行工具；
 - M0.5：从 OrcaSlicer 导出的配置项 schema，用来校验参数值、补全默认值；
 - M1：用 gpui-kit 写的桌面浏览器；
@@ -10,7 +10,8 @@ OrcaSlicer 系统配置文件（`resources/profiles`）的浏览、校验与编�
 - M3：在界面里编辑预设的值，支持撤销和重做，保存时只改动变化的那几行；
 - M4：并排对比同类型预设的最终值和来源，包含未保存的修改；
 - M5：全局搜索和命令面板（⌘K）；
-- M6：校验结果面板，以及兼容性条件表达式求值。
+- M6：校验结果面板，以及兼容性条件表达式求值；
+- M7：记住布局和上次的目录，亮色、暗色和跟随系统的主题，多窗口。
 
 ## 结构
 
@@ -65,6 +66,8 @@ profiles 目录按以下顺序确定：
   - 回车跳到选中的结果：预设会在树上展开并选中；值和配置项会打开 Values 页并筛选到这个键。
   - 也可以运行命令：重新加载、打开目录、切换 Overview / Values。
   - 只搜加载时的数据，未保存的编辑要保存并 Reload 后才能搜到。
+- **主题和窗口**：在 ⌘K 里运行「Theme: System / Light / Dark」切换主题，默认跟随系统。⌘N 或 File 菜单的「New Window」打开一个独立的新窗口，加载上次的目录。
+- **记住的设置**：主题、上次的目录、侧栏宽度、问题面板的开关和高度、窗口大小，保存在 `~/Library/Application Support/orca-profile-studio/settings.json`（可用 `ORCA_STUDIO_SETTINGS` 指定别的路径）。不带参数启动时，打开上次的目录。
 - **后台加载**：加载在后台线程进行，界面期间保持可响应。重新加载或打开新目录时，会丢弃旧的加载结果。
 
 界面测试在 `crates/profile-studio/src/app.rs` 的 `tests` 模块里，用的是 gpui-kit 的 headless 测试：渲染真实界面，模拟点击，然后断言状态。
@@ -153,4 +156,4 @@ cargo test
 
 ## 路线图
 
-已完成 M0 到 M6，下一步是 M7 可停靠布局、主题和多窗口。各阶段的范围、关键设计决定、依赖和完成标准见 [docs/roadmap.md](docs/roadmap.md)。
+已完成 M0 到 M7。路线图上剩下的是扩展项：2D G-code 分层查看器。各阶段的范围、关键设计决定、依赖和完成标准见 [docs/roadmap.md](docs/roadmap.md)。

@@ -4,6 +4,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::command::{CommandGroup, CommandItem};
 
 use crate::catalog::Catalog;
+use crate::settings::ThemePreference;
 
 /// Hits shown per result group.
 const LIMIT: usize = 8;
@@ -15,24 +16,32 @@ pub enum AppCommand {
     ShowOverview,
     ShowValues,
     ShowIssues,
+    NewWindow,
+    Theme(ThemePreference),
 }
 
 impl AppCommand {
-    const ALL: [AppCommand; 5] = [
+    const ALL: [AppCommand; 9] = [
         AppCommand::Reload,
         AppCommand::Open,
         AppCommand::ShowOverview,
         AppCommand::ShowValues,
         AppCommand::ShowIssues,
+        AppCommand::NewWindow,
+        AppCommand::Theme(ThemePreference::System),
+        AppCommand::Theme(ThemePreference::Light),
+        AppCommand::Theme(ThemePreference::Dark),
     ];
 
-    fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            AppCommand::Reload => "Reload profiles from disk",
-            AppCommand::Open => "Open profiles directory…",
-            AppCommand::ShowOverview => "Show preset overview",
-            AppCommand::ShowValues => "Show preset values",
-            AppCommand::ShowIssues => "Show issues",
+            AppCommand::Reload => "Reload profiles from disk".to_owned(),
+            AppCommand::Open => "Open profiles directory…".to_owned(),
+            AppCommand::ShowOverview => "Show preset overview".to_owned(),
+            AppCommand::ShowValues => "Show preset values".to_owned(),
+            AppCommand::ShowIssues => "Show issues".to_owned(),
+            AppCommand::NewWindow => "New window".to_owned(),
+            AppCommand::Theme(theme) => format!("Theme: {}", theme.label()),
         }
     }
 
@@ -43,6 +52,8 @@ impl AppCommand {
             AppCommand::ShowOverview => IconName::Info,
             AppCommand::ShowValues => IconName::Table,
             AppCommand::ShowIssues => IconName::TriangleAlert,
+            AppCommand::NewWindow => IconName::AppWindow,
+            AppCommand::Theme(_) => IconName::Palette,
         }
     }
 
@@ -50,7 +61,11 @@ impl AppCommand {
     fn available(self, preset_selected: bool) -> bool {
         match self {
             AppCommand::ShowOverview | AppCommand::ShowValues => preset_selected,
-            AppCommand::Reload | AppCommand::Open | AppCommand::ShowIssues => true,
+            AppCommand::Reload
+            | AppCommand::Open
+            | AppCommand::ShowIssues
+            | AppCommand::NewWindow
+            | AppCommand::Theme(_) => true,
         }
     }
 }
@@ -69,7 +84,12 @@ pub enum Target {
 
 /// The palette's groups for `query`, and what each row of each group targets, by
 /// `IndexPath { section, row }`. Empty groups are left out.
-pub fn build(catalog: &Catalog, query: &str, preset_selected: bool) -> (Vec<CommandGroup>, Vec<Vec<Target>>) {
+pub fn build(
+    catalog: &Catalog,
+    query: &str,
+    preset_selected: bool,
+    theme: ThemePreference,
+) -> (Vec<CommandGroup>, Vec<Vec<Target>>) {
     let repo = &catalog.repo;
     let lower = query.trim().to_lowercase();
     let mut groups: Vec<(String, Vec<(CommandItem, Target)>)> = Vec::new();
@@ -78,7 +98,12 @@ pub fn build(catalog: &Catalog, query: &str, preset_selected: bool) -> (Vec<Comm
         .into_iter()
         .filter(|command| command.available(preset_selected))
         .filter(|command| lower.split_whitespace().all(|term| command.label().to_lowercase().contains(term)))
-        .map(|command| (CommandItem::new().label(command.label()).icon(command.icon()), Target::Command(command)))
+        .map(|command| {
+            let item = CommandItem::new().label(command.label()).icon(command.icon());
+            // The current theme carries a check mark.
+            let item = item.checked(command == AppCommand::Theme(theme));
+            (item, Target::Command(command))
+        })
         .collect();
     groups.push(("Commands".to_owned(), commands));
 

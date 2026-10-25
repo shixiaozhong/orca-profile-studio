@@ -9,6 +9,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::command::{Command, CommandGroup, CommandState};
 use gpui_kit::component::list::ListItem;
+use gpui_kit::component::resizable::{ResizablePanelEvent, ResizableState};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::tree::{TreeEntry, TreeItem, TreeState, tree};
@@ -16,7 +17,7 @@ use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, StyledExt as _, h_flex, h_resizable,
     resizable_panel, v_flex, v_resizable,
 };
-use gpui_kit::component::{IndexPath, WindowExt as _};
+use gpui_kit::component::{IndexPath, Theme, WindowExt as _};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use profile_core::{Repository, Schema, Severity};
@@ -26,6 +27,7 @@ use crate::details::{self, Compatibility, severity_color};
 use crate::edits::Edits;
 use crate::issues::{IssuesEvent, IssuesView};
 use crate::palette::{self, AppCommand, Target};
+use crate::settings::{self, ThemePreference};
 use crate::tree::{self as nav, Node, kind_icon};
 use crate::values::ValuesView;
 
@@ -44,7 +46,7 @@ enum PresetTab {
     Values,
 }
 
-actions!(studio, [OpenPalette]);
+actions!(studio, [OpenPalette, NewWindow]);
 
 #[derive(Default)]
 struct PaletteEntries {
@@ -53,7 +55,25 @@ struct PaletteEntries {
 }
 
 pub fn init(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new("cmd-k", OpenPalette, None)]);
+    cx.bind_keys([KeyBinding::new("cmd-k", OpenPalette, None), KeyBinding::new("cmd-n", NewWindow, None)]);
+    // Each window loads the directory on its own; a new one opens the directory loaded last.
+    cx.on_action(|_: &NewWindow, cx| open_window(settings::get(cx).profiles_dir.clone(), cx));
+}
+
+/// Opens a studio window, sized as the last window was when it closed.
+pub fn open_window(profiles_dir: Option<PathBuf>, cx: &mut App) {
+    let (width, height) = settings::get(cx).window_size.unwrap_or((1280., 820.));
+    let bounds = Bounds::centered(None, size(px(width), px(height)), cx);
+    let options = WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        titlebar: Some(TitlebarOptions { title: Some("Orca Profile Studio".into()), ..Default::default() }),
+        ..Default::default()
+    };
+    if let Err(err) =
+        gpui_kit::open_window(options, cx, |window, cx| cx.new(|cx| StudioApp::new(profiles_dir, window, cx)))
+    {
+        eprintln!("cannot open a window: {err}");
+    }
 }
 
 pub struct StudioApp {
@@ -82,8 +102,11 @@ pub struct StudioApp {
     /// The window's default focus target, so app shortcuts such as ⌘K always have a dispatch path.
     focus: FocusHandle,
     _focus_lost: Subscription,
+    /// The tree / details split and the browser / issues split; their sizes are saved.
+    browser_layout: Entity<ResizableState>,
+    workspace_layout: Entity<ResizableState>,
     load_task: Option<Task<()>>,
-    _tree_observer: Subscription,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl StudioApp {
@@ -107,6 +130,35 @@ impl StudioApp {
         focus.focus(window, cx);
         // When the focused element goes away (a closed view, a reload), shortcuts need a new home.
         let focus_lost = cx.on_focus_lost(window, |this, window, cx| this.focus.focus(window, cx));
+        let browser_layout = cx.new(|_| ResizableState::default());
+        let workspace_layout = cx.new(|_| ResizableState::default());
+        let subscriptions = vec![
+            tree_observer,
+            cx.subscribe(&browser_layout, |_, layout, _: &ResizablePanelEvent, cx| {
+                if let Some(&width) = layout.read(cx).sizes().first() {
+                    settings::update(cx, |settings| settings.sidebar_width = Some(width.into()));
+                }
+            }),
+            cx.subscribe(&workspace_layout, |this, layout, _: &ResizablePanelEvent, cx| {
+                if this.issues_open
+                    && let Some(&height) = layout.read(cx).sizes().get(1)
+                {
+                    settings::update(cx, |settings| settings.issues_height = Some(height.into()));
+                }
+            }),
+            // The System theme follows the appearance while the app runs.
+            cx.observe_window_appearance(window, |_, window, cx| {
+                if settings::get(cx).theme == ThemePreference::System {
+                    Theme::sync_system_appearance(Some(window), cx);
+                }
+            }),
+        ];
+        window.on_window_should_close(cx, |window, cx| {
+            // The bounds to reopen the window with, the same kind `WindowOptions` takes.
+            let size = window.window_bounds().get_bounds().size;
+            settings::update(cx, |settings| settings.window_size = Some((size.width.into(), size.height.into())));
+            true
+        });
         let mut app = StudioApp {
             profiles_dir: None,
             state: LoadState::Empty,
@@ -124,17 +176,21 @@ impl StudioApp {
             _issues_events: None,
             focus: focus.clone(),
             _focus_lost: focus_lost,
+            browser_layout,
+            workspace_layout,
             load_task: None,
-            _tree_observer: tree_observer,
+            _subscriptions: subscriptions,
         };
         if let Some(dir) = profiles_dir {
-            app.load(dir, cx);
+            app.load(dir, window, cx);
         }
         app
     }
 
     /// Loads `dir` on the background executor; a newer request supersedes a running one.
-    fn load(&mut self, dir: PathBuf, cx: &mut Context<Self>) {
+    fn load(&mut self, dir: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        // Absolute and without `..`, so the saved setting does not depend on where the app started.
+        let dir = dir.canonicalize().or_else(|_| std::path::absolute(&dir)).unwrap_or(dir);
         self.profiles_dir = Some(dir.clone());
         self.state = LoadState::Loading(dir.clone());
         self.selected = None;
@@ -157,14 +213,20 @@ impl StudioApp {
                     .map_err(|err| err.to_string())
             }
         });
-        self.load_task = Some(cx.spawn(async move |this, cx| {
+        self.load_task = Some(cx.spawn_in(window, async move |this, cx| {
             let result = job.await;
-            this.update(cx, |this, cx| this.finish_load(dir, result, cx)).ok();
+            this.update_in(cx, |this, window, cx| this.finish_load(dir, result, window, cx)).ok();
         }));
         cx.notify();
     }
 
-    fn finish_load(&mut self, dir: PathBuf, result: Result<Catalog, String>, cx: &mut Context<Self>) {
+    fn finish_load(
+        &mut self,
+        dir: PathBuf,
+        result: Result<Catalog, String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.profiles_dir.as_ref() != Some(&dir) {
             return;
         }
@@ -176,11 +238,15 @@ impl StudioApp {
                 let edits = cx.new(|_| Edits::new(catalog.clone()));
                 cx.observe(&edits, |_, _, cx| cx.notify()).detach();
                 self.edits = Some(edits);
+                settings::update(cx, |settings| settings.profiles_dir = Some(dir.clone()));
                 LoadState::Ready(catalog)
             }
             Err(err) => LoadState::Failed(dir, err),
         };
         self.load_task = None;
+        if matches!(self.state, LoadState::Ready(_)) && settings::get(cx).issues_open {
+            self.open_issues(window, cx);
+        }
         cx.notify();
     }
 
@@ -195,7 +261,7 @@ impl StudioApp {
         true
     }
 
-    fn choose_folder(&mut self, cx: &mut Context<Self>) {
+    fn choose_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.may_discard(cx) {
             return;
         }
@@ -205,22 +271,22 @@ impl StudioApp {
             multiple: false,
             prompt: Some("Open".into()),
         });
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             if let Ok(Ok(Some(mut paths))) = picked.await
                 && let Some(dir) = paths.pop()
             {
-                this.update(cx, |this, cx| this.load(dir, cx)).ok();
+                this.update_in(cx, |this, window, cx| this.load(dir, window, cx)).ok();
             }
         })
         .detach();
     }
 
-    fn reload(&mut self, cx: &mut Context<Self>) {
+    fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.may_discard(cx) {
             return;
         }
         if let Some(dir) = self.profiles_dir.clone() {
-            self.load(dir, cx);
+            self.load(dir, window, cx);
         }
     }
 
@@ -262,7 +328,7 @@ impl StudioApp {
                     .small()
                     .icon(IconName::FolderOpen)
                     .label("Open…")
-                    .on_click(cx.listener(|this, _, _, cx| this.choose_folder(cx))),
+                    .on_click(cx.listener(|this, _, window, cx| this.choose_folder(window, cx))),
             )
             .when(self.confirm_discard, |bar| {
                 bar.child(
@@ -280,7 +346,7 @@ impl StudioApp {
                     .icon(IconName::RefreshCw)
                     .tooltip("Reload from disk")
                     .disabled(self.profiles_dir.is_none() || matches!(self.state, LoadState::Loading(_)))
-                    .on_click(cx.listener(|this, _, _, cx| this.reload(cx))),
+                    .on_click(cx.listener(|this, _, window, cx| this.reload(window, cx))),
             )
     }
 
@@ -335,20 +401,25 @@ impl StudioApp {
             )
             .into_any_element(),
         };
+        let layout = settings::get(cx);
+        let (sidebar_width, issues_height) =
+            (layout.sidebar_width.unwrap_or(380.), layout.issues_height.unwrap_or(280.));
         let browser = h_resizable("browser")
+            .with_state(&self.browser_layout)
             .child(
                 resizable_panel()
-                    .size(px(380.))
+                    .size(px(sidebar_width))
                     .size_range(px(240.)..px(720.))
                     .child(div().size_full().py_1().child(navigation)),
             )
             .child(resizable_panel().child(div().size_full().p_4().child(details)));
         let issues = self.issues.clone().filter(|_| self.issues_open);
         v_resizable("workspace")
+            .with_state(&self.workspace_layout)
             .child(resizable_panel().child(browser))
             .when_some(issues, |workspace, issues| {
                 workspace.child(
-                    resizable_panel().size(px(280.)).size_range(px(140.)..px(720.)).child(
+                    resizable_panel().size(px(issues_height)).size_range(px(140.)..px(720.)).child(
                         div().size_full().px_4().pb_2().border_t_1().border_color(cx.theme().border).child(issues),
                     ),
                 )
@@ -418,7 +489,7 @@ impl StudioApp {
     fn refresh_palette(&mut self, query: &str, cx: &mut Context<Self>) {
         let LoadState::Ready(catalog) = &self.state else { return };
         let preset_selected = matches!(self.selected, Some(Node::Preset(_)));
-        let (groups, targets) = palette::build(catalog, query, preset_selected);
+        let (groups, targets) = palette::build(catalog, query, preset_selected, settings::get(cx).theme);
         self.palette_entries = PaletteEntries { groups, targets };
         cx.notify();
     }
@@ -473,8 +544,10 @@ impl StudioApp {
             }
         };
         match target {
-            Target::Command(AppCommand::Reload) => self.reload(cx),
-            Target::Command(AppCommand::Open) => self.choose_folder(cx),
+            Target::Command(AppCommand::Reload) => self.reload(window, cx),
+            Target::Command(AppCommand::Open) => self.choose_folder(window, cx),
+            Target::Command(AppCommand::Theme(theme)) => settings::set_theme(theme, window, cx),
+            Target::Command(AppCommand::NewWindow) => window.dispatch_action(Box::new(NewWindow), cx),
             Target::Command(AppCommand::ShowOverview) => self.set_preset_tab(PresetTab::Overview, window, cx),
             Target::Command(AppCommand::ShowValues) => self.set_preset_tab(PresetTab::Values, window, cx),
             Target::Command(AppCommand::ShowIssues) => self.open_issues(window, cx),
@@ -513,21 +586,24 @@ impl StudioApp {
             let issues = cx.new(|cx| IssuesView::new(&catalog, window, cx));
             self._issues_events = Some(cx.subscribe_in(&issues, window, |this, _, event, window, cx| match event {
                 IssuesEvent::Reveal(index) => this.reveal_issue(*index, window, cx),
-                IssuesEvent::Close => {
-                    this.issues_open = false;
-                    cx.notify();
-                }
+                IssuesEvent::Close => this.close_issues(cx),
             }));
             self.issues = Some(issues);
         }
         self.issues_open = true;
+        settings::update(cx, |settings| settings.issues_open = true);
+        cx.notify();
+    }
+
+    fn close_issues(&mut self, cx: &mut Context<Self>) {
+        self.issues_open = false;
+        settings::update(cx, |settings| settings.issues_open = false);
         cx.notify();
     }
 
     fn toggle_issues(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.issues_open {
-            self.issues_open = false;
-            cx.notify();
+            self.close_issues(cx);
         } else {
             self.open_issues(window, cx);
         }
@@ -694,7 +770,8 @@ mod tests {
     };
     use profile_core::{PresetKind, Severity};
 
-    use super::{Catalog, LoadState, Node, PresetTab, StudioApp, nav};
+    use super::{Catalog, LoadState, Node, PresetTab, StudioApp, ThemePreference, nav};
+    use gpui_kit::component::ActiveTheme as _;
 
     fn profiles_dir() -> Option<PathBuf> {
         // Tests run from the package directory; a relative `ORCA_PROFILES_DIR` means the workspace root.
@@ -706,7 +783,17 @@ mod tests {
     }
 
     fn open(cx: &mut TestAppContext, dir: PathBuf) -> (WindowHandle<Root>, Entity<StudioApp>) {
+        open_with_settings(cx, dir, None)
+    }
+
+    /// Opens a window; `settings` is the settings file, `None` keeps settings in memory only.
+    fn open_with_settings(
+        cx: &mut TestAppContext,
+        dir: PathBuf,
+        settings: Option<PathBuf>,
+    ) -> (WindowHandle<Root>, Entity<StudioApp>) {
         cx.update(gpui_kit::init);
+        cx.update(|cx| crate::settings::init(settings, cx));
         cx.update(crate::values::init);
         cx.update(super::init);
         cx.update(|cx| {
@@ -1138,6 +1225,81 @@ mod tests {
         .unwrap();
         let printer = app.read_with(cx, |app, _| app.compatibility.as_ref().unwrap().printers.clone());
         assert_eq!(printer, ["Prusa CORE One 0.25 nozzle"]);
+    }
+
+    #[gpui_kit::test]
+    fn theme_commands_switch_colors(cx: &mut TestAppContext) {
+        let dir = editable_fixture();
+        let (window, _) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        let colors = |cx: &mut TestAppContext| cx.update(|cx| (cx.theme().is_dark(), cx.theme().background));
+
+        run_palette(window, "theme: light", cx);
+        let (dark, light_background) = colors(cx);
+        assert!(!dark);
+        run_palette(window, "theme: dark", cx);
+        let (dark, dark_background) = colors(cx);
+        assert!(dark);
+        assert_ne!(dark_background, light_background, "the window is painted with the dark theme");
+        cx.update(|cx| assert_eq!(crate::settings::get(cx).theme, ThemePreference::Dark));
+    }
+
+    /// `path` written relative to the current directory.
+    fn pathdiff_relative(path: &Path) -> PathBuf {
+        let current = std::env::current_dir().unwrap();
+        let depth = current.components().count() - 1;
+        let up: PathBuf = std::iter::repeat_n("..", depth).collect();
+        up.join(path.strip_prefix("/").unwrap())
+    }
+
+    #[gpui_kit::test]
+    fn layout_is_restored_and_saved(cx: &mut TestAppContext) {
+        let dir = editable_fixture();
+        let settings_dir = tempfile::tempdir().unwrap();
+        let path = settings_dir.path().join("settings.json");
+        let saved = crate::settings::Settings {
+            sidebar_width: Some(300.),
+            issues_open: true,
+            issues_height: Some(200.),
+            ..Default::default()
+        };
+        saved.save(&path).unwrap();
+
+        // A relative directory is saved as an absolute path.
+        let relative = pathdiff_relative(dir.path());
+        let (window, app) = open_with_settings(cx, relative, Some(path.clone()));
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| window.render_frame(cx)).unwrap();
+        app.read_with(cx, |app, cx| {
+            assert!(app.issues_open, "the issues panel reopens");
+            assert_eq!(app.browser_layout.read(cx).sizes().first().copied(), Some(px(300.)));
+            assert_eq!(app.workspace_layout.read(cx).sizes().get(1).copied(), Some(px(200.)));
+        });
+
+        // Resizing (as a drag would), closing the panel and loading a directory are remembered.
+        let (browser, workspace) =
+            app.read_with(cx, |app, _| (app.browser_layout.clone(), app.workspace_layout.clone()));
+        cx.update_window(window.into(), |_, window, cx| {
+            browser.update(cx, |layout, cx| layout.resize_panel(0, px(320.), window, cx));
+            workspace.update(cx, |layout, cx| layout.resize_panel(1, px(240.), window, cx));
+        })
+        .unwrap();
+        cx.run_until_parked();
+        click(window, "toggle-issues", cx);
+        let stored = crate::settings::Settings::load(&path);
+        assert!(!stored.issues_open);
+        assert_eq!(stored.profiles_dir, Some(dir.path().canonicalize().unwrap()));
+        assert_eq!(stored.sidebar_width, Some(320.));
+        assert_eq!(stored.issues_height, Some(240.));
+    }
+
+    #[gpui_kit::test]
+    fn new_window_opens_another_window(cx: &mut TestAppContext) {
+        let dir = editable_fixture();
+        let (window, _) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "new window", cx);
+        assert_eq!(cx.update(|cx| cx.windows().len()), 2);
     }
 
     #[gpui_kit::test]

@@ -133,6 +133,11 @@ from the package directory).
   cannot return `Stateful<Div>`; return `AnyElement` (an `impl IntoElement` return captures `cx`).
 - Saving writes into the profiles directory, i.e. the OrcaSlicer checkout. UI tests that save use a
   temporary fixture (`editable_fixture` in `app.rs`), never the real profiles.
+- App preferences live in the `SettingsStore` global (`settings.rs`), saved on every change to
+  `~/Library/Application Support/orca-profile-studio/settings.json` or `ORCA_STUDIO_SETTINGS`. UI tests
+  open windows through `open_with_settings(cx, dir, None)`, which keeps settings in memory, so they
+  never touch the user's file. Resizable splits keep an `Entity<ResizableState>`; its `Resized`
+  event (also emitted by `resize_panel`) is where sizes are saved.
 - Shortcuts only dispatch when something is focused: `StudioApp` focuses its root `FocusHandle` at
   creation and takes it back through `cx.on_focus_lost` when the focused element goes away. Never
   request focus from `render`.
@@ -161,7 +166,7 @@ from the package directory).
 
 [docs/roadmap.md](docs/roadmap.md) (Chinese) is the roadmap: stages and status, key design decisions
 of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
-M1, M2, M3, M4, M5, M6; next: M7 (dock layout, themes, multiple windows). When a stage is finished, move it to "已完成" there with its design
+M1, M2, M3, M4, M5, M6, M7; left: the stretch 2D G-code viewer. When a stage is finished, move it to "已完成" there with its design
 decisions and commit, and update the status line in README.
 
 Changing the exporter is work in another repository (`../OrcaSlicer`); confirm with the user first.

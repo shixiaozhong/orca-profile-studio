@@ -5371,6 +5371,7 @@ version = "0.1.0"
 dependencies = [
  "gpui-kit",
  "profile-core",
+ "serde",
  "serde_json",
  "tempfile",
 ]
