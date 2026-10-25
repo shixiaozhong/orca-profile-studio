@@ -363,7 +363,7 @@ impl CompareView {
             .id("compare-detail")
             .test_support()
             .aria_label(row.key.clone())
-            .h(px(220.))
+            .h_56()
             .flex_shrink_0()
             .overflow_y_scroll()
             .p_3()
@@ -404,7 +404,7 @@ impl Render for CompareView {
             .placeholder("Choose a preset of the same kind…")
             .search_placeholder("Search vendor or preset")
             .w_full()
-            .menu_width(px(600.));
+            .menu_width(rems(37.5));
         let filters = h_flex()
             .gap_3()
             .flex_wrap()
@@ -414,7 +414,7 @@ impl Render for CompareView {
                     .aria_label("Filter comparison")
                     .small()
                     .cleanable(true)
-                    .w(px(250.)),
+                    .w_64(),
             )
             .child(Checkbox::new("only-differences").label("Only differences").checked(self.only_differences).on_click(
                 cx.listener(|this, checked: &bool, _, cx| {
@@ -441,7 +441,7 @@ impl Render for CompareView {
                     .child(left_title),
             )
             // Select's root fills its parent; constrain its height so the table can use the rest.
-            .child(div().h(px(32.)).flex_shrink_0().child(picker))
+            .child(div().h_8().flex_shrink_0().child(picker))
             .when_some(right_title, |view, title| {
                 view.child(
                     div().id("compare-right-title").test_support().aria_label(title.clone()).text_sm().child(title),

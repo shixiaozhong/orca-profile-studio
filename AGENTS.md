@@ -122,8 +122,9 @@ from the package directory).
   `cx.run_until_parked()` and `render_frame` before asserting on the new frame.
 - Read the gpui-kit Coding Guides (skill `gpui-kit`, `references/coding-guides.md`) before UI work,
   and the Design Guides (skill `gpui-kit-design-guides`) before designing or changing a screen.
-  Known deviation: older views size things with `px(...)`; new layout uses rem helpers (`w_48`,
-  `gap_2`, `p_4`…), keeping `px` for APIs that take `Pixels` (table column widths, panel sizes).
+  Layout sizes use rem helpers (`w_48`, `h_72`, `gap_2`…) or `rems(..)` when no helper fits, so
+  they follow the theme's base font. `px(..)` only where the API takes `Pixels`: table column
+  widths, resizable panel sizes, `Dialog::w` / `margin_top`, window bounds.
   `render` only reads state: views that need a `Window` (`TableState`, `InputState`) are created in
   event handlers. `StudioApp::sync_values` creates the `ValuesView` from the tree observer
   (`observe_in`), the tab handler and the palette; `ValuesView::sync_editor` rebuilds the value

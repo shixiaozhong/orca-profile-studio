@@ -213,9 +213,7 @@ pub fn render_preset(catalog: &Catalog, index: usize, compatibility: Option<&Com
             h_flex()
                 .gap_2()
                 .text_sm()
-                .child(
-                    div().w(px(28.)).flex_shrink_0().text_color(muted).child(SharedString::from(format!("[{depth}]"))),
-                )
+                .child(div().w_7().flex_shrink_0().text_color(muted).child(SharedString::from(format!("[{depth}]"))))
                 .child(div().flex_shrink_0().child(ancestor.name().to_owned()))
                 .child(div().min_w_0().truncate().text_color(muted).child(ancestor.path.display().to_string()))
         }));
@@ -274,7 +272,7 @@ pub fn render_preset(catalog: &Catalog, index: usize, compatibility: Option<&Com
             .items_start()
             .text_sm()
             .child(Icon::new(IconName::TriangleAlert).small().text_color(color))
-            .child(div().w(px(200.)).flex_shrink_0().text_color(muted).child(issue.kind.code()))
+            .child(div().w_48().flex_shrink_0().text_color(muted).child(issue.kind.code()))
             .child(div().flex_1().min_w_0().child(issue.kind.to_string()))
     }));
 
@@ -334,7 +332,7 @@ fn field(label: &str, value: impl Into<SharedString>, cx: &App) -> Div {
         .gap_3()
         .items_start()
         .text_sm()
-        .child(div().w(px(160.)).flex_shrink_0().text_color(cx.theme().muted_foreground).child(label.to_owned()))
+        .child(div().w_40().flex_shrink_0().text_color(cx.theme().muted_foreground).child(label.to_owned()))
         .child(div().flex_1().min_w_0().child(value.into()))
 }
 

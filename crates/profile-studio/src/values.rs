@@ -709,7 +709,7 @@ impl ValuesView {
                     .small()
                     .prefix(Icon::new(IconName::Search).small())
                     .cleanable(true)
-                    .w(px(240.)),
+                    .w(rems(15.)),
             )
             .child(Checkbox::new("hide-defaults").label("Hide defaults").checked(self.filter.hide_defaults).on_click(
                 cx.listener(|this, checked: &bool, _, cx| {
@@ -822,7 +822,7 @@ impl ValuesView {
             .id("value-detail")
             .test_support()
             .aria_label(label)
-            .h(px(300.))
+            .h_72()
             .flex_shrink_0()
             .mt_2()
             .pt_2()
@@ -865,10 +865,10 @@ impl ValuesView {
                     }))
                     .into_any_element()
             }
-            Some(Control::Enum(state)) => Select::new(state).id("value-enum").w(px(320.)).into_any_element(),
+            Some(Control::Enum(state)) => Select::new(state).id("value-enum").w_80().into_any_element(),
             Some(Control::Line(state)) => h_flex()
                 .gap_2()
-                .child(Input::new(state).id("value-input").aria_label("Value").small().w(px(320.)))
+                .child(Input::new(state).id("value-input").aria_label("Value").small().w_80())
                 .child(
                     Button::new("apply")
                         .small()
@@ -878,7 +878,7 @@ impl ValuesView {
                 .into_any_element(),
             Some(Control::Text(state)) => v_flex()
                 .gap_1()
-                .child(Textarea::new(state).aria_label("Value").h(px(110.)))
+                .child(Textarea::new(state).aria_label("Value").h(rems(7.)))
                 .child(
                     h_flex()
                         .gap_2()
@@ -941,7 +941,7 @@ impl ValuesView {
                     .gap_3()
                     .items_start()
                     .when(ix > 0, |line| line.text_color(muted).line_through())
-                    .child(div().w(px(240.)).flex_shrink_0().truncate().child(source))
+                    .child(div().w(rems(15.)).flex_shrink_0().truncate().child(source))
                     .child(div().flex_1().min_w_0().child(truncate_chars(&layer.value, 2000)))
             }))
             .when(!row.issues.is_empty(), |panel| {

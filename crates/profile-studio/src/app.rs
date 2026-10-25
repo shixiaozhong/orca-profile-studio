@@ -444,7 +444,7 @@ impl StudioApp {
                 .into_iter()
                 .fold(Command::new(&palette).filterable(false), |command, group| command.group(group))
                 .placeholder("Search presets, options and values, or type a command…")
-                .max_h(px(440.))
+                .max_h(rems(27.5))
                 .on_query({
                     let app = app.clone();
                     move |query, _, cx| app.update(cx, |this, cx| this.refresh_palette(query, cx))
@@ -456,6 +456,7 @@ impl StudioApp {
                         app.update(cx, |this, cx| this.confirm_palette(index, window, cx));
                     }
                 });
+            // Dialog sizes take Pixels.
             dialog.w(px(680.)).close_button(false).margin_top(px(64.)).child(command)
         });
     }
@@ -640,7 +641,7 @@ fn render_row(catalog: &Catalog, ix: usize, entry: &TreeEntry, dirty: &dyn Fn(us
         div().size_3().flex_shrink_0().into_any_element()
     };
 
-    ListItem::new(("tree-row", ix)).py_0p5().pl(px(8. + 14. * entry.depth() as f32)).pr_2().child(
+    ListItem::new(("tree-row", ix)).py_0p5().pl(rems(0.5 + 0.875 * entry.depth() as f32)).pr_2().child(
         h_flex()
             .w_full()
             .min_w_0()
@@ -674,7 +675,7 @@ fn placeholder(icon: IconName, message: String, cx: &App) -> AnyElement {
         .justify_center()
         .gap_3()
         .child(Icon::new(icon).large().text_color(cx.theme().muted_foreground))
-        .child(div().max_w(px(560.)).text_sm().text_color(cx.theme().muted_foreground).child(message))
+        .child(div().max_w(rems(35.)).text_sm().text_color(cx.theme().muted_foreground).child(message))
         .into_any_element()
 }
 
