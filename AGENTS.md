@@ -109,7 +109,11 @@ from the package directory).
 - After a click whose effect goes through a subscription (e.g. `TableEvent::SelectRow`), call
   `cx.run_until_parked()` and `render_frame` before asserting on the new frame.
 - Views that need a `Window` (`TableState`, `InputState`) are created lazily in `render`, e.g. the
-  preset's `ValuesView` in `StudioApp::render_preset`.
+  preset's `ValuesView` in `StudioApp::render_preset` and its value editor in `ValuesView::sync_editor`.
+- With `test-support`, `.test_support()` wraps an element in `Observed<…>`: a helper that adds it
+  cannot return `Stateful<Div>`; return `AnyElement` (an `impl IntoElement` return captures `cx`).
+- Saving writes into the profiles directory, i.e. the OrcaSlicer checkout. UI tests that save use a
+  temporary fixture (`editable_fixture` in `app.rs`), never the real profiles.
 - `TreeItem` holds `Rc` and is not `Send`: do heavy work (repository load, `Catalog::new`) on the
   background executor, build tree items on the foreground.
 
@@ -127,7 +131,7 @@ from the package directory).
 
 [docs/roadmap.md](docs/roadmap.md) (Chinese) is the roadmap: stages and status, key design decisions
 of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
-M1, M2; next: M3 (edit form). When a stage is finished, move it to "已完成" there with its design
+M1, M2, M3; next: M4 (preset diff). When a stage is finished, move it to "已完成" there with its design
 decisions and commit, and update the status line in README.
 
 Changing the exporter is work in another repository (`../OrcaSlicer`); confirm with the user first.

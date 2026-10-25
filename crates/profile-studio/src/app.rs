@@ -20,6 +20,7 @@ use profile_core::{Repository, Schema, Severity};
 
 use crate::catalog::Catalog;
 use crate::details::{self, severity_color};
+use crate::edits::Edits;
 use crate::tree::{self as nav, Node, kind_icon};
 use crate::values::ValuesView;
 
@@ -46,6 +47,10 @@ pub struct StudioApp {
     preset_tab: PresetTab,
     /// The values table of the selected preset; created when the Values tab is first shown.
     values: Option<Entity<ValuesView>>,
+    /// Unsaved edits of the loaded profiles.
+    edits: Option<Entity<Edits>>,
+    /// Reload or Open was asked for while edits are unsaved; the next click discards them.
+    confirm_discard: bool,
     load_task: Option<Task<()>>,
     _tree_observer: Subscription,
 }
@@ -67,6 +72,8 @@ impl StudioApp {
             selected: None,
             preset_tab: PresetTab::Overview,
             values: None,
+            edits: None,
+            confirm_discard: false,
             load_task: None,
             _tree_observer: tree_observer,
         };
@@ -82,6 +89,8 @@ impl StudioApp {
         self.state = LoadState::Loading(dir.clone());
         self.selected = None;
         self.values = None;
+        self.edits = None;
+        self.confirm_discard = false;
         self.tree.update(cx, |tree, cx| tree.set_items(Vec::new(), cx));
 
         let job = cx.background_executor().spawn({
@@ -109,6 +118,9 @@ impl StudioApp {
                 let catalog = Arc::new(catalog);
                 let items = nav::build(&catalog);
                 self.tree.update(cx, |tree, cx| tree.set_items(items, cx));
+                let edits = cx.new(|_| Edits::new(catalog.clone()));
+                cx.observe(&edits, |_, _, cx| cx.notify()).detach();
+                self.edits = Some(edits);
                 LoadState::Ready(catalog)
             }
             Err(err) => LoadState::Failed(dir, err),
@@ -117,7 +129,21 @@ impl StudioApp {
         cx.notify();
     }
 
+    /// Whether unsaved edits may be dropped now; the first request only arms the confirmation.
+    fn may_discard(&mut self, cx: &mut Context<Self>) -> bool {
+        let dirty = self.edits.as_ref().is_some_and(|edits| !edits.read(cx).dirty().is_empty());
+        if dirty && !self.confirm_discard {
+            self.confirm_discard = true;
+            cx.notify();
+            return false;
+        }
+        true
+    }
+
     fn choose_folder(&mut self, cx: &mut Context<Self>) {
+        if !self.may_discard(cx) {
+            return;
+        }
         let picked = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -135,6 +161,9 @@ impl StudioApp {
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
+        if !self.may_discard(cx) {
+            return;
+        }
         if let Some(dir) = self.profiles_dir.clone() {
             self.load(dir, cx);
         }
@@ -162,6 +191,16 @@ impl StudioApp {
                     .label("Open…")
                     .on_click(cx.listener(|this, _, _, cx| this.choose_folder(cx))),
             )
+            .when(self.confirm_discard, |bar| {
+                bar.child(
+                    div()
+                        .id("discard-warning")
+                        .test_support()
+                        .text_sm()
+                        .text_color(theme.warning)
+                        .child("Unsaved edits will be lost — click again to continue"),
+                )
+            })
             .child(
                 Button::new("reload")
                     .small()
@@ -204,7 +243,12 @@ impl StudioApp {
 
     fn render_browser(&mut self, catalog: &Arc<Catalog>, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let rows = catalog.clone();
-        let navigation = tree(&self.tree, move |ix, entry, _, _, cx| render_row(&rows, ix, entry, cx)).size_full();
+        let edits = self.edits.clone();
+        let navigation = tree(&self.tree, move |ix, entry, _, _, cx| {
+            let dirty = |preset| edits.as_ref().is_some_and(|edits| edits.read(cx).is_dirty(preset));
+            render_row(&rows, ix, entry, &dirty, cx)
+        })
+        .size_full();
         let scrolling = |content: AnyElement| div().id("details").size_full().overflow_y_scroll().child(content);
         let details = match self.selected {
             Some(Node::Preset(index)) => self.render_preset(catalog, index, window, cx),
@@ -256,8 +300,9 @@ impl StudioApp {
                 .into_any_element(),
             PresetTab::Values => {
                 let current = self.values.as_ref().filter(|values| values.read(cx).preset() == index).cloned();
+                let edits = self.edits.clone().expect("loaded profiles have an edit model");
                 let values = current.unwrap_or_else(|| {
-                    let values = cx.new(|cx| ValuesView::new(catalog, index, window, cx));
+                    let values = cx.new(|cx| ValuesView::new(catalog, &edits, index, window, cx));
                     self.values = Some(values.clone());
                     values
                 });
@@ -316,8 +361,9 @@ impl Render for StudioApp {
     }
 }
 
-fn render_row(catalog: &Catalog, ix: usize, entry: &TreeEntry, cx: &App) -> ListItem {
+fn render_row(catalog: &Catalog, ix: usize, entry: &TreeEntry, dirty: &dyn Fn(usize) -> bool, cx: &App) -> ListItem {
     let muted = cx.theme().muted_foreground;
+    let edited = matches!(Node::parse(&entry.item().id), Some(Node::Preset(index)) if dirty(index));
     let (icon, count, severity, dimmed) = match Node::parse(&entry.item().id) {
         Some(Node::Vendor(vendor)) => {
             let contents = &catalog.vendors[vendor];
@@ -361,6 +407,7 @@ fn render_row(catalog: &Catalog, ix: usize, entry: &TreeEntry, cx: &App) -> List
                     .when(dimmed, |label| label.text_color(muted))
                     .child(entry.item().label.clone()),
             )
+            .when(edited, |row| row.child(Icon::new(IconName::Pencil).xsmall().text_color(cx.theme().primary)))
             .when_some(severity.and_then(|severity| severity_color(severity, cx)), |row, color| {
                 row.child(Icon::new(IconName::TriangleAlert).xsmall().text_color(color))
             })
@@ -408,6 +455,7 @@ mod tests {
 
     fn open(cx: &mut TestAppContext, dir: PathBuf) -> (WindowHandle<Root>, Entity<StudioApp>) {
         cx.update(gpui_kit::init);
+        cx.update(crate::values::init);
         cx.update(|cx| {
             let bounds = Bounds { origin: Point::default(), size: size(px(1200.), px(900.)) };
             let options = WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() };
@@ -548,6 +596,149 @@ mod tests {
         cx.update_window(window.into(), |_, window, cx| window.click("hide-defaults", cx)).unwrap();
         cx.run_until_parked();
         assert!(dump(cx).is_empty());
+    }
+
+    const CHILD: &str = "{\n    \"type\": \"process\",\n    \"name\": \"Acme 0.2\",\n    \"inherits\": \"fdm_process_common\",\n    \"from\": \"system\",\n    \"instantiation\": \"true\",\n    \"wall_loops\": \"2\",\n    \"enable_support\": \"0\"\n}";
+
+    /// A vendor with one template and one selectable process, in a temporary directory.
+    fn editable_fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |path: &str, text: &str| {
+            let path = dir.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write(
+            "Acme.json",
+            r#"{ "name": "Acme", "version": "01.00.00.00", "process_list": [
+                { "name": "fdm_process_common", "sub_path": "process/fdm_process_common.json" },
+                { "name": "Acme 0.2", "sub_path": "process/Acme 0.2.json" } ] }"#,
+        );
+        write(
+            "Acme/process/fdm_process_common.json",
+            r#"{ "type": "process", "name": "fdm_process_common", "from": "system", "instantiation": "false",
+                "sparse_infill_density": "15%" }"#,
+        );
+        write("Acme/process/Acme 0.2.json", CHILD);
+        dir
+    }
+
+    /// Types `text` into the values search box, replacing what is there, and selects the first row.
+    fn find_key(window: WindowHandle<Root>, text: &str, cx: &mut TestAppContext) {
+        cx.update_window(window.into(), |_, window, cx| {
+            window.click("values-search", cx);
+            window.press("cmd-a", cx);
+            window.input(text, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| window.click(("row", 0usize), cx)).unwrap();
+        cx.run_until_parked();
+    }
+
+    fn click(window: WindowHandle<Root>, id: &'static str, cx: &mut TestAppContext) {
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.click(id, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+
+    /// The first visible row as (key, value, source).
+    fn first_row(app: &Entity<StudioApp>, cx: &mut TestAppContext) -> (String, String, String) {
+        let values = app.read_with(cx, |app, _| app.values.clone()).unwrap();
+        let rows = values.read_with(cx, |values, cx| values.table().read(cx).dump(cx).1);
+        (rows[0][2].clone(), rows[0][3].clone(), rows[0][4].clone())
+    }
+
+    #[gpui_kit::test]
+    fn edits_undoes_and_saves_values(cx: &mut TestAppContext) {
+        let dir = editable_fixture();
+        let file = dir.path().join("Acme/process/Acme 0.2.json");
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        let catalog = catalog(&app, cx);
+        let &[child] = catalog.repo.find(PresetKind::Process, "Acme 0.2") else { panic!("one child preset") };
+        click_node(window, &app, Node::Vendor(0), cx);
+        click_node(window, &app, Node::Group(0, nav::Group::Processes), cx);
+        click_node(window, &app, Node::Preset(child.index()), cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.within("preset-tabs").click(1usize, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+
+        // Edit a number through the text input.
+        find_key(window, "wall_loops", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("value-input").value(), Some("2"));
+            window.click("value-input", cx);
+            window.press("cmd-a", cx);
+            window.input("3", cx);
+            window.press("enter", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(first_row(&app, cx), ("wall_loops".into(), "3".into(), "this file (edited)".into()));
+        let dirty = |app: &Entity<StudioApp>, cx: &mut TestAppContext| {
+            app.read_with(cx, |app, cx| app.edits.as_ref().unwrap().read(cx).is_dirty(child.index()))
+        };
+        assert!(dirty(&app, cx));
+
+        click(window, "undo", cx);
+        assert_eq!(first_row(&app, cx), ("wall_loops".into(), "2".into(), "this file".into()));
+        assert!(!dirty(&app, cx));
+        click(window, "redo", cx);
+        assert_eq!(first_row(&app, cx).1, "3");
+
+        // Toggle a bool, and override a value the template sets.
+        find_key(window, "enable_support", cx);
+        click(window, "value-bool", cx);
+        assert_eq!(first_row(&app, cx).1, "1");
+        find_key(window, "sparse_infill_density", cx);
+        assert_eq!(first_row(&app, cx).2, "[1] fdm_process_common");
+        click(window, "override", cx);
+        assert_eq!(first_row(&app, cx).2, "this file (edited)");
+
+        // Saving asks first, then writes only the changed lines.
+        click(window, "save", cx);
+        cx.update_window(window.into(), |_, window, _| {
+            assert_eq!(window.find("value-detail").label(), Some("save-confirmation"));
+        })
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), CHILD, "nothing is written before confirming");
+        click(window, "confirm-save", cx);
+        let expected = CHILD
+            .replace("\"wall_loops\": \"2\"", "\"wall_loops\": \"3\"")
+            .replace("\"enable_support\": \"0\"", "\"enable_support\": \"1\",\n    \"sparse_infill_density\": \"15%\"");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), expected);
+        assert!(!dirty(&app, cx));
+        cx.update_window(window.into(), |_, window, _| {
+            let status = window.find("save-status").label().unwrap_or_default().to_owned();
+            assert!(status.starts_with("Saved 1 file(s)"), "{status}");
+        })
+        .unwrap();
+
+        // Reloading with unsaved edits asks for a second click.
+        find_key(window, "wall_loops", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.click("value-input", cx);
+            window.press("cmd-a", cx);
+            window.input("4", cx);
+            window.press("enter", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        click(window, "reload", cx);
+        assert!(app.read_with(cx, |app, _| matches!(app.state, LoadState::Ready(_))));
+        cx.update_window(window.into(), |_, window, _| assert!(window.try_find("discard-warning").is_some())).unwrap();
+        click(window, "reload", cx);
+        assert!(app.read_with(cx, |app, cx| app.edits.as_ref().is_some_and(|edits| edits.read(cx).dirty().is_empty())));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), expected, "discarded edits are not written");
     }
 
     #[gpui_kit::test]

@@ -219,6 +219,12 @@ impl Repository {
 
     /// Every key with all the layers that set it, in the order of [`Repository::resolve`].
     pub fn trace(&self, id: PresetId) -> Vec<KeyTrace<'_>> {
+        self.trace_with(id, &self.preset(id).params)
+    }
+
+    /// Like [`Repository::trace`], with `own` in place of the preset's own values, e.g. the
+    /// values of an [`EditSession`](crate::EditSession).
+    pub fn trace_with<'a>(&'a self, id: PresetId, own: &'a IndexMap<String, RawValue>) -> Vec<KeyTrace<'a>> {
         fn add<'a>(traces: &mut IndexMap<&'a str, KeyTrace<'a>>, key: &'a str, layer: ResolvedValue<'a>) {
             let trace = traces.entry(key).or_insert_with(|| KeyTrace { key, layers: Vec::new() });
             // Layers are added from the root down; keep the nearest first.
@@ -229,11 +235,22 @@ impl Repository {
             add(&mut traces, key, ResolvedValue { value, origin: Origin::Default });
         }
         for link in self.chain(id).into_iter().rev() {
-            for (key, value) in &self.preset(link).params {
+            let params = if link == id { own } else { &self.preset(link).params };
+            for (key, value) in params {
                 add(&mut traces, key, ResolvedValue { value, origin: Origin::Preset(link) });
             }
         }
         traces.into_values().collect()
+    }
+
+    /// The schema checks of `params` as the own values of preset `id`; empty without a schema.
+    pub fn check_values(&self, id: PresetId, params: &IndexMap<String, RawValue>) -> Vec<IssueKind> {
+        let Some(schema) = &self.schema else { return Vec::new() };
+        let preset = self.preset(id);
+        let instantiated = !preset.is_template() || self.vendor(preset.vendor).name == TEMPLATE_VENDOR;
+        let ancestors = preset.parent.map(|parent| self.chain(parent)).unwrap_or_default();
+        let inherited = |key: &str| ancestors.iter().any(|&link| self.preset(link).params.contains_key(key));
+        check_params(schema, preset.kind, params, instantiated, inherited)
     }
 
     fn defaults(&self, kind: PresetKind) -> Option<&IndexMap<String, RawValue>> {
@@ -474,11 +491,7 @@ impl Repository {
                     _ => {}
                 }
             }
-            if let Some(schema) = &self.schema {
-                let ancestors = parent.map(|parent| self.chain(parent)).unwrap_or_default();
-                let inherited = |key: &str| ancestors.iter().any(|&link| self.preset(link).params.contains_key(key));
-                issues.extend(check_params(schema, kind, &self.preset(id).params, !is_template, inherited));
-            }
+            issues.extend(self.check_values(id, &self.preset(id).params));
             for kind in issues {
                 self.issue(vendor, &path, Some(id), kind);
             }

@@ -1,6 +1,7 @@
 mod app;
 mod catalog;
 mod details;
+mod edits;
 mod tree;
 mod values;
 
@@ -14,6 +15,7 @@ fn main() {
     let profiles_dir = initial_profiles_dir();
     gpui_kit::application().with_assets(gpui_kit::assets::AllAssets).run(move |cx| {
         gpui_kit::init(cx);
+        values::init(cx);
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.set_menus([Menu {

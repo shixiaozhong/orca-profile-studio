@@ -5,6 +5,8 @@
 //! Unlike OrcaSlicer, loading never aborts: every deviation becomes an [`Issue`].
 
 mod check;
+mod document;
+mod edit;
 mod issue;
 mod json;
 mod legacy;
@@ -13,6 +15,8 @@ mod repository;
 mod schema;
 mod stats;
 
+pub use document::{Document, DocumentError};
+pub use edit::{Change, EditSession, SaveError};
 pub use issue::{Issue, IssueKind, Severity};
 pub use model::{MachineModel, Preset, PresetId, PresetKind, PresetMeta, RawValue, Vendor, VendorId, derived_alias};
 pub use repository::{FILAMENT_LIBRARY, KeyTrace, LoadError, Origin, Repository, ResolvedValue};
