@@ -10,6 +10,7 @@ orca-profile-studio browses, validates and (later) edits OrcaSlicer's system pro
 ```
 crates/
 ├── profile-core/    # loading, inheritance resolution, validation; no GUI dependencies
+│   └── schema/      # schema.json exported from OrcaSlicer (bundled via include_str!)
 ├── profile-tool/    # CLI: stats / check / resolve
 └── profile-studio/  # gpui-kit desktop app
 docs/reference/      # profile format spec + Python reference stats script
@@ -29,6 +30,8 @@ cargo run -p profile-studio -- ../OrcaSlicer/resources/profiles
 ```
 
 The only expected build warning is a future-incompatibility note from the third-party `block` crate.
+A relative `ORCA_PROFILES_DIR` is resolved against the workspace root in tests (Cargo runs them
+from the package directory).
 
 ## Data source: the OrcaSlicer checkout
 
@@ -49,12 +52,37 @@ The only expected build warning is a future-incompatibility note from the third-
   source is OrcaFilamentLibrary's filaments.
 - Lookups use the preset's own `name`, not the manifest entry name or file name.
 - UTF-8 BOM is tolerated (nlohmann::json skips it; serde_json does not) but reported.
+- `Repository::load` works without a schema; `load_with_schema` (used by the CLI and the app, with
+  `Schema::bundled()`) also checks every value (`check.rs`) and resolves unset keys to the kind's
+  default preset (`Origin::Default`).
 - Loading never aborts: every deviation is an `Issue` with a `Severity`:
   `Fatal` = OrcaSlicer would refuse to load the whole vendor, `Error` = OrcaSlicer logs and continues,
   `Warning` = loads but is probably unintended, `Info` = informational.
 - `crates/profile-core/tests/orca_profiles.rs` asserts exact counts for OrcaSlicer commit
   `953509c23f`. When the profile data changes, update the numbers deliberately; the reference
-  script `docs/reference/profile_format_stats.py` must agree.
+  script `docs/reference/profile_format_stats.py` must agree (it does not cover the schema checks,
+  whose counts only live in the `schema_*` tests).
+
+## Schema (M0.5)
+
+- Exporter: `src/dev-utils/Snapmaker_Orca_schema_export.cpp` in the OrcaSlicer repo, branch
+  `personal/schema-export`, CMake target `Snapmaker_Orca_schema_export` (under `ORCA_TOOLS`, next
+  to the profile validator). It writes every `ConfigOptionDef`, the three default presets
+  (`PresetBundle` constructor) and the `Preset::*_options()` lists. Regenerate with:
+  ```bash
+  cmake --build ../OrcaSlicer/build/vscode-arm64 --target Snapmaker_Orca_schema_export
+  ../OrcaSlicer/build/vscode-arm64/src/Snapmaker_Orca_schema_export.app/Contents/MacOS/Snapmaker_Orca_schema_export \
+      -o crates/profile-core/schema/schema.json --commit $(git -C ../OrcaSlicer rev-parse --short=10 HEAD)
+  ```
+  A new target needs a CMake reconfigure (`cmake -S ../OrcaSlicer -B ../OrcaSlicer/build/vscode-arm64`).
+- "Which keys belong to a kind" = keys of that kind's default preset (what `remove_invalid_keys`
+  checks against), not `option_lists`.
+- `legacy.rs` ports `PrintConfigDef::handle_legacy` by hand (rules are code, not data); keep it in
+  sync when regenerating. Unknown keys are silently dropped by OrcaSlicer, so they are warnings.
+- Severities follow what the C++ loader does with `EnableSystemSilent` (the GUI's rule): scalar
+  numbers that do not parse → `Fatal` (vendor fails); bad enum/bool → `Error` (silently replaced by
+  the default); unparsable vector items → `Error` (read as 0); trailing text, `nil` in a
+  non-nullable vector, GUI min/max → `Warning`.
 
 ## GPUI / gpui-kit notes (learned the hard way)
 
@@ -92,7 +120,7 @@ The only expected build warning is a future-incompatibility note from the third-
 |---|---|
 | M0 ✅ | core: manifest parsing, inheritance resolution, validation; CLI |
 | M1 ✅ | gpui-kit app: vendor → models / filaments / processes tree, background loading, details pane |
-| M0.5 | export `schema.json` from OrcaSlicer: per option type, default, min/max, enum values, label, tooltip, category, mode, nullable, plus the per-type key sets `Preset::print_options()`, `filament_options()`, `printer_options()` |
+| M0.5 ✅ | `schema.json` exported from OrcaSlicer; value checks, default layer, schema labels in the app |
 | M2 | inheritance view: every key's effective value and the layer it comes from |
 | M3 | edit form with dirty marks, undo/redo, format-preserving save |
 | M4 | side-by-side preset diff |
@@ -101,7 +129,4 @@ The only expected build warning is a future-incompatibility note from the third-
 | M7 | dock layout, themes, multiple windows |
 | Stretch | 2D G-code layer viewer |
 
-M0.5 needs a small C++ program linked against OrcaSlicer's libslic3r that walks `print_config_def`.
-It naturally lives in the OrcaSlicer repo (e.g. next to
-`src/dev-utils/Snapmaker_Orca_profile_validator.cpp`); the generated `schema.json` is copied here.
-That is work in another repository, so confirm with the user before changing OrcaSlicer.
+Changing the exporter is work in another repository (`../OrcaSlicer`); confirm with the user first.

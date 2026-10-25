@@ -3,13 +3,16 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
 
+use crate::check::check_params;
 use crate::issue::{Issue, IssueKind};
 use crate::json::read_json;
 use crate::model::{MachineModel, Preset, PresetId, PresetKind, PresetMeta, RawValue, Vendor, VendorId, derived_alias};
+use crate::schema::Schema;
 
 /// The shared filament library. It loads first and is the only cross-vendor inheritance source.
 pub const FILAMENT_LIBRARY: &str = "OrcaFilamentLibrary";
@@ -28,16 +31,26 @@ pub enum LoadError {
     },
 }
 
-/// A config value together with the preset in the inheritance chain that set it.
+/// Where an effective value comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Origin {
+    /// A preset file in the inheritance chain.
+    Preset(PresetId),
+    /// The schema's default preset of the kind, which the root of every chain starts from.
+    Default,
+}
+
+/// A config value together with the layer of the inheritance chain that set it.
 #[derive(Debug, Clone, Copy)]
 pub struct ResolvedValue<'a> {
     pub value: &'a RawValue,
-    pub origin: PresetId,
+    pub origin: Origin,
 }
 
 #[derive(Debug, Default)]
 pub struct Repository {
     root: PathBuf,
+    schema: Option<Arc<Schema>>,
     vendors: Vec<Vendor>,
     models: Vec<MachineModel>,
     presets: Vec<Preset>,
@@ -67,10 +80,20 @@ struct ParsedPreset {
 }
 
 impl Repository {
+    /// Loads without a schema: values are not checked and keys no file sets stay unresolved.
     pub fn load(root: impl AsRef<Path>) -> Result<Self, LoadError> {
-        let root = root.as_ref().to_path_buf();
+        Self::load_impl(root.as_ref(), None)
+    }
+
+    /// Loads, checks every value against `schema` and resolves unset keys to its defaults.
+    pub fn load_with_schema(root: impl AsRef<Path>, schema: Arc<Schema>) -> Result<Self, LoadError> {
+        Self::load_impl(root.as_ref(), Some(schema))
+    }
+
+    fn load_impl(root: &Path, schema: Option<Arc<Schema>>) -> Result<Self, LoadError> {
+        let root = root.to_path_buf();
         let vendor_names = vendor_names(&root)?;
-        let mut repo = Repository { root, ..Default::default() };
+        let mut repo = Repository { root, schema, ..Default::default() };
         let mut library = HashMap::new();
         for name in &vendor_names {
             repo.load_vendor(name, &mut library);
@@ -83,6 +106,10 @@ impl Repository {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    pub fn schema(&self) -> Option<&Schema> {
+        self.schema.as_deref()
     }
 
     pub fn vendors(&self) -> &[Vendor] {
@@ -141,11 +168,16 @@ impl Repository {
         (!broken).then(|| chain.len() - 1)
     }
 
-    /// The effective value of `key`: a child replaces the whole value of its parent.
+    /// The effective value of `key`: a child replaces the whole value of its parent, and the
+    /// schema's default applies when no file in the chain sets the key.
     pub fn lookup(&self, id: PresetId, key: &str) -> Option<ResolvedValue<'_>> {
-        self.chain(id).into_iter().find_map(|link| {
+        let own = self.chain(id).into_iter().find_map(|link| {
             let value = self.preset(link).params.get(key)?;
-            Some(ResolvedValue { value, origin: link })
+            Some(ResolvedValue { value, origin: Origin::Preset(link) })
+        });
+        own.or_else(|| {
+            let value = self.defaults(self.preset(id).kind)?.get(key)?;
+            Some(ResolvedValue { value, origin: Origin::Default })
         })
     }
 
@@ -153,18 +185,25 @@ impl Repository {
         self.lookup(id, key)?.value.as_scalar()
     }
 
-    /// All effective values, in the order keys first appear from the root of the chain down.
+    /// All effective values: the schema defaults first (when a schema is loaded), then the keys
+    /// in the order they first appear from the root of the chain down.
     ///
-    /// Keys no file in the chain sets fall back to OrcaSlicer's built-in defaults, which are
-    /// not part of the profile data and therefore missing here.
+    /// Without a schema, keys no file in the chain sets are missing.
     pub fn resolve(&self, id: PresetId) -> IndexMap<&str, ResolvedValue<'_>> {
         let mut values = IndexMap::new();
+        for (key, value) in self.defaults(self.preset(id).kind).into_iter().flatten() {
+            values.insert(key.as_str(), ResolvedValue { value, origin: Origin::Default });
+        }
         for link in self.chain(id).into_iter().rev() {
             for (key, value) in &self.preset(link).params {
-                values.insert(key.as_str(), ResolvedValue { value, origin: link });
+                values.insert(key.as_str(), ResolvedValue { value, origin: Origin::Preset(link) });
             }
         }
         values
+    }
+
+    fn defaults(&self, kind: PresetKind) -> Option<&IndexMap<String, RawValue>> {
+        Some(&self.schema()?.default_preset(kind).values)
     }
 
     /// The display alias: an explicit `alias` option, otherwise the name before `@`.
@@ -400,6 +439,11 @@ impl Repository {
                     }
                     _ => {}
                 }
+            }
+            if let Some(schema) = &self.schema {
+                let ancestors = parent.map(|parent| self.chain(parent)).unwrap_or_default();
+                let inherited = |key: &str| ancestors.iter().any(|&link| self.preset(link).params.contains_key(key));
+                issues.extend(check_params(schema, kind, &self.preset(id).params, !is_template, inherited));
             }
             for kind in issues {
                 self.issue(vendor, &path, Some(id), kind);
@@ -804,7 +848,7 @@ mod tests {
         let pla = only(&repo, PresetKind::Filament, "Acme PLA @Acme One");
         let resolved = repo.lookup(pla, "nozzle_temperature").unwrap();
         assert_eq!(resolved.value, &RawValue::List(vec!["210".into()]));
-        assert_eq!(resolved.origin, pla);
+        assert_eq!(resolved.origin, Origin::Preset(pla));
     }
 
     #[test]

@@ -158,7 +158,7 @@ resources/profiles/
 | `compatible_printers` / `compatible_printers_condition` | 耗材、工艺与打印机的兼容性（见 6） |
 | `compatible_prints` / `compatible_prints_condition` | 耗材与工艺的兼容性 |
 | `printer_model` / `printer_variant` | machine 必填，必须指向本厂商的机型和变体 |
-| `alias` | 显示别名；没写时由 `name` 推导（见 5.3 第 8 步） |
+| `alias` | 显示别名；没写时由 `name` 推导（见 5.3 第 8 步）。注意：这个 fork 的 `print_config_def` 里没有 `alias`，JSON 里写了也会被当作未知键忽略，所以实际上总是推导出来的。现有数据没有用到它 |
 | `base_id` / `user_id` / `updated_time` | 仅用户配置使用（写在 `.info` 文件中），系统配置里没有 |
 
 ### 5.2 参数值的编码
@@ -171,7 +171,7 @@ JSON 里**只会出现两种值形态**：字符串，或字符串数组。现�
 | int / float | `"8"`、`"0.82"` | 解析时强制使用 C locale |
 | percent | `"15%"` | |
 | floatOrPercent | `"0.4"` 或 `"110%"` | |
-| enum | `"tree(auto)"` | 值必须在枚举表里；加载系统配置时，未知值直接报错 |
+| enum | `"tree(auto)"` | 值必须在枚举表里。GUI 加载系统配置时用 `EnableSystemSilent` 规则，未知的枚举值和布尔值会被静默替换成默认值；只有 `EnableSilentDisableSystem` 规则下才会报错 |
 | string | `"48x48/PNG, 300x300/PNG"` | G-code 等多行文本使用 `\n` 转义 |
 | point 列表 | `["0x0", "270x0", "270x270", "0x270"]` | 如 `printable_area`、`bed_exclude_area` |
 | vector（按挤出机或耗材） | `["0.4", "0.4"]` | 如 `nozzle_diameter` |
@@ -184,9 +184,13 @@ JSON 里**只会出现两种值形态**：字符串，或字符串数组。现�
 - `coStrings` 类型的 vector：每个元素做 C 风格转义并加引号，再用 `;` 拼接。
 - 数组里出现非字符串元素时，**整个键会被丢弃**并记录错误。
 
-**旧键名**：键名会先经过 `handle_legacy` 转换，再查找别名（`ConfigOptionDef::aliases`）。数组值的键如果在转换后变成空字符串，会被记成「无法识别的键」。另外有个别特殊值会触发联动改写，例如 `support_type: "hybrid(auto)"` 会同时设置 `support_style`，`wall_infill_order` 的某些取值会设置 `is_infill_first`。
+**旧键名和未知键**：键名会先经过 `handle_legacy` 转换。它会改名或丢弃过时的键，最后把 `print_config_def` 里没有的键都清空，所以**未知键会被静默忽略**，不会报错；`ConfigOptionDef::aliases` 实际上用不到。数组值的键会经过两次 `handle_legacy`：第一次值为空字符串，只用来确定键名；第二次在 `set_deserialize` 里用拼接后的值。
 
-**值的类型信息不在 JSON 里**，定义在 `PrintConfig.cpp` 的 `ConfigOptionDef` 中。新项目需要一份从 C++ 导出的 schema（见 9.2）。
+**值解析失败**：标量数值（int / float / percent 等）完全解析不了时，`set_deserialize` 抛出 `BadOptionValueException`，`load_from_json` 捕获后返回失败原因，**整个厂商加载失败**。数值后面多出的文字会被忽略（`"0.2mm"` 读成 0.2，`"35%"` 写在普通 float 上读成 35）。vector 的元素解析不了时不报错，直接读成 0。非 nullable 的 vector 里的 `nil` 元素会被跳过。
+
+另外有个别特殊值会触发联动改写，例如 `support_type: "hybrid(auto)"` 会同时设置 `support_style`，`wall_infill_order` 的某些取值会设置 `is_infill_first`。
+
+**值的类型信息不在 JSON 里**，定义在 `PrintConfig.cpp` 的 `ConfigOptionDef` 中。本项目用 OrcaSlicer 仓库里的 `src/dev-utils/Snapmaker_Orca_schema_export.cpp` 导出 `schema.json`（见 9.2 和 README）。
 
 ### 5.3 加载与继承算法（核心）
 

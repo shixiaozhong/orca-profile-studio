@@ -15,7 +15,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use profile_core::{Repository, Severity};
+use profile_core::{Repository, Schema, Severity};
 
 use crate::catalog::Catalog;
 use crate::details::{self, severity_color};
@@ -73,7 +73,9 @@ impl StudioApp {
             let dir = dir.clone();
             async move {
                 let started = Instant::now();
-                Repository::load(&dir).map(|repo| Catalog::new(repo, started.elapsed())).map_err(|err| err.to_string())
+                Repository::load_with_schema(&dir, Schema::bundled())
+                    .map(|repo| Catalog::new(repo, started.elapsed()))
+                    .map_err(|err| err.to_string())
             }
         });
         self.load_task = Some(cx.spawn(async move |this, cx| {
@@ -335,8 +337,10 @@ mod tests {
     use super::{Catalog, LoadState, Node, StudioApp, nav};
 
     fn profiles_dir() -> Option<PathBuf> {
-        std::env::var_os("ORCA_PROFILES_DIR").map(PathBuf::from).or_else(|| {
-            let sibling = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../OrcaSlicer/resources/profiles");
+        // Tests run from the package directory; a relative `ORCA_PROFILES_DIR` means the workspace root.
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        std::env::var_os("ORCA_PROFILES_DIR").map(|dir| workspace.join(dir)).or_else(|| {
+            let sibling = workspace.join("../OrcaSlicer/resources/profiles");
             sibling.is_dir().then_some(sibling)
         })
     }
@@ -415,6 +419,8 @@ mod tests {
         cx.update_window(window.into(), |_, window, _| {
             assert_eq!(window.find(printer_row).selected(), Some(true));
             assert_eq!(window.find("details-title").label(), Some("Snapmaker U1 (0.4 nozzle)"));
+            // Highlighted values are labelled with the schema's option labels.
+            assert_eq!(window.find("value-nozzle_diameter").label(), Some("Nozzle diameter"));
         })
         .unwrap();
     }

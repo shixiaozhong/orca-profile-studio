@@ -6,7 +6,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use profile_core::{PresetKind, RawValue, Severity};
+use profile_core::{Origin, PresetKind, RawValue, Severity};
 
 use crate::catalog::Catalog;
 use crate::tree::{Group, Node, kind_icon};
@@ -162,13 +162,34 @@ fn render_preset(catalog: &Catalog, index: usize, cx: &App) -> AnyElement {
         PresetKind::Process => &["layer_height", "compatible_printers", "compatible_printers_condition"],
     };
     let resolved = repo.resolve(id);
-    let values = section("Values", cx)
+    let from_defaults = resolved.values().filter(|resolved| resolved.origin == Origin::Default).count();
+    let mut values = section("Values", cx)
         .child(field("Set in this file", preset.params.len().to_string(), cx))
-        .child(field("Effective from files", resolved.len().to_string(), cx))
-        .children(highlights.iter().map(|&key| {
-            let value = resolved.get(key).map_or_else(|| "—".to_owned(), |resolved| format_value(resolved.value));
-            field(key, value, cx)
-        }));
+        .child(field("Set by the chain", (resolved.len() - from_defaults).to_string(), cx));
+    if repo.schema().is_some() {
+        values = values.child(field("Schema defaults", from_defaults.to_string(), cx));
+    }
+    let values = values.children(highlights.iter().map(|&key| {
+        let option = repo.schema().and_then(|schema| schema.option(key));
+        let label = option.map_or(key, |option| option.display_label());
+        let value = resolved.get(key).map_or_else(
+            || "—".to_owned(),
+            |resolved| {
+                let mut text = format_value(resolved.value);
+                if let Some(unit) = option.map(|option| option.sidetext.as_str()).filter(|unit| !unit.is_empty()) {
+                    text = format!("{text} {unit}");
+                }
+                if resolved.origin == Origin::Default {
+                    text.push_str("  (default)");
+                }
+                text
+            },
+        );
+        field(label, value, cx)
+            .id(SharedString::from(format!("value-{key}")))
+            .test_support()
+            .aria_label(label.to_owned())
+    }));
 
     let issues: Vec<_> = catalog.issues_of(index).collect();
     let issue_list = section(&format!("Issues ({})", issues.len()), cx).children(issues.iter().map(|issue| {

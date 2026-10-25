@@ -4,13 +4,17 @@
 //! `docs/reference/profile_format_spec.md` describes the rules this crate implements.
 //! Unlike OrcaSlicer, loading never aborts: every deviation becomes an [`Issue`].
 
+mod check;
 mod issue;
 mod json;
+mod legacy;
 mod model;
 mod repository;
+mod schema;
 mod stats;
 
 pub use issue::{Issue, IssueKind, Severity};
 pub use model::{MachineModel, Preset, PresetId, PresetKind, PresetMeta, RawValue, Vendor, VendorId, derived_alias};
-pub use repository::{FILAMENT_LIBRARY, LoadError, Repository, ResolvedValue};
+pub use repository::{FILAMENT_LIBRARY, LoadError, Origin, Repository, ResolvedValue};
+pub use schema::{DefaultPreset, OptionDef, OptionMode, OptionType, SCHEMA_FORMAT_VERSION, Schema, SchemaError};
 pub use stats::{KindStats, Stats};

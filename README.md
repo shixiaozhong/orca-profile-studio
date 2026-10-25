@@ -2,8 +2,9 @@
 
 OrcaSlicer 系统配置文件（`resources/profiles`）的浏览、校验与编辑工具，也是一个 GPUI 练手项目。
 
-目前完成了 M0 和 M1：
+目前完成了 M0、M0.5 和 M1：
 - M0：不依赖界面的 core 库，加一个命令行工具；
+- M0.5：从 OrcaSlicer 导出的配置项 schema，用来校验参数值、补全默认值；
 - M1：用 gpui-kit 写的桌面浏览器。
 
 ## 结构
@@ -11,6 +12,7 @@ OrcaSlicer 系统配置文件（`resources/profiles`）的浏览、校验与编�
 ```
 crates/
 ├── profile-core/    # 加载、继承解析、校验；不依赖任何 GUI
+│   └── schema/      # 从 OrcaSlicer 导出的 schema.json，编译时内嵌
 ├── profile-tool/    # 命令行：stats / check / resolve
 └── profile-studio/  # gpui-kit 桌面应用
 docs/reference/      # 配置格式说明（profile_format_spec.md）和参考统计脚本
@@ -71,20 +73,45 @@ cargo run --release -p profile-tool -- resolve "Generic ABS @U1 0.2 nozzle" --ke
 
 `check` 默认在出现 `error` 及以上级别的问题时返回退出码 1（用 `--fail-on` 调整），可以直接放进 CI。
 
+`resolve` 默认只列出继承链上的文件设置过的值；加 `--defaults` 会把来自 schema 默认值的键也列出来（标记为 `[d]`）。
+
+## Schema
+
+配置文件里只有字符串，各配置项的类型、默认值、范围、枚举值和界面文字都定义在 OrcaSlicer 的 C++ 代码里（`print_config_def`）。`crates/profile-core/schema/schema.json` 是从 OrcaSlicer 导出的这份定义，内容包括：
+- 每个配置项的类型、默认值、范围、枚举值、label、tooltip、类别和模式；
+- 三类默认预设的完整内容，也就是没有 `inherits` 的预设的起点；
+- `Preset::print_options()` 等键列表。
+
+命令行和桌面应用默认使用内嵌的 schema：
+- `--schema <文件>` 换成别的 schema；
+- `--no-schema` 不使用 schema。
+
+使用 schema 时会多做这些检查：
+- 未知键、过时键、改了名的旧键；
+- 不属于该类型的键；
+- 数值解析失败或后面带多余文字；
+- 枚举值和布尔值不合法；
+- 标量写成了数组，非 nullable 的数组里出现 `nil`；
+- 超出界面上的取值范围。
+
+严重程度按 OrcaSlicer 实际的加载行为来定，见 `crates/profile-core/src/issue.rs`。
+
+导出程序是 OrcaSlicer 仓库里的 `src/dev-utils/Snapmaker_Orca_schema_export.cpp`（`personal/schema-export` 分支）。OrcaSlicer 更新后按 `CLAUDE.md` 里的命令重新生成。`src/legacy.rs` 是 `PrintConfigDef::handle_legacy` 的手工移植，重新生成 schema 时也要对照更新。
+
 ## 测试
 
 ```bash
 cargo test
 ```
 
-`crates/profile-core/tests/orca_profiles.rs` 是针对真实数据的回归测试。它会读取 `ORCA_PROFILES_DIR` 指定的目录，没有设置时使用和本仓库同级的 `../OrcaSlicer` 目录；两者都找不到就跳过。测试里的期望数字对应 OrcaSlicer `953509c23f` 的配置数据，数据变化后需要同步更新。
+`crates/profile-core/tests/orca_profiles.rs` 是针对真实数据的回归测试。它会读取 `ORCA_PROFILES_DIR` 指定的目录，没有设置时使用和本仓库同级的 `../OrcaSlicer` 目录；两者都找不到就跳过。测试里的期望数字对应 OrcaSlicer `953509c23f` 的配置数据，数据变化后需要同步更新。`ORCA_PROFILES_DIR` 写相对路径时，按仓库根目录解析。
 
 ## 路线图
 
 | 阶段 | 内容 |
 |---|---|
 | M0 ✅ | core：清单解析、继承解析、校验；CLI：stats / check / resolve |
-| M0.5 | 从 OrcaSlicer 导出 `schema.json`（各配置项的类型、默认值、范围、说明、所属类别） |
+| M0.5 ✅ | 从 OrcaSlicer 导出 `schema.json`；参数值校验、默认值层、界面显示配置项名称 |
 | M1 ✅ | gpui-kit 界面：厂商 → 机型、耗材、工艺三层树，后台加载 |
 | M2 | 继承链视图：每个字段的最终值和来源层 |
 | M3 | 编辑表单：修改标记、撤销和重做、保存时保留原有格式 |

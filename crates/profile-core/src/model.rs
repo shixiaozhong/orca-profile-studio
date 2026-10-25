@@ -2,6 +2,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 use indexmap::IndexMap;
+use serde::Deserialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum PresetKind {
@@ -68,7 +69,8 @@ impl PresetId {
 ///
 /// Profiles only ever store strings or arrays of strings; the option's real type lives in
 /// OrcaSlicer's `PrintConfig.cpp`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
 pub enum RawValue {
     Str(String),
     List(Vec<String>),
