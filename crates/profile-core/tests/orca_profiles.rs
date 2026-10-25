@@ -153,3 +153,26 @@ fn schema_defaults_fill_unset_keys() {
     let defaults = &repo.schema().unwrap().default_preset(PresetKind::Filament).values;
     assert!(defaults.keys().all(|key| values.contains_key(key.as_str())));
 }
+
+#[test]
+fn compares_snapmaker_abs_nozzle_variants() {
+    let Some(repo) = repo_with_schema() else { return };
+    let left = repo.find(PresetKind::Filament, "Generic ABS @U1 0.2 nozzle")[0];
+    // The 0.4 nozzle variant is named "Generic ABS", without a nozzle suffix.
+    let right = repo
+        .find(PresetKind::Filament, "Generic ABS")
+        .iter()
+        .copied()
+        .find(|&id| repo.vendor(repo.preset(id).vendor).name == "Snapmaker")
+        .unwrap();
+    let rows = repo.diff(left, right).unwrap();
+    let changed: Vec<_> = rows.iter().filter(|row| row.is_different()).collect();
+    assert_eq!(changed.iter().map(|row| row.key).collect::<Vec<_>>(), ["compatible_printers"]);
+    assert_eq!(changed[0].left.as_ref().unwrap().effective().value.as_scalar(), Some("Snapmaker U1 (0.2 nozzle)"));
+    assert_eq!(changed[0].right.as_ref().unwrap().effective().value.as_scalar(), Some("Snapmaker U1 (0.4 nozzle)"));
+    let temperature = rows.iter().find(|row| row.key == "nozzle_temperature").unwrap();
+    assert_eq!(temperature.left.as_ref().unwrap().effective().value.as_scalar(), Some("270"));
+    assert_eq!(temperature.right.as_ref().unwrap().effective().value.as_scalar(), Some("270"));
+    assert_eq!(temperature.left.as_ref().unwrap().effective().origin, Origin::Preset(left));
+    assert_eq!(temperature.right.as_ref().unwrap().effective().origin, Origin::Preset(right));
+}

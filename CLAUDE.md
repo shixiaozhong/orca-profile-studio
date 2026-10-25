@@ -132,7 +132,7 @@ from the package directory).
 
 [docs/roadmap.md](docs/roadmap.md) (Chinese) is the roadmap: stages and status, key design decisions
 of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
-M1, M2, M3; next: M4 (preset diff). When a stage is finished, move it to "已完成" there with its design
+M1, M2, M3, M4; next: M5 (global search and command palette). When a stage is finished, move it to "已完成" there with its design
 decisions and commit, and update the status line in README.
 
 Changing the exporter is work in another repository (`../OrcaSlicer`); confirm with the user first.

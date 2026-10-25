@@ -748,4 +748,152 @@ mod tests {
         cx.run_until_parked();
         assert!(app.read_with(cx, |app, _| matches!(app.state, LoadState::Failed(..))));
     }
+
+    fn choose_comparison(window: WindowHandle<Root>, query: &str, cx: &mut TestAppContext) {
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.within("compare-picker").click("input", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.input(query, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.press("down", cx);
+            window.press("enter", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+
+    #[gpui_kit::test]
+    fn compares_presets_with_edits_filters_and_sources(cx: &mut TestAppContext) {
+        let dir = editable_fixture();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        let catalog = catalog(&app, cx);
+        let child = catalog.repo.find(PresetKind::Process, "Acme 0.2")[0];
+        let base = catalog.repo.find(PresetKind::Process, "fdm_process_common")[0];
+        click_node(window, &app, Node::Vendor(0), cx);
+        click_node(window, &app, Node::Group(0, nav::Group::Processes), cx);
+        click_node(window, &app, Node::Preset(child.index()), cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.within("preset-tabs").click(1usize, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        find_key(window, "wall_loops", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.click("value-input", cx);
+            window.press("cmd-a", cx);
+            window.input("4", cx);
+            window.press("enter", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        click(window, "compare-with", cx);
+        choose_comparison(window, "fdm_process_common", cx);
+        let values = app.read_with(cx, |app, _| app.values.clone()).unwrap();
+        let compare = values.read_with(cx, |values, _| values.comparison().clone());
+        let dump = |cx: &mut TestAppContext| compare.read_with(cx, |view, cx| view.table().read(cx).dump(cx).1);
+        let rows = dump(cx);
+        let wall = rows.iter().find(|row| row[2] == "wall_loops").expect("edited wall count differs");
+        assert_eq!(
+            (wall[3].as_str(), wall[4].as_str(), wall[5].as_str(), wall[6].as_str()),
+            ("4", "2", "this file", "default")
+        );
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find("compare-left-title").label().unwrap().contains("unsaved changes"));
+            window.click("compare-search", cx);
+            window.input("wall_loops", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(dump(cx).len(), 1);
+        cx.update_window(window.into(), |_, window, cx| window.click(("row", 0usize), cx)).unwrap();
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("compare-detail").label(), Some("wall_loops"));
+            assert_eq!(window.find(("Left", 0usize)).label(), Some("this file: 4"));
+            assert_eq!(window.find(("Right", 0usize)).label(), Some("default: 2"));
+        })
+        .unwrap();
+        // Editing the other side refreshes an open comparison, including the empty-results case.
+        let edits = app.read_with(cx, |app, _| app.edits.clone()).unwrap();
+        edits.update(cx, |edits, cx| {
+            edits.session_mut(base.index()).set("wall_loops", Some(profile_core::RawValue::Str("4".into())));
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(dump(cx).is_empty());
+        click(window, "only-differences", cx);
+        assert_eq!(dump(cx).len(), 1);
+        assert_eq!(dump(cx)[0][6], "this file");
+        click(window, "close-comparison", cx);
+        assert_eq!(first_row(&app, cx).1, "4", "returning preserves the edit and filter");
+        assert_eq!(std::fs::read_to_string(dir.path().join("Acme/process/Acme 0.2.json")).unwrap(), CHILD);
+    }
+
+    #[gpui_kit::test]
+    fn compares_real_abs_nozzle_variants(cx: &mut TestAppContext) {
+        let Some(dir) = profiles_dir() else { return };
+        let (window, app) = open(cx, dir);
+        cx.run_until_parked();
+        let catalog = catalog(&app, cx);
+        let repo = &catalog.repo;
+        let left = repo.find(PresetKind::Filament, "Generic ABS @U1 0.2 nozzle")[0];
+        let vendor = repo.preset(left).vendor.index();
+        click_node(window, &app, Node::Vendor(vendor), cx);
+        click_node(window, &app, Node::Group(vendor, nav::Group::Filaments), cx);
+        click_node(window, &app, Node::Preset(left.index()), cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.within("preset-tabs").click(1usize, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        click(window, "compare-with", cx);
+        choose_comparison(window, "Snapmaker / Generic ABS —", cx);
+        let values = app.read_with(cx, |app, _| app.values.clone()).unwrap();
+        let compare = values.read_with(cx, |values, _| values.comparison().clone());
+        let rows = compare.read_with(cx, |view, cx| view.table().read(cx).dump(cx).1);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0][2], "compatible_printers");
+        assert!(rows[0][3].contains("0.2 nozzle"));
+        assert!(rows[0][4].contains("0.4 nozzle"));
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.click(("row", 0usize), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        click(window, "only-differences", cx);
+        assert!(compare.read_with(cx, |view, cx| view.table().read(cx).dump(cx).1.len()) > 100);
+        // Sorting keeps the selected key and its detail aligned, even when its row index changes.
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.click(("icon-sort", 2usize), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        compare.read_with(cx, |view, cx| {
+            let table = view.table().read(cx);
+            let rows = table.dump(cx).1;
+            assert!(rows.windows(2).all(|pair| pair[0][2].to_lowercase() >= pair[1][2].to_lowercase()));
+            assert_eq!(rows[table.selected_row().unwrap()][2], "compatible_printers");
+        });
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("compare-detail").label(), Some("compatible_printers"));
+        })
+        .unwrap();
+    }
 }

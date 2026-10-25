@@ -18,6 +18,7 @@ use gpui_kit::*;
 use profile_core::{OptionType, Origin, RawValue, Severity};
 
 use crate::catalog::Catalog;
+use crate::compare::CompareView;
 use crate::details::{format_value, severity_color};
 use crate::edits::Edits;
 
@@ -438,6 +439,8 @@ pub struct ValuesView {
     confirming_save: bool,
     status: Option<(bool, String)>,
     focus: FocusHandle,
+    comparison: Option<Entity<CompareView>>,
+    comparing: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -480,6 +483,8 @@ impl ValuesView {
             confirming_save: false,
             status: None,
             focus: cx.focus_handle(),
+            comparison: None,
+            comparing: false,
             _subscriptions: subscriptions,
         }
     }
@@ -491,6 +496,11 @@ impl ValuesView {
     #[cfg(test)]
     pub fn table(&self) -> &Entity<TableState<ValuesDelegate>> {
         &self.table
+    }
+
+    #[cfg(test)]
+    pub fn comparison(&self) -> &Entity<CompareView> {
+        self.comparison.as_ref().expect("comparison opened")
     }
 
     /// Rebuilds the rows after an edit, keeping filter, sort and selection.
@@ -671,6 +681,7 @@ impl ValuesView {
             edits.dirty().iter().filter_map(|&preset| edits.session(preset)).map(|s| s.pending().len()).sum();
         h_flex()
             .gap_3()
+            .flex_wrap()
             .pb_2()
             .items_center()
             .child(
@@ -704,6 +715,16 @@ impl ValuesView {
                     .child(count),
             )
             .child(div().flex_1())
+            .child(Button::new("compare-with").small().label("Compare with…").on_click(cx.listener(
+                |this, _, window, cx| {
+                    if this.comparison.is_none() {
+                        this.comparison =
+                            Some(cx.new(|cx| CompareView::new(&this.catalog, &this.edits, this.preset, window, cx)));
+                    }
+                    this.comparing = true;
+                    cx.notify();
+                },
+            )))
             .child(
                 Button::new("undo")
                     .small()
@@ -928,6 +949,19 @@ fn truncate_chars(text: &str, max: usize) -> String {
 
 impl Render for ValuesView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.comparing {
+            return v_flex()
+                .size_full()
+                .gap_2()
+                .child(Button::new("close-comparison").small().label("Back to values").on_click(cx.listener(
+                    |this, _, _, cx| {
+                        this.comparing = false;
+                        cx.notify();
+                    },
+                )))
+                .child(div().flex_1().min_h_0().child(self.comparison.as_ref().unwrap().clone()))
+                .into_any_element();
+        }
         self.sync_editor(window, cx);
         let status = self.status.clone().map(|(ok, message)| {
             let color = if ok { cx.theme().success } else { cx.theme().danger };
@@ -962,6 +996,7 @@ impl Render for ValuesView {
             .children(status)
             .child(div().flex_1().min_h_0().child(DataTable::new(&self.table).stripe(true)))
             .child(detail)
+            .into_any_element()
     }
 }
 

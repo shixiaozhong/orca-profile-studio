@@ -1,5 +1,6 @@
 mod app;
 mod catalog;
+mod compare;
 mod details;
 mod edits;
 mod tree;
