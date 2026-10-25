@@ -110,9 +110,10 @@ from the package directory).
 - After a click whose effect goes through a subscription (e.g. `TableEvent::SelectRow`), call
   `cx.run_until_parked()` and `render_frame` before asserting on the new frame.
 - Read the gpui-kit Coding Guides (skill `gpui-kit`, `references/coding-guides.md`) before UI work.
-  Known deviation, do not copy: `ValuesView` (`StudioApp::ensure_values`, called from `render_preset`)
-  and its value editor (`ValuesView::sync_editor`) are created lazily in `render`. New code creates
-  views in event handlers; `StudioApp::new` has the `Window` for `observe_in` / `subscribe_in`.
+  `render` only reads state: views that need a `Window` (`TableState`, `InputState`) are created in
+  event handlers. `StudioApp::sync_values` creates the `ValuesView` from the tree observer
+  (`observe_in`), the tab handler and the palette; `ValuesView::sync_editor` rebuilds the value
+  editor from the row-selection subscription and the `Edits` observer.
 - With `test-support`, `.test_support()` wraps an element in `Observed<…>`: a helper that adds it
   cannot return `Stateful<Div>`; return `AnyElement` (an `impl IntoElement` return captures `cx`).
 - Saving writes into the profiles directory, i.e. the OrcaSlicer checkout. UI tests that save use a

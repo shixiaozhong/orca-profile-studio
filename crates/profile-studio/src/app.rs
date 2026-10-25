@@ -82,10 +82,11 @@ pub struct StudioApp {
 impl StudioApp {
     pub fn new(profiles_dir: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let tree = cx.new(|cx| TreeState::new(cx));
-        let tree_observer = cx.observe(&tree, |this, tree, cx| {
+        let tree_observer = cx.observe_in(&tree, window, |this, tree, window, cx| {
             let selected = tree.read(cx).selected_item().and_then(|item| Node::parse(&item.id));
             if selected != this.selected {
                 this.selected = selected;
+                this.sync_values(window, cx);
                 cx.notify();
             }
         });
@@ -253,7 +254,7 @@ impl StudioApp {
             )
     }
 
-    fn render_body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {
         match &self.state {
             LoadState::Empty => placeholder(
                 IconName::FolderOpen,
@@ -278,12 +279,12 @@ impl StudioApp {
             }
             LoadState::Ready(catalog) => {
                 let catalog = catalog.clone();
-                self.render_browser(&catalog, window, cx)
+                self.render_browser(&catalog, cx)
             }
         }
     }
 
-    fn render_browser(&mut self, catalog: &Arc<Catalog>, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_browser(&self, catalog: &Arc<Catalog>, cx: &mut Context<Self>) -> AnyElement {
         let rows = catalog.clone();
         let edits = self.edits.clone();
         let navigation = tree(&self.tree, move |ix, entry, _, _, cx| {
@@ -293,7 +294,7 @@ impl StudioApp {
         .size_full();
         let scrolling = |content: AnyElement| div().id("details").size_full().overflow_y_scroll().child(content);
         let details = match self.selected {
-            Some(Node::Preset(index)) => self.render_preset(catalog, index, window, cx),
+            Some(Node::Preset(index)) => self.render_preset(catalog, index, cx),
             Some(node) => scrolling(details::render(catalog, node, cx)).into_any_element(),
             None => scrolling(
                 div()
@@ -316,22 +317,16 @@ impl StudioApp {
     }
 
     /// A preset's details: the overview, or the values table with every key and its layers.
-    fn render_preset(
-        &mut self,
-        catalog: &Arc<Catalog>,
-        index: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn render_preset(&self, catalog: &Arc<Catalog>, index: usize, cx: &mut Context<Self>) -> AnyElement {
         let tabs = TabBar::new("preset-tabs")
             .underline()
             .small()
             .selected_index(self.preset_tab as usize)
             .child(Tab::new().label("Overview"))
             .child(Tab::new().label("Values"))
-            .on_click(cx.listener(|this, ix: &usize, _, cx| {
-                this.preset_tab = if *ix == 1 { PresetTab::Values } else { PresetTab::Overview };
-                cx.notify();
+            .on_click(cx.listener(|this, ix: &usize, window, cx| {
+                let tab = if *ix == 1 { PresetTab::Values } else { PresetTab::Overview };
+                this.set_preset_tab(tab, window, cx);
             }));
         let content = match self.preset_tab {
             PresetTab::Overview => div()
@@ -340,9 +335,11 @@ impl StudioApp {
                 .overflow_y_scroll()
                 .child(details::render(catalog, Node::Preset(index), cx))
                 .into_any_element(),
-            PresetTab::Values => {
-                div().size_full().child(self.ensure_values(catalog, index, window, cx)).into_any_element()
-            }
+            // The view is created by the handlers that select a preset or the tab (`sync_values`).
+            PresetTab::Values => div()
+                .size_full()
+                .children(self.values.clone().filter(|values| values.read(cx).preset() == index))
+                .into_any_element(),
         };
         v_flex().size_full().child(tabs).child(div().flex_1().min_h_0().pt_3().child(content)).into_any_element()
     }
@@ -350,18 +347,31 @@ impl StudioApp {
     /// The Values view of `preset`, created on first use; it needs a `Window` for its inputs.
     fn ensure_values(
         &mut self,
-        catalog: &Arc<Catalog>,
         preset: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Entity<ValuesView> {
+    ) -> Option<Entity<ValuesView>> {
         if let Some(values) = self.values.as_ref().filter(|values| values.read(cx).preset() == preset) {
-            return values.clone();
+            return Some(values.clone());
         }
-        let edits = self.edits.clone().expect("loaded profiles have an edit model");
-        let values = cx.new(|cx| ValuesView::new(catalog, &edits, preset, window, cx));
+        let (LoadState::Ready(catalog), Some(edits)) = (&self.state, &self.edits) else { return None };
+        let (catalog, edits) = (catalog.clone(), edits.clone());
+        let values = cx.new(|cx| ValuesView::new(&catalog, &edits, preset, window, cx));
         self.values = Some(values.clone());
-        values
+        Some(values)
+    }
+
+    /// Creates the Values view when a preset is selected and the Values tab is showing.
+    fn sync_values(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let (Some(Node::Preset(preset)), PresetTab::Values) = (self.selected, self.preset_tab) {
+            self.ensure_values(preset, window, cx);
+        }
+    }
+
+    fn set_preset_tab(&mut self, tab: PresetTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.preset_tab = tab;
+        self.sync_values(window, cx);
+        cx.notify();
     }
 
     /// Rebuilds the palette's groups and targets for `query` and the current selection.
@@ -415,18 +425,17 @@ impl StudioApp {
         let Some(target) = targets.get(index.section).and_then(|row| row.get(index.row)).cloned() else {
             return;
         };
-        let LoadState::Ready(catalog) = &self.state else { return };
-        let catalog = catalog.clone();
         let reveal = |this: &mut Self, preset: usize, key: &str, window: &mut Window, cx: &mut Context<Self>| {
             this.preset_tab = PresetTab::Values;
-            let values = this.ensure_values(&catalog, preset, window, cx);
-            values.update(cx, |values, cx| values.reveal_key(key, window, cx));
+            if let Some(values) = this.ensure_values(preset, window, cx) {
+                values.update(cx, |values, cx| values.reveal_key(key, window, cx));
+            }
         };
         match target {
             Target::Command(AppCommand::Reload) => self.reload(cx),
             Target::Command(AppCommand::Open) => self.choose_folder(cx),
-            Target::Command(AppCommand::ShowOverview) => self.preset_tab = PresetTab::Overview,
-            Target::Command(AppCommand::ShowValues) => self.preset_tab = PresetTab::Values,
+            Target::Command(AppCommand::ShowOverview) => self.set_preset_tab(PresetTab::Overview, window, cx),
+            Target::Command(AppCommand::ShowValues) => self.set_preset_tab(PresetTab::Values, window, cx),
             Target::Preset(preset) => self.go_to_preset(preset, window, cx),
             Target::Option(key) => {
                 if let Some(Node::Preset(preset)) = self.selected {
@@ -489,7 +498,7 @@ impl StudioApp {
 }
 
 impl Render for StudioApp {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .bg(cx.theme().background)
@@ -497,7 +506,7 @@ impl Render for StudioApp {
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &OpenPalette, window, cx| this.open_palette(window, cx)))
             .child(self.render_toolbar(cx))
-            .child(div().flex_1().min_h_0().child(self.render_body(window, cx)))
+            .child(div().flex_1().min_h_0().child(self.render_body(cx)))
             .child(self.render_status(cx))
     }
 }

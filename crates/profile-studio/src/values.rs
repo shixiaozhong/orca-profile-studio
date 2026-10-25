@@ -462,14 +462,19 @@ impl ValuesView {
                     this.apply_filter(cx);
                 }
             }),
-            cx.subscribe_in(&table, window, |this, table, event: &TableEvent, _, cx| {
+            cx.subscribe_in(&table, window, |this, table, event: &TableEvent, window, cx| {
                 if let TableEvent::SelectRow(row_ix) = event {
                     this.selected = table.read(cx).delegate().row(*row_ix).map(|row| row.key.clone());
                     this.confirming_save = false;
+                    this.sync_editor(window, cx);
                     cx.notify();
                 }
             }),
-            cx.observe(edits, |this, _, cx| this.rebuild(cx)),
+            // Edits, undo and redo change the values: rebuild the rows, then the editor.
+            cx.observe_in(edits, window, |this, _, window, cx| {
+                this.rebuild(cx);
+                this.sync_editor(window, cx);
+            }),
         ];
         ValuesView {
             catalog: catalog.clone(),
@@ -502,6 +507,7 @@ impl ValuesView {
         self.filter.query = key.to_owned();
         self.selected = Some(key.to_owned());
         self.apply_filter(cx);
+        self.sync_editor(window, cx);
     }
 
     #[cfg(test)]
@@ -623,7 +629,8 @@ impl ValuesView {
         self.set_value(&row.key, Some(value), cx);
     }
 
-    /// Creates or refreshes the control for the selected key.
+    /// Creates or refreshes the control for the selected key. Called from the handlers that
+    /// change the selection or the values, never from `render`: the controls own input state.
     fn sync_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(row) = self.selected_row(cx) else {
             self.editor = None;
@@ -886,10 +893,11 @@ impl ValuesView {
                         }),
                 )
                 .into_any_element(),
-            Some(Control::Unsupported) | None => div()
+            Some(Control::Unsupported) => div()
                 .text_color(muted)
                 .child("This value has several multi-line items; edit it in the file.")
                 .into_any_element(),
+            None => div().into_any_element(),
         };
         section = section.child(control);
         let reset_label = if row.inherits() { "Reset to inherited" } else { "Remove from file" };
@@ -959,7 +967,7 @@ fn truncate_chars(text: &str, max: usize) -> String {
 }
 
 impl Render for ValuesView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.comparing {
             return v_flex()
                 .size_full()
@@ -973,7 +981,6 @@ impl Render for ValuesView {
                 .child(div().flex_1().min_h_0().child(self.comparison.as_ref().unwrap().clone()))
                 .into_any_element();
         }
-        self.sync_editor(window, cx);
         let status = self.status.clone().map(|(ok, message)| {
             let color = if ok { cx.theme().success } else { cx.theme().danger };
             div()
