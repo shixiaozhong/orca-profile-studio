@@ -156,4 +156,4 @@ cargo test
 
 ## 路线图
 
-已完成 M0 到 M7。路线图上剩下的是扩展项：2D G-code 分层查看器。各阶段的范围、关键设计决定、依赖和完成标准见 [docs/roadmap.md](docs/roadmap.md)。
+已完成 M0 到 M7，接下来是 M8 到 M13：保存后自动刷新、按 Design Guides 审查早期界面、批量编辑、新建和复制预设、中文界面、和 Git 对比。各阶段的范围、关键设计决定、依赖和完成标准见 [docs/roadmap.md](docs/roadmap.md)。

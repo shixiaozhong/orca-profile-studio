@@ -164,7 +164,8 @@ from the package directory).
 
 [docs/roadmap.md](docs/roadmap.md) (Chinese) is the roadmap: stages and status, key design decisions
 of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
-M1, M2, M3, M4, M5, M6, M7; left: the stretch 2D G-code viewer. When a stage is finished, move it to "已完成" there with its design
+M1–M7; next: M8 (refresh after saving), then M9–M13 (Design Guides review, batch edit, new/copy/rename
+presets, Chinese UI, Git diff); the G-code viewer and OrcaSlicer sync automation are deferred. When a stage is finished, move it to "已完成" there with its design
 decisions and commit, and update the status line in README.
 
 Changing the exporter is work in another repository (`../OrcaSlicer`); confirm with the user first.
