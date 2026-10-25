@@ -423,28 +423,48 @@ impl Render for CompareView {
                 }),
             ))
             .child(div().id("compare-count").test_support().aria_label(count.clone()).text_sm().child(count));
+        const NOTE: &str = concat!(
+            "Read-only · Includes unsaved changes. Reload to update inherited values. ",
+            "String/array differences are included."
+        );
+        let left_title = self.side_title("Left", self.left, cx);
+        let right_title = self.right.map(|right| self.side_title("Right", right, cx));
         v_flex()
             .size_full()
             .gap_2()
             .child(
-                div().id("compare-left-title").test_support().aria_label(self.side_title("Left", self.left, cx))
-                    .text_sm().child(self.side_title("Left", self.left, cx)),
+                div()
+                    .id("compare-left-title")
+                    .test_support()
+                    .aria_label(left_title.clone())
+                    .text_sm()
+                    .child(left_title),
             )
             // Select's root fills its parent; constrain its height so the table can use the rest.
             .child(div().h(px(32.)).flex_shrink_0().child(picker))
-            .when_some(self.right, |view, right| {
-                view.child(div().id("compare-right-title").test_support().aria_label(self.side_title("Right", right, cx))
-                    .text_sm().child(self.side_title("Right", right, cx)))
+            .when_some(right_title, |view, title| {
+                view.child(
+                    div().id("compare-right-title").test_support().aria_label(title.clone()).text_sm().child(title),
+                )
             })
             .child(filters)
-            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(
-                "Read-only · Includes unsaved changes. Reload to update inherited values. String/array differences are included.",
-            ))
+            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(NOTE))
             .child(
-                div().flex_1().min_h_0()
+                div()
+                    .flex_1()
+                    .min_h_0()
                     .when(!empty, |body| body.child(DataTable::new(&self.table).stripe(true)))
-                    .when(empty, |body| body.child(div().id("compare-empty").test_support()
-                        .aria_label(empty_message).p_3().text_sm().child(empty_message))),
+                    .when(empty, |body| {
+                        body.child(
+                            div()
+                                .id("compare-empty")
+                                .test_support()
+                                .aria_label(empty_message)
+                                .p_3()
+                                .text_sm()
+                                .child(empty_message),
+                        )
+                    }),
             )
             .child(self.render_detail(cx))
     }
