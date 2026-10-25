@@ -123,8 +123,10 @@ from the package directory).
   clippy clean.
 - Identifiers, comments, CLI and UI strings in English; README is in Chinese.
 - Commit messages: conventional style (`feat: …`, `fix: …`, `docs: …`) with a short bullet body,
-  ending with a blank line and the trailer `Co-Authored-By: Codex <noreply@openai.com>`. Commit only
-  when asked. No remote is configured yet.
+  ending with a blank line and the trailer `Co-Authored-By: Codex (<model>) <noreply@openai.com>`,
+  where `<model>` is the model this session runs on (e.g. `Codex (gpt-5-codex)`); if you are not
+  sure of the model name, write `Co-Authored-By: Codex <noreply@openai.com>`. Commit only when
+  asked. No remote is configured yet.
 - `Cargo.toml` deliberately has no `license` field; the user has not chosen one.
 - `rust-version = "1.88"` makes Cargo pick older dependency versions; the local toolchain is 1.97.
 
