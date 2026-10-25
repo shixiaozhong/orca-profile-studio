@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::Button;
+use gpui_kit::component::button::{Button, ButtonVariant};
 use gpui_kit::component::command::{Command, CommandGroup, CommandState};
 use gpui_kit::component::list::ListItem;
 use gpui_kit::component::resizable::{ResizablePanelEvent, ResizableState};
@@ -24,7 +24,7 @@ use profile_core::{Repository, Schema, Severity};
 
 use crate::catalog::Catalog;
 use crate::details::{self, Compatibility, severity_color};
-use crate::edits::Edits;
+use crate::edits::{Edits, EditsEvent, RefreshConflict};
 use crate::issues::{IssuesEvent, IssuesView};
 use crate::palette::{self, AppCommand, Target};
 use crate::settings::{self, ThemePreference};
@@ -86,7 +86,7 @@ pub struct StudioApp {
     values: Option<Entity<ValuesView>>,
     /// Unsaved edits of the loaded profiles.
     edits: Option<Entity<Edits>>,
-    /// Reload or Open was asked for while edits are unsaved; the next click discards them.
+    /// Open was asked for while edits are unsaved; the next click discards them.
     confirm_discard: bool,
     /// The command palette's state; created when first opened, shown in a `Root` dialog.
     palette: Option<Entity<CommandState>>,
@@ -106,6 +106,10 @@ pub struct StudioApp {
     browser_layout: Entity<ResizableState>,
     workspace_layout: Entity<ResizableState>,
     load_task: Option<Task<()>>,
+    load_generation: u64,
+    refresh_error: Option<String>,
+    refresh_conflicts: Vec<RefreshConflict>,
+    _edit_events: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -179,6 +183,10 @@ impl StudioApp {
             browser_layout,
             workspace_layout,
             load_task: None,
+            load_generation: 0,
+            refresh_error: None,
+            refresh_conflicts: Vec::new(),
+            _edit_events: None,
             _subscriptions: subscriptions,
         };
         if let Some(dir) = profiles_dir {
@@ -191,18 +199,27 @@ impl StudioApp {
     fn load(&mut self, dir: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         // Absolute and without `..`, so the saved setting does not depend on where the app started.
         let dir = dir.canonicalize().or_else(|_| std::path::absolute(&dir)).unwrap_or(dir);
+        let refreshing = self.profiles_dir.as_ref() == Some(&dir) && matches!(self.state, LoadState::Ready(_));
+        self.load_generation += 1;
+        let generation = self.load_generation;
+        let revision = self.edits.as_ref().map_or(0, |edits| edits.read(cx).save_revision());
         self.profiles_dir = Some(dir.clone());
-        self.state = LoadState::Loading(dir.clone());
-        self.selected = None;
-        self.values = None;
-        self.edits = None;
         self.confirm_discard = false;
-        self.palette_entries = PaletteEntries::default();
-        self.compatibility = None;
-        self.issues = None;
-        self.issues_open = false;
-        self._issues_events = None;
-        self.tree.update(cx, |tree, cx| tree.set_items(Vec::new(), cx));
+        self.refresh_error = None;
+        self.refresh_conflicts.clear();
+        if !refreshing {
+            self.state = LoadState::Loading(dir.clone());
+            self.selected = None;
+            self.values = None;
+            self.edits = None;
+            self._edit_events = None;
+            self.palette_entries = PaletteEntries::default();
+            self.compatibility = None;
+            self.issues = None;
+            self.issues_open = false;
+            self._issues_events = None;
+            self.tree.update(cx, |tree, cx| tree.set_items(Vec::new(), cx));
+        }
 
         let job = cx.background_executor().spawn({
             let dir = dir.clone();
@@ -215,7 +232,18 @@ impl StudioApp {
         });
         self.load_task = Some(cx.spawn_in(window, async move |this, cx| {
             let result = job.await;
-            this.update_in(cx, |this, window, cx| this.finish_load(dir, result, window, cx)).ok();
+            this.update_in(cx, |this, window, cx| {
+                if this.load_generation != generation {
+                    return;
+                }
+                // A save during the background read can produce a mixed snapshot. Start again.
+                if refreshing && this.edits.as_ref().is_some_and(|edits| edits.read(cx).save_revision() != revision) {
+                    this.reload(window, cx);
+                    return;
+                }
+                this.finish_load(dir, result, window, cx);
+            })
+            .ok();
         }));
         cx.notify();
     }
@@ -230,6 +258,18 @@ impl StudioApp {
         if self.profiles_dir.as_ref() != Some(&dir) {
             return;
         }
+        self.load_task = None;
+        if let LoadState::Ready(old) = &self.state {
+            let old = old.clone();
+            match result {
+                Ok(catalog) => self.finish_refresh(&old, Arc::new(catalog), window, cx),
+                Err(err) => {
+                    self.refresh_error = Some(format!("Could not refresh: {err}. Your edits are kept. Retry Reload."))
+                }
+            }
+            cx.notify();
+            return;
+        }
         self.state = match result {
             Ok(catalog) => {
                 let catalog = Arc::new(catalog);
@@ -237,17 +277,67 @@ impl StudioApp {
                 self.tree.update(cx, |tree, cx| tree.set_items(items, cx));
                 let edits = cx.new(|_| Edits::new(catalog.clone()));
                 cx.observe(&edits, |_, _, cx| cx.notify()).detach();
+                self._edit_events = Some(cx.subscribe_in(&edits, window, |this, _, _: &EditsEvent, window, cx| {
+                    this.reload(window, cx);
+                }));
                 self.edits = Some(edits);
                 settings::update(cx, |settings| settings.profiles_dir = Some(dir.clone()));
                 LoadState::Ready(catalog)
             }
             Err(err) => LoadState::Failed(dir, err),
         };
-        self.load_task = None;
         if matches!(self.state, LoadState::Ready(_)) && settings::get(cx).issues_open {
             self.open_issues(window, cx);
         }
         cx.notify();
+    }
+
+    fn finish_refresh(
+        &mut self,
+        old: &Arc<Catalog>,
+        catalog: Arc<Catalog>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(edits) = self.edits.clone() else { return };
+        if let Err(conflicts) = edits.update(cx, |edits, _| edits.rebase(&catalog)) {
+            self.refresh_error = Some(format!(
+                "Refresh paused: {} edited file(s) changed or could not be loaded. Your edits and history are kept.",
+                conflicts.len()
+            ));
+            self.refresh_conflicts = conflicts;
+            return;
+        }
+        // Read the current view state at completion, so navigation and edits during loading survive.
+        self.selected = self.selected.and_then(|node| node.remap(old, &catalog));
+        if let Some(values) = self.values.clone() {
+            let remapped = Node::Preset(values.read(cx).preset()).remap(old, &catalog);
+            if let Some(Node::Preset(preset)) = remapped {
+                values.update(cx, |values, cx| values.refresh(&catalog, preset, window, cx));
+            } else {
+                self.values = None;
+            }
+        }
+        if let Some(issues) = &self.issues {
+            issues.update(cx, |issues, cx| issues.refresh(&catalog, window, cx));
+        }
+        self.compatibility = match self.selected {
+            Some(Node::Preset(preset)) => Some(Compatibility::compute(&catalog, preset)),
+            _ => None,
+        };
+        self.state = LoadState::Ready(catalog.clone());
+        self.tree.update(cx, |tree, cx| {
+            tree.set_items(nav::build(&catalog), cx);
+            if let Some(node) = self.selected {
+                let id = node.id();
+                tree.set_selected_item(Some(&TreeItem::new(id.clone(), "")), cx);
+                tree.reveal_item(&id, ScrollStrategy::Center, cx);
+            }
+        });
+        self.sync_values(window, cx);
+        let query = self.palette.as_ref().map(|palette| palette.read(cx).query(cx)).unwrap_or_default();
+        self.refresh_palette(&query, cx);
+        edits.update(cx, |_, cx| cx.notify());
     }
 
     /// Whether unsaved edits may be dropped now; the first request only arms the confirmation.
@@ -282,12 +372,53 @@ impl StudioApp {
     }
 
     fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.may_discard(cx) {
-            return;
-        }
         if let Some(dir) = self.profiles_dir.clone() {
             self.load(dir, window, cx);
         }
+    }
+
+    fn review_refresh_conflicts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.refresh_conflicts.is_empty() || window.has_active_dialog(cx) {
+            return;
+        }
+        let conflicts = self.refresh_conflicts.clone();
+        let generation = self.load_generation;
+        let app = cx.entity();
+        window.open_alert_dialog(cx, move |dialog, _, _| {
+            let paths: Vec<_> = conflicts.iter().map(|conflict| conflict.path.clone()).collect();
+            let app = app.clone();
+            let description = "Restore these files and retry Reload to keep their edits and history, \
+                or discard their edits and history to use the disk versions. Other edits are kept.";
+            let files = div().id("refresh-conflict-files").max_h_64().overflow_y_scroll().children(
+                conflicts.iter().map(|conflict| {
+                    div().py_1().text_sm().child(format!("{} — {}", conflict.path.display(), conflict.reason))
+                }),
+            );
+            dialog
+                .title("Files changed on disk")
+                .width(px(640.))
+                .confirm()
+                .description(description)
+                .child(files)
+                .ok_text("Discard edits and reload")
+                .ok_variant(ButtonVariant::Danger)
+                .on_ok(move |_, window, cx| {
+                    app.update(cx, |this, cx| {
+                        // A newer refresh supersedes the decision shown in this dialog.
+                        if this.load_generation != generation {
+                            return;
+                        }
+                        if let Some(edits) = &this.edits {
+                            edits.update(cx, |edits, cx| {
+                                edits.discard_sessions(&paths);
+                                cx.notify();
+                            });
+                        }
+                        this.reload(window, cx);
+                    });
+                    true
+                })
+        });
     }
 
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -344,10 +475,13 @@ impl StudioApp {
                 Button::new("reload")
                     .small()
                     .icon(IconName::RefreshCw)
-                    .tooltip("Reload from disk")
-                    .disabled(self.profiles_dir.is_none() || matches!(self.state, LoadState::Loading(_)))
+                    .tooltip("Reload from disk, keeping edits and history")
+                    .disabled(self.profiles_dir.is_none() || self.load_task.is_some())
                     .on_click(cx.listener(|this, _, window, cx| this.reload(window, cx))),
             )
+            .when(self.load_task.is_some() && matches!(self.state, LoadState::Ready(_)), |bar| {
+                bar.child(Spinner::new().small()).child(div().text_sm().child("Refreshing"))
+            })
     }
 
     fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -683,6 +817,33 @@ impl Render for StudioApp {
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &OpenPalette, window, cx| this.open_palette(window, cx)))
             .child(self.render_toolbar(cx))
+            .when_some(self.refresh_error.clone(), |view, message| {
+                view.child(
+                    h_flex()
+                        .gap_2()
+                        .px_3()
+                        .py_2()
+                        .border_b_1()
+                        .border_color(cx.theme().border)
+                        .child(Icon::new(IconName::TriangleAlert).text_color(cx.theme().warning))
+                        .child(
+                            div()
+                                .id("refresh-error")
+                                .test_support()
+                                .aria_label(message.clone())
+                                .flex_1()
+                                .text_sm()
+                                .child(message),
+                        )
+                        .when(!self.refresh_conflicts.is_empty(), |bar| {
+                            bar.child(
+                                Button::new("review-refresh-conflicts").small().label("Review files…").on_click(
+                                    cx.listener(|this, _, window, cx| this.review_refresh_conflicts(window, cx)),
+                                ),
+                            )
+                        }),
+                )
+            })
             .child(div().flex_1().min_h_0().child(self.render_body(cx)))
             .child(self.render_status(cx))
     }
@@ -793,6 +954,7 @@ mod tests {
         settings: Option<PathBuf>,
     ) -> (WindowHandle<Root>, Entity<StudioApp>) {
         cx.update(gpui_kit::init);
+        cx.update(|cx| cx.set_reduce_motion(true));
         cx.update(|cx| crate::settings::init(settings, cx));
         cx.update(crate::values::init);
         cx.update(super::init);
@@ -1063,7 +1225,7 @@ mod tests {
         })
         .unwrap();
 
-        // Reloading with unsaved edits asks for a second click.
+        // Reloading preserves unsaved edits, selection, filters and undo history.
         find_key(window, "wall_loops", cx);
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
@@ -1076,10 +1238,15 @@ mod tests {
         cx.run_until_parked();
         click(window, "reload", cx);
         assert!(app.read_with(cx, |app, _| matches!(app.state, LoadState::Ready(_))));
-        cx.update_window(window.into(), |_, window, _| assert!(window.try_find("discard-warning").is_some())).unwrap();
-        click(window, "reload", cx);
-        assert!(app.read_with(cx, |app, cx| app.edits.as_ref().is_some_and(|edits| edits.read(cx).dirty().is_empty())));
-        assert_eq!(std::fs::read_to_string(&file).unwrap(), expected, "discarded edits are not written");
+        cx.update_window(window.into(), |_, window, _| assert!(window.try_find("discard-warning").is_none())).unwrap();
+        assert!(dirty(&app, cx));
+        assert_eq!(first_row(&app, cx).1, "4");
+        click(window, "undo", cx);
+        assert_eq!(first_row(&app, cx).1, "3");
+        assert!(!dirty(&app, cx));
+        click(window, "redo", cx);
+        assert_eq!(first_row(&app, cx).1, "4");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), expected, "Reload never writes unsaved edits");
     }
 
     /// Opens the palette with ⌘K, types `query` and confirms the highlighted entry.
@@ -1098,6 +1265,361 @@ mod tests {
         })
         .unwrap();
         cx.run_until_parked();
+    }
+
+    fn enter_value(window: WindowHandle<Root>, value: &str, cx: &mut TestAppContext) {
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.click("value-input", cx);
+            window.press("cmd-a", cx);
+            window.input(value, cx);
+            window.press("enter", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+
+    #[gpui_kit::test]
+    fn saving_refreshes_children_and_keeps_edits_made_while_loading(cx: &mut TestAppContext) {
+        let dir = editable_fixture();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        let old = catalog(&app, cx);
+        let child = old.repo.find(PresetKind::Process, "Acme 0.2")[0].index();
+        run_palette(window, "fdm_process_common", cx);
+        run_palette(window, "show preset values", cx);
+        find_key(window, "sparse_infill_density", cx);
+        enter_value(window, "25%", cx);
+        run_palette(window, "Acme 0.2", cx);
+        find_key(window, "sparse_infill_density", cx);
+        click(window, "hide-defaults", cx);
+        let values = app.read_with(cx, |app, _| app.values.clone().unwrap());
+        click(window, "save", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.click("confirm-save", cx);
+            // Create a new edit after the synchronous save, before the background load completes.
+            let edits = app.read(cx).edits.clone().unwrap();
+            edits.update(cx, |edits, cx| {
+                edits.session_mut(child).set("wall_loops", Some(profile_core::RawValue::Str("7".into())));
+                edits.session_mut(child).set("wall_loops", Some(profile_core::RawValue::Str("8".into())));
+                edits.session_mut(child).undo();
+                cx.notify();
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let fresh = catalog(&app, cx);
+        assert!(!Arc::ptr_eq(&old, &fresh));
+        assert_eq!(
+            first_row(&app, cx),
+            ("sparse_infill_density".into(), "25% %".into(), "[1] fdm_process_common".into())
+        );
+        app.read_with(cx, |app, cx| {
+            assert_eq!(app.selected, Some(Node::Preset(child)));
+            assert_eq!(app.preset_tab, PresetTab::Values);
+            assert_eq!(app.values.as_ref(), Some(&values));
+            let edits = app.edits.as_ref().unwrap().read(cx);
+            assert!(edits.is_dirty(child));
+            assert!(edits.session(child).unwrap().can_redo());
+        });
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("hide-defaults").checked(), Some(true));
+            assert_eq!(window.find("value-detail").label(), Some("sparse_infill_density"));
+        })
+        .unwrap();
+        find_key(window, "wall_loops", cx);
+        assert_eq!(first_row(&app, cx).1, "7");
+        click(window, "redo", cx);
+        assert_eq!(first_row(&app, cx).1, "8");
+        click(window, "undo", cx);
+        click(window, "undo", cx);
+        assert_eq!(first_row(&app, cx).1, "2");
+        assert_eq!(std::fs::read_to_string(dir.path().join("Acme/process/Acme 0.2.json")).unwrap(), CHILD);
+        run_palette(window, "sparse_infill_density = 25%", cx);
+        assert_eq!(first_row(&app, cx).1, "25% %");
+        assert_eq!(first_row(&app, cx).2, "this file");
+    }
+
+    #[gpui_kit::test]
+    fn reload_remaps_sessions_and_selection_after_preset_ids_shift(cx: &mut TestAppContext) {
+        let dir = editable_fixture();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "Acme 0.2", cx);
+        run_palette(window, "show preset values", cx);
+        find_key(window, "wall_loops", cx);
+        enter_value(window, "5", cx);
+        let old = catalog(&app, cx).repo.find(PresetKind::Process, "Acme 0.2")[0];
+        let path = dir.path().join("Acme.json");
+        let manifest = std::fs::read_to_string(&path).unwrap().replace(
+            "\"process_list\": [",
+            "\"process_list\": [{\"name\":\"extra\",\"sub_path\":\"process/extra.json\"},",
+        );
+        std::fs::write(&path, manifest).unwrap();
+        std::fs::write(
+            dir.path().join("Acme/process/extra.json"),
+            CHILD.replace("Acme 0.2", "extra").replace("fdm_process_common", ""),
+        )
+        .unwrap();
+        click(window, "reload", cx);
+        let fresh = catalog(&app, cx);
+        let new = fresh.repo.find(PresetKind::Process, "Acme 0.2")[0];
+        assert_ne!(old, new);
+        app.read_with(cx, |app, cx| {
+            assert_eq!(app.selected, Some(Node::Preset(new.index())));
+            let session = app.edits.as_ref().unwrap().read(cx).session(new.index()).unwrap();
+            assert_eq!(session.preset(), new);
+        });
+        assert_eq!(first_row(&app, cx).1, "5");
+        click(window, "undo", cx);
+        assert_eq!(first_row(&app, cx).1, "2");
+        click(window, "redo", cx);
+        click(window, "save", cx);
+        click(window, "confirm-save", cx);
+        assert!(
+            std::fs::read_to_string(dir.path().join("Acme/process/Acme 0.2.json"))
+                .unwrap()
+                .contains("\"wall_loops\": \"5\"")
+        );
+        assert!(
+            std::fs::read_to_string(dir.path().join("Acme/process/extra.json"))
+                .unwrap()
+                .contains("\"wall_loops\": \"2\"")
+        );
+    }
+
+    #[gpui_kit::test]
+    fn refresh_conflicts_keep_history_until_explicitly_discarded(cx: &mut TestAppContext) {
+        let dir = editable_fixture();
+        let file = dir.path().join("Acme/process/Acme 0.2.json");
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "Acme 0.2", cx);
+        run_palette(window, "show preset values", cx);
+        find_key(window, "wall_loops", cx);
+        enter_value(window, "5", cx);
+        let old = catalog(&app, cx);
+        std::fs::write(&file, CHILD.replace("\"wall_loops\": \"2\"", "\"wall_loops\": \"9\"")).unwrap();
+        click(window, "reload", cx);
+        assert!(Arc::ptr_eq(&old, &catalog(&app, cx)));
+        assert_eq!(first_row(&app, cx).1, "5");
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find("refresh-error").label().unwrap().contains("1 edited file"));
+        })
+        .unwrap();
+        click(window, "review-refresh-conflicts", cx);
+        cx.update_window(window.into(), |_, window, cx| window.press("escape", cx)).unwrap();
+        cx.run_until_parked();
+        click(window, "undo", cx);
+        assert_eq!(first_row(&app, cx).1, "2");
+        click(window, "redo", cx);
+        assert_eq!(first_row(&app, cx).1, "5");
+        click(window, "review-refresh-conflicts", cx);
+        click(window, "ok", cx);
+        assert!(
+            !Arc::ptr_eq(&old, &catalog(&app, cx)),
+            "{:?}",
+            app.read_with(cx, |app, cx| (
+                app.load_generation,
+                app.refresh_error.clone(),
+                app.edits.as_ref().unwrap().read(cx).dirty()
+            ))
+        );
+        assert_eq!(first_row(&app, cx).1, "9");
+        app.read_with(cx, |app, cx| {
+            assert!(app.refresh_error.is_none());
+            assert!(app.edits.as_ref().unwrap().read(cx).dirty().is_empty());
+        });
+    }
+
+    #[gpui_kit::test]
+    fn library_save_refreshes_cross_vendor_values_issues_and_compatibility(cx: &mut TestAppContext) {
+        let dir = editable_fixture();
+        let write = |path: &str, text: &str| {
+            let path = dir.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write("OrcaFilamentLibrary.json", r#"{"name":"OrcaFilamentLibrary","version":"1.0","filament_list":[]}"#);
+        write(
+            "OrcaFilamentLibrary/filament/base.json",
+            r#"{
+            "type":"filament","name":"Library PLA","from":"system","instantiation":"true","filament_id":"PLA",
+            "nozzle_temperature":["5000"],"compatible_printers_condition":"false"
+        }"#,
+        );
+        write(
+            "Acme/filament/pla.json",
+            r#"{
+            "type":"filament","name":"Acme PLA","from":"system","instantiation":"true","inherits":"Library PLA"
+        }"#,
+        );
+        write("Acme/machine/model.json", r#"{"type":"machine_model","name":"A","nozzle_diameter":"0.4"}"#);
+        write(
+            "Acme/machine/printer.json",
+            r#"{
+            "type":"machine","name":"A 0.4 nozzle","from":"system","instantiation":"true",
+            "printer_model":"A","printer_variant":"0.4","nozzle_diameter":["0.4"]
+        }"#,
+        );
+        let path = dir.path().join("Acme.json");
+        let mut manifest: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        manifest["filament_list"] = serde_json::json!([{"name":"Acme PLA","sub_path":"filament/pla.json"}]);
+        manifest["machine_model_list"] = serde_json::json!([{"name":"A","sub_path":"machine/model.json"}]);
+        manifest["machine_list"] = serde_json::json!([{"name":"A 0.4 nozzle","sub_path":"machine/printer.json"}]);
+        std::fs::write(path, manifest.to_string()).unwrap();
+
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        let old = catalog(&app, cx);
+        run_palette(window, "Acme PLA", cx);
+        run_palette(window, "show preset values", cx);
+        find_key(window, "nozzle_temperature", cx);
+        click(window, "toggle-issues", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.click("issues-search", cx);
+            window.input("nozzle_temperature", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let issues = app.read_with(cx, |app, _| app.issues.clone().unwrap());
+        assert!(!issues.read_with(cx, |issues, cx| issues.table().read(cx).dump(cx).1).is_empty());
+        click(window, "toggle-issues", cx);
+        let base = old.repo.find(PresetKind::Filament, "Library PLA")[0].index();
+        let edits = app.read_with(cx, |app, _| app.edits.clone().unwrap());
+        edits.update(cx, |edits, cx| {
+            let session = edits.session_mut(base);
+            session.set("nozzle_temperature", Some(profile_core::RawValue::List(vec!["210".into()])));
+            session.set("compatible_printers_condition", Some(profile_core::RawValue::Str("true".into())));
+            cx.notify();
+        });
+        cx.run_until_parked();
+        click(window, "save", cx);
+        click(window, "confirm-save", cx);
+        app.read_with(cx, |app, cx| {
+            let rows = app.values.as_ref().unwrap().read(cx).table().read(cx).dump(cx).1;
+            assert_eq!(rows.iter().find(|row| row[2] == "nozzle_temperature").unwrap()[3], "210 ℃");
+        });
+        let fresh = catalog(&app, cx);
+        assert!(fresh.repo.issues().len() < old.repo.issues().len(), "saved value removes the range warning");
+        assert_eq!(fresh.search.search("nozzle_temperature 210", 10).values.len(), 1);
+        app.read_with(cx, |app, _| assert_eq!(app.compatibility.as_ref().unwrap().printers, ["A 0.4 nozzle"]));
+        run_palette(window, "show preset overview", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("compat-summary").label(), Some("1 compatible printer"));
+        })
+        .unwrap();
+        click(window, "toggle-issues", cx);
+        app.read_with(cx, |app, cx| {
+            assert_eq!(app.issues.as_ref(), Some(&issues));
+            let rows = app.issues.as_ref().unwrap().read(cx).table().read(cx).dump(cx).1;
+            assert!(rows.is_empty(), "the previous range warning is gone");
+        });
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("issues-search").value(), Some("nozzle_temperature"));
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn missing_edited_file_and_failed_reload_keep_the_previous_snapshot(cx: &mut TestAppContext) {
+        let dir = editable_fixture();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "Acme 0.2", cx);
+        run_palette(window, "show preset values", cx);
+        find_key(window, "wall_loops", cx);
+        enter_value(window, "6", cx);
+        let old = catalog(&app, cx);
+        let path = dir.path().join("Acme/process/Acme 0.2.json");
+        std::fs::remove_file(&path).unwrap();
+        click(window, "reload", cx);
+        assert!(Arc::ptr_eq(&old, &catalog(&app, cx)));
+        app.read_with(cx, |app, _| {
+            assert_eq!(app.refresh_conflicts[0].reason, "File is missing or could not be loaded")
+        });
+        assert_eq!(first_row(&app, cx).1, "6");
+        // Restoring the file allows a retry without sacrificing the edit.
+        std::fs::write(&path, CHILD).unwrap();
+        click(window, "reload", cx);
+        assert!(!Arc::ptr_eq(&old, &catalog(&app, cx)));
+        let old = catalog(&app, cx);
+        let moved = dir.path().with_extension("moved");
+        std::fs::rename(dir.path(), &moved).unwrap();
+        click(window, "reload", cx);
+        std::fs::rename(&moved, dir.path()).unwrap();
+        assert!(Arc::ptr_eq(&old, &catalog(&app, cx)));
+        assert_eq!(first_row(&app, cx).1, "6");
+        app.read_with(cx, |app, _| assert!(app.refresh_error.as_ref().unwrap().starts_with("Could not refresh")));
+        click(window, "reload", cx);
+        click(window, "undo", cx);
+        assert_eq!(first_row(&app, cx).1, "2");
+    }
+
+    #[gpui_kit::test]
+    fn partial_save_reports_the_failure_and_refreshes_after_conflict_resolution(cx: &mut TestAppContext) {
+        let dir = editable_fixture();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "Acme 0.2", cx);
+        run_palette(window, "show preset values", cx);
+        find_key(window, "sparse_infill_density", cx);
+        let old = catalog(&app, cx);
+        let base = old.repo.find(PresetKind::Process, "fdm_process_common")[0].index();
+        let child = old.repo.find(PresetKind::Process, "Acme 0.2")[0].index();
+        let edits = app.read_with(cx, |app, _| app.edits.clone().unwrap());
+        edits.update(cx, |edits, cx| {
+            edits.session_mut(base).set("sparse_infill_density", Some(profile_core::RawValue::Str("30%".into())));
+            edits.session_mut(child).set("wall_loops", Some(profile_core::RawValue::Str("5".into())));
+            cx.notify();
+        });
+        std::fs::write(
+            dir.path().join("Acme/process/Acme 0.2.json"),
+            CHILD.replace("\"wall_loops\": \"2\"", "\"wall_loops\": \"9\""),
+        )
+        .unwrap();
+        click(window, "save", cx);
+        click(window, "confirm-save", cx);
+        assert!(Arc::ptr_eq(&old, &catalog(&app, cx)));
+        app.read_with(cx, |app, cx| {
+            assert_eq!(app.refresh_conflicts.len(), 1);
+            let edits = app.edits.as_ref().unwrap().read(cx);
+            assert!(!edits.is_dirty(base));
+            assert!(edits.is_dirty(child));
+        });
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let status = window.find("save-status").label().unwrap().to_owned();
+            assert!(status.contains("Saved 1 file(s). Could not save Acme 0.2"), "{status}");
+        })
+        .unwrap();
+        // A separate edit made while resolving the conflict must also survive.
+        edits.update(cx, |edits, cx| {
+            edits.session_mut(base).set("wall_loops", Some(profile_core::RawValue::Str("6".into())));
+            cx.notify();
+        });
+        click(window, "review-refresh-conflicts", cx);
+        // The standard alert dialog also confirms through the keyboard.
+        cx.update_window(window.into(), |_, window, cx| window.press("enter", cx)).unwrap();
+        cx.run_until_parked();
+        assert_eq!(first_row(&app, cx).1, "30% %");
+        app.read_with(cx, |app, cx| {
+            let edits = app.edits.as_ref().unwrap().read(cx);
+            assert!(edits.is_dirty(base));
+            assert!(edits.session(base).unwrap().can_undo());
+            assert!(edits.session(child).is_none());
+        });
+        assert!(
+            std::fs::read_to_string(dir.path().join("Acme/process/Acme 0.2.json"))
+                .unwrap()
+                .contains("\"wall_loops\": \"9\"")
+        );
     }
 
     #[gpui_kit::test]
@@ -1398,6 +1920,16 @@ mod tests {
         click(window, "only-differences", cx);
         assert_eq!(dump(cx).len(), 1);
         assert_eq!(dump(cx)[0][6], "this file");
+        click(window, "reload", cx);
+        assert_eq!(dump(cx).len(), 1, "comparison filter and visibility survive refresh");
+        assert_eq!(dump(cx)[0][3], "4");
+        assert_eq!(dump(cx)[0][4], "4");
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("compare-detail").label(), Some("wall_loops"));
+            assert_eq!(window.find("only-differences").checked(), Some(false));
+        })
+        .unwrap();
         click(window, "close-comparison", cx);
         assert_eq!(first_row(&app, cx).1, "4", "returning preserves the edit and filter");
         assert_eq!(std::fs::read_to_string(dir.path().join("Acme/process/Acme 0.2.json")).unwrap(), CHILD);

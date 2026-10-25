@@ -5,7 +5,7 @@ Codex; when changing shared guidance, update both files.
 
 ## Overview
 
-orca-profile-studio browses, validates and (later) edits OrcaSlicer's system profiles
+orca-profile-studio browses, validates and edits OrcaSlicer's system profiles
 (`resources/profiles`). It is also a GPUI learning project. Rust workspace, edition 2024.
 
 ```
@@ -131,6 +131,12 @@ from the package directory).
   editor from the row-selection subscription and the `Edits` observer.
 - With `test-support`, `.test_support()` wraps an element in `Observed<…>`: a helper that adds it
   cannot return `Stateful<Div>`; return `AnyElement` (an `impl IntoElement` return captures `cx`).
+- Saving emits `EditsEvent::Saved` (including partial success), which triggers a background full
+  refresh. Reload uses the same path and retains edits. `Edits::rebase` maps sessions by file path;
+  `EditSession::rebase` preserves undo/redo and rejects external value changes. A conflict pauses
+  the whole snapshot replacement; the window retains its old data until retry or explicit discard
+  of the conflicting sessions. Keep `load_generation` and `save_revision` checks when changing this
+  flow, and migrate the latest state at completion so edits made during loading survive.
 - Saving writes into the profiles directory, i.e. the OrcaSlicer checkout. UI tests that save use a
   temporary fixture (`editable_fixture` in `app.rs`), never the real profiles.
 - App preferences live in the `SettingsStore` global (`settings.rs`), saved on every change to
@@ -164,7 +170,7 @@ from the package directory).
 
 [docs/roadmap.md](docs/roadmap.md) (Chinese) is the roadmap: stages and status, key design decisions
 of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
-M1–M7; next: M8 (refresh after saving), then M9–M13 (Design Guides review, batch edit, new/copy/rename
+M1–M8; next: M9–M13 (Design Guides review, batch edit, new/copy/rename
 presets, Chinese UI, Git diff); the G-code viewer and OrcaSlicer sync automation are deferred. When a stage is finished, move it to "已完成" there with its design
 decisions and commit, and update the status line in README.
 

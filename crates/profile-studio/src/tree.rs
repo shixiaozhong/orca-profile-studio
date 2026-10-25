@@ -63,6 +63,22 @@ impl Group {
 }
 
 impl Node {
+    /// Indexes are local to one load; file paths retain identity across reloads.
+    pub fn remap(self, old: &Catalog, new: &Catalog) -> Option<Self> {
+        let vendor =
+            |index: usize| new.repo.vendors().iter().position(|v| v.index_path == old.repo.vendors()[index].index_path);
+        match self {
+            Self::Vendor(index) => vendor(index).map(Self::Vendor),
+            Self::Group(index, group) => vendor(index).map(|index| Self::Group(index, group)),
+            Self::Model(index) => {
+                new.repo.models().iter().position(|m| m.path == old.repo.models()[index].path).map(Self::Model)
+            }
+            Self::Preset(index) => {
+                new.repo.presets().iter().position(|p| p.path == old.repo.presets()[index].path).map(Self::Preset)
+            }
+        }
+    }
+
     pub fn id(self) -> SharedString {
         match self {
             Node::Vendor(vendor) => format!("v:{vendor}"),

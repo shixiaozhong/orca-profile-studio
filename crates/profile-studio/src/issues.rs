@@ -201,6 +201,25 @@ pub struct IssuesView {
 impl EventEmitter<IssuesEvent> for IssuesView {}
 
 impl IssuesView {
+    pub fn refresh(&mut self, catalog: &Arc<Catalog>, window: &mut Window, cx: &mut Context<Self>) {
+        let mut filter = self.filter.clone();
+        filter.vendor = filter.vendor.and_then(|index| {
+            catalog.repo.vendors().iter().position(|v| v.index_path == self.catalog.repo.vendors()[index].index_path)
+        });
+        if filter.code.is_some_and(|code| !catalog.repo.issues().iter().any(|issue| issue.kind.code() == code)) {
+            filter.code = None;
+        }
+        let sort = self.table.read(cx).delegate().sort;
+        *self = Self::new(catalog, window, cx);
+        self.filter = filter;
+        self.search.update(cx, |search, cx| search.set_value(self.filter.query.clone(), window, cx));
+        self.severity.update(cx, |select, cx| select.set_selected_value(&self.filter.min_severity, window, cx));
+        self.code.update(cx, |select, cx| select.set_selected_value(&self.filter.code, window, cx));
+        self.vendor.update(cx, |select, cx| select.set_selected_value(&self.filter.vendor, window, cx));
+        self.table.update(cx, |table, _| table.delegate_mut().sort = sort);
+        self.apply_filter(cx);
+    }
+
     pub fn new(catalog: &Arc<Catalog>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let repo = &catalog.repo;
         let filter = IssueFilter::default();

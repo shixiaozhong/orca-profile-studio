@@ -250,6 +250,35 @@ pub struct CompareView {
 }
 
 impl CompareView {
+    pub fn refresh(&mut self, catalog: &Arc<Catalog>, left: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.right = self.right.and_then(|index| {
+            let old = &self.catalog.repo.presets()[index];
+            catalog.repo.presets().iter().position(|p| p.path == old.path && p.kind == old.kind)
+        });
+        self.catalog = catalog.clone();
+        self.left = left;
+        let mut choices: Vec<_> = catalog
+            .repo
+            .presets()
+            .iter()
+            .filter(|p| p.kind == catalog.repo.presets()[left].kind && p.id.index() != left)
+            .map(|p| PresetChoice {
+                index: p.id.index(),
+                title: format!("{} / {} — {}", catalog.repo.vendor(p.vendor).name, p.name(), p.path.display()).into(),
+            })
+            .collect();
+        choices.sort_by(|a, b| a.title.cmp(&b.title));
+        self.picker.update(cx, |picker, cx| {
+            picker.set_items(SearchableVec::new(choices), window, cx);
+            if let Some(right) = &self.right {
+                picker.set_selected_value(right, window, cx);
+            } else {
+                picker.set_selected_index(None, window, cx);
+            }
+        });
+        self.rebuild(cx);
+    }
+
     pub fn new(
         catalog: &Arc<Catalog>,
         edits: &Entity<Edits>,

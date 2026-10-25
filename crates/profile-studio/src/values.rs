@@ -20,7 +20,7 @@ use profile_core::{OptionType, Origin, RawValue, Severity};
 use crate::catalog::Catalog;
 use crate::compare::CompareView;
 use crate::details::{format_value, severity_color};
-use crate::edits::Edits;
+use crate::edits::{Edits, EditsEvent};
 
 actions!(values, [UndoEdit, RedoEdit, SaveEdits]);
 
@@ -498,6 +498,17 @@ impl ValuesView {
         self.preset
     }
 
+    /// Keep the retained controls (including unapplied text), filter, sort and selected key.
+    pub fn refresh(&mut self, catalog: &Arc<Catalog>, preset: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(comparison) = &self.comparison {
+            comparison.update(cx, |comparison, cx| comparison.refresh(catalog, preset, window, cx));
+        }
+        self.catalog = catalog.clone();
+        self.preset = preset;
+        self.rebuild(cx);
+        self.sync_editor(window, cx);
+    }
+
     /// Filters the table to `key` and selects its row, e.g. after a global search.
     pub fn reveal_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.comparing = false;
@@ -593,19 +604,26 @@ impl ValuesView {
     }
 
     fn save(&mut self, cx: &mut Context<Self>) {
-        let result = self.edits.update(cx, |edits, cx| {
+        let (paths, error) = self.edits.update(cx, |edits, cx| {
             let result = edits.save_all();
+            // A partial save still changes the repository and must refresh its dependents.
+            if !result.0.is_empty() {
+                cx.emit(EditsEvent::Saved);
+            }
             cx.notify();
             result
         });
         self.confirming_save = false;
-        self.status = Some(match result {
-            Ok(paths) => {
-                (true, format!("Saved {} file(s). Reload to refresh presets that inherit from them.", paths.len()))
-            }
-            Err((preset, err)) => {
-                (false, format!("Could not save {}: {err}", self.catalog.repo.presets()[preset].name()))
-            }
+        self.status = Some(match error {
+            None => (true, format!("Saved {} file(s).", paths.len())),
+            Some((preset, err)) => (
+                false,
+                format!(
+                    "Saved {} file(s). Could not save {}: {err}",
+                    paths.len(),
+                    self.catalog.repo.presets()[preset].name()
+                ),
+            ),
         });
         cx.notify();
     }

@@ -40,6 +40,19 @@ impl EditSession {
         self.preset
     }
 
+    /// Moves this session to a freshly loaded repository without losing edits or history.
+    /// The caller matches the preset by file path. External changes must be resolved explicitly;
+    /// accepting them here would silently turn old values into new edits on the next undo.
+    pub fn rebase(&mut self, repo: &Repository, preset: PresetId) -> Result<(), SaveError> {
+        let loaded = repo.preset(preset);
+        if loaded.params != self.saved {
+            return Err(SaveError::ChangedOnDisk(repo.root().join(&loaded.path)));
+        }
+        self.preset = preset;
+        self.saved = loaded.params.clone();
+        Ok(())
+    }
+
     /// The own values with the edits applied, in file order; new keys come last.
     pub fn params(&self) -> &IndexMap<String, RawValue> {
         &self.current
@@ -261,5 +274,45 @@ mod tests {
         fs::write(&path, PRESET.replace("\"0.2\"", "\"0.28\"")).unwrap();
         assert!(matches!(session.save(&repo), Err(SaveError::ChangedOnDisk(_))));
         assert!(fs::read_to_string(&path).unwrap().contains("\"0.28\""));
+    }
+
+    #[test]
+    fn rebase_preserves_saved_baseline_pending_edits_and_both_history_stacks() {
+        let (dir, repo) = fixture();
+        let id = repo.find(PresetKind::Process, "base")[0];
+        let mut session = EditSession::new(&repo, id);
+        session.set("wall_loops", s("3"));
+        session.save(&repo).unwrap();
+        session.set("layer_height", s("0.3"));
+        session.set("wall_loops", s("4"));
+        session.undo();
+        let reloaded = Repository::load(dir.path()).unwrap();
+        session.rebase(&reloaded, reloaded.find(PresetKind::Process, "base")[0]).unwrap();
+        assert!(session.is_modified("layer_height"));
+        assert!(!session.is_modified("wall_loops"));
+        session.redo();
+        assert_eq!(session.params().get("wall_loops"), s("4").as_ref());
+        session.undo();
+        session.undo();
+        assert!(!session.is_dirty());
+        session.undo();
+        assert_eq!(session.params().get("wall_loops"), s("2").as_ref());
+        assert!(session.is_dirty(), "undo across saving is relative to the new saved baseline");
+        session.save(&reloaded).unwrap();
+    }
+
+    #[test]
+    fn rebase_rejects_external_values_without_mutating_history() {
+        let (dir, repo) = fixture();
+        let id = repo.find(PresetKind::Process, "base")[0];
+        let mut session = EditSession::new(&repo, id);
+        session.set("wall_loops", s("3"));
+        fs::write(dir.path().join("Acme/process/base.json"), PRESET.replace("\"0.2\"", "\"0.28\"")).unwrap();
+        let reloaded = Repository::load(dir.path()).unwrap();
+        assert!(matches!(session.rebase(&reloaded, id), Err(SaveError::ChangedOnDisk(_))));
+        session.undo();
+        assert!(!session.is_dirty());
+        session.redo();
+        assert_eq!(session.params().get("wall_loops"), s("3").as_ref());
     }
 }
