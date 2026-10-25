@@ -5382,6 +5382,8 @@ dependencies = [
  "anyhow",
  "clap",
  "profile-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

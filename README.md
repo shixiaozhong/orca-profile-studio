@@ -116,6 +116,8 @@ cargo run --release -p profile-tool -- compat "0.07mm DETAIL @CORE One 0.25"
 
 `compat` 列出一个耗材或工艺兼容的打印机，以及每台兼容的原因（条件、列表或没有限制）；对打印机则列出它兼容的工艺和耗材。
 
+`compat-check <表>` 拿 OrcaSlicer 导出的兼容性表（`Snapmaker_Orca_compat_export`，命令见 `AGENTS.md`）逐项对照。在 OrcaSlicer `953509c23f` 的数据上，约 400 万个（预设，打印机）组合全部一致。
+
 `resolve` 默认只列出继承链上的文件设置过的值；加 `--defaults` 会把来自 schema 默认值的键也列出来（标记为 `[d]`）。
 
 ## Schema

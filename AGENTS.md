@@ -80,6 +80,16 @@ from the package directory).
       -o crates/profile-core/schema/schema.json --commit $(git -C ../OrcaSlicer rev-parse --short=10 HEAD)
   ```
   A new target needs a CMake reconfigure (`cmake -S ../OrcaSlicer -B ../OrcaSlicer/build/vscode-arm64`).
+- Compatibility cross-check (M6): `Snapmaker_Orca_compat_export` on the same branch loads the system
+  profiles the way the GUI does (temporary data_dir with a `system` symlink, nothing is written into
+  the checkout) and exports OrcaSlicer's own `is_compatible_with_printer` verdicts. Compare with:
+  ```bash
+  cmake --build ../OrcaSlicer/build/vscode-arm64 --target Snapmaker_Orca_compat_export
+  ../OrcaSlicer/build/vscode-arm64/src/Snapmaker_Orca_compat_export.app/Contents/MacOS/Snapmaker_Orca_compat_export \
+      --profiles ../OrcaSlicer/resources/profiles -o /tmp/compat.json --commit $(git -C ../OrcaSlicer rev-parse --short=10 HEAD)
+  cargo run --release -p profile-tool -- compat-check /tmp/compat.json
+  ```
+  At OrcaSlicer `953509c23f` there are 0 differences. The table (~700 KB) is not committed.
 - "Which keys belong to a kind" = keys of that kind's default preset (what `remove_invalid_keys`
   checks against), not `option_lists`.
 - `legacy.rs` ports `PrintConfigDef::handle_legacy` by hand (rules are code, not data); keep it in

@@ -1,5 +1,5 @@
 use std::cmp::Reverse;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -65,6 +65,14 @@ enum Command {
         name: String,
         #[arg(long, value_enum)]
         kind: Option<KindArg>,
+    },
+    /// Compare compatibility with a table exported by OrcaSlicer's Snapmaker_Orca_compat_export
+    CompatCheck {
+        /// The exported JSON table
+        table: PathBuf,
+        /// Differences printed per kind; 0 prints all
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
     },
     /// Search presets, options and the values preset files set; every term must match
     Search {
@@ -149,6 +157,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         }
         Command::Search { query, limit } => search(&repo, &query, limit),
         Command::Compat { name, kind } => compat(&repo, &name, kind.map(Into::into))?,
+        Command::CompatCheck { table, limit } => return compat_check(&repo, &table, limit),
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -257,6 +266,99 @@ fn compat(repo: &Repository, name: &str, kind: Option<PresetKind>) -> Result<()>
         println!("  {:<60} {reason}", repo.preset(printer).name());
     }
     Ok(())
+}
+
+/// The table `Snapmaker_Orca_compat_export` writes: printer names, and for each filament and
+/// process preset the indices of the printers OrcaSlicer finds it compatible with.
+#[derive(serde::Deserialize)]
+struct CompatTable {
+    source_commit: String,
+    printers: Vec<String>,
+    filament: BTreeMap<String, Vec<usize>>,
+    process: BTreeMap<String, Vec<usize>>,
+}
+
+fn compat_check(repo: &Repository, path: &std::path::Path, limit: usize) -> Result<ExitCode> {
+    let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let table: CompatTable = serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    let index = repo.compatibility();
+    let selectable = |kind: PresetKind| {
+        repo.presets().iter().filter(move |preset| preset.kind == kind && repo.is_selectable(preset.id))
+    };
+    println!("OrcaSlicer table from {}", if table.source_commit.is_empty() { "?" } else { &table.source_commit });
+
+    let ours: BTreeSet<&str> = selectable(PresetKind::Machine).map(|preset| preset.name()).collect();
+    let theirs: BTreeSet<&str> = table.printers.iter().map(String::as_str).collect();
+    let mut differences = 0;
+    for (label, names) in [("only here", ours.difference(&theirs)), ("only in OrcaSlicer", theirs.difference(&ours))] {
+        let names: Vec<_> = names.collect();
+        if !names.is_empty() {
+            differences += names.len();
+            println!(
+                "printers {label} ({}): {}",
+                names.len(),
+                names.iter().map(|name| name.to_string()).collect::<Vec<_>>().join(", ")
+            );
+        }
+    }
+
+    for (kind, presets) in [(PresetKind::Filament, &table.filament), (PresetKind::Process, &table.process)] {
+        let mut mismatches = Vec::new();
+        let mut missing = Vec::new();
+        for (name, indices) in presets {
+            let expected: BTreeSet<&str> = indices.iter().map(|&ix| table.printers[ix].as_str()).collect();
+            // A name two vendors share is loaded once by OrcaSlicer; accept either preset.
+            let candidates: Vec<_> =
+                repo.find(kind, name).iter().copied().filter(|&id| repo.is_selectable(id)).collect();
+            if candidates.is_empty() {
+                missing.push(name.as_str());
+                continue;
+            }
+            let actual = |id| -> BTreeSet<&str> {
+                index
+                    .compatible_printers(repo, id)
+                    .into_iter()
+                    .map(|(printer, _)| repo.preset(printer).name())
+                    .filter(|name| theirs.contains(name))
+                    .collect()
+            };
+            let sets: Vec<_> = candidates.iter().map(|&id| actual(id)).collect();
+            if !sets.contains(&expected) {
+                let set = &sets[0];
+                let extra: Vec<_> = set.difference(&expected).copied().collect();
+                let absent: Vec<_> = expected.difference(set).copied().collect();
+                mismatches.push((name.as_str(), extra, absent));
+            }
+        }
+        let extra_here: Vec<_> =
+            selectable(kind).map(|preset| preset.name()).filter(|name| !presets.contains_key(*name)).collect();
+        println!(
+            "\n{kind}: {} compared, {} differ, {} missing here, {} only here",
+            presets.len(),
+            mismatches.len(),
+            missing.len(),
+            extra_here.len()
+        );
+        let shown = if limit == 0 { usize::MAX } else { limit };
+        for (name, extra, absent) in mismatches.iter().take(shown) {
+            println!("  {name}");
+            if !extra.is_empty() {
+                println!("    compatible here only ({}): {}", extra.len(), extra.join(", "));
+            }
+            if !absent.is_empty() {
+                println!("    compatible in OrcaSlicer only ({}): {}", absent.len(), absent.join(", "));
+            }
+        }
+        for name in missing.iter().take(shown) {
+            println!("  missing here: {name}");
+        }
+        for name in extra_here.iter().take(shown) {
+            println!("  only here: {name}");
+        }
+        differences += mismatches.len() + missing.len() + extra_here.len();
+    }
+    println!("\n{differences} difference(s)");
+    Ok(if differences == 0 { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }
 
 fn search(repo: &Repository, query: &str, limit: usize) {

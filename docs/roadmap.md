@@ -15,7 +15,7 @@ OrcaSlicer 的加载语义以 [profile_format_spec.md](reference/profile_format_
 | M3 | ✅ | 编辑表单：修改标记、撤销和重做、保存时保留原有格式 | `3e547dd` |
 | M4 | ✅ | 同类型预设的最终值、来源和继承层对比，包含编辑会话 | `c26a168` |
 | M5 | ✅ | 全局搜索和命令面板（⌘K） | `b6a4b1f` |
-| M6 | ✅ | 校验结果面板；兼容性条件表达式求值 | |
+| M6 | ✅ | 校验结果面板；兼容性条件表达式求值 | `4d2896c` |
 | M7 | 计划中 | 可停靠布局、主题、多窗口 | |
 | 扩展 | 未定 | 2D G-code 分层查看器 | |
 
@@ -154,7 +154,11 @@ M0.5 排在 M1 之后才做，编号沿用最初的规划。
   - 选中一行（点击或方向键）就跳到对应的预设；问题涉及某个键时打开 Values 页并定位到这个键。键盘焦点留在列表里，可以一直用 ↑↓ 浏览。没有对应预设的问题（比如孤立文件）跳到厂商节点。
   - 严重级别同时用图标和文字表示，不只靠颜色；入口是工具栏的「Issues」按钮（打开时显示为选中状态）和命令面板的「Show issues」。
 - **兼容性显示在预设的 Overview 里**：耗材和工艺显示条件（如果有）和兼容的打印机（前 12 个加剩余数量）；打印机显示兼容的工艺和耗材数量。命令行有 `profile-tool compat <预设名>`，列出每台打印机兼容的原因。
-- **还没做到的完成标准**：兼容性结果还没有和 OrcaSlicer 对照。对照需要从 OrcaSlicer 导出一张兼容性表，这要改 OrcaSlicer 仓库，需要用户同意。目前的回归测试固定的是本实现在真实数据上的结果（例如 Snapmaker U1 0.4 兼容 16 个工艺、169 个耗材，库里的 Generic ABS 对 796 台打印机中的 68 台被排除）。
+- **和 OrcaSlicer 逐项对照，结果完全一致**（经用户同意，在 OrcaSlicer 仓库加了工具）：
+  - `Snapmaker_Orca_compat_export`（OrcaSlicer `personal/schema-export` 分支，`src/dev-utils/`）按 GUI 的方式加载系统配置：临时的 data_dir 里放一个指向 profiles 的 `system` 符号链接，用 `EnableSystemSilent` 规则调用 `load_presets`，不会往 OrcaSlicer 检出目录写任何文件。然后对每个系统耗材和工艺，用 OrcaSlicer 自己的 `is_compatible_with_printer` 判断它和每台系统打印机是否兼容，导出成 JSON；
+  - `profile-tool compat-check <表>` 拿这张表和 `CompatibilityIndex` 逐项比较，报告两边各自多出的打印机、预设和不一致的兼容集合，有差异时退出码为 1。两个厂商重名的预设（BBL 和 Snapmaker 的 10 个），OrcaSlicer 只保留一个，比较时接受任一个；
+  - 在 OrcaSlicer `953509c23f` 的数据上：796 台打印机、2906 个耗材、2156 个工艺，约 400 万个（预设，打印机）组合，**0 处差异**。故意改动表里的三处后，`compat-check` 能把三处都报出来，说明比较本身有效；
+  - 这张表约 700 KB，没有提交进仓库。回归测试固定的是本实现在真实数据上的几个结果（例如 Snapmaker U1 0.4 兼容 16 个工艺、169 个耗材，库里的 Generic ABS 对 796 台打印机中的 68 台被排除），OrcaSlicer 更新后按 AGENTS.md 里的命令重新导出、对照。
 
 ---
 
