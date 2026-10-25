@@ -1,6 +1,7 @@
 # CLAUDE.md
 
-Guidance for Claude Code when working in this repository.
+Guidance for Claude Code when working in this repository. `AGENTS.md` holds the same guidance for
+Codex; when changing shared guidance, update both files.
 
 ## Overview
 
@@ -13,7 +14,9 @@ crates/
 │   └── schema/      # schema.json exported from OrcaSlicer (bundled via include_str!)
 ├── profile-tool/    # CLI: stats / check / resolve
 └── profile-studio/  # gpui-kit desktop app
+docs/roadmap.md      # roadmap: stages, design decisions, done criteria
 docs/reference/      # profile format spec + Python reference stats script
+AGENTS.md            # the Codex counterpart of this file
 ```
 
 ## Commands
@@ -115,24 +118,25 @@ from the package directory).
 - `rustfmt.toml`: `max_width = 120`, `use_small_heuristics = "Max"`. Run `cargo fmt` and keep
   clippy clean.
 - Identifiers, comments, CLI and UI strings in English; README is in Chinese.
-- Commit messages: conventional style (`feat: …`), ending with the Co-Authored-By line from the
-  session's attribution reminder. Commit only when asked. No remote is configured yet.
+- Commit messages: conventional style (`feat: …`, `fix: …`, `docs: …`) with a short bullet body,
+  ending with the Co-Authored-By line from the session's attribution reminder. Commit only when
+  asked. No remote is configured yet.
 - `Cargo.toml` deliberately has no `license` field; the user has not chosen one.
 - `rust-version = "1.88"` makes Cargo pick older dependency versions; the local toolchain is 1.97.
 
 ## Roadmap
 
-| Stage | Content |
-|---|---|
-| M0 ✅ | core: manifest parsing, inheritance resolution, validation; CLI |
-| M1 ✅ | gpui-kit app: vendor → models / filaments / processes tree, background loading, details pane |
-| M0.5 ✅ | `schema.json` exported from OrcaSlicer; value checks, default layer, schema labels in the app |
-| M2 ✅ | inheritance view: Values tab with every key, its source layer and overridden values (`Repository::trace`) |
-| M3 | edit form with dirty marks, undo/redo, format-preserving save |
-| M4 | side-by-side preset diff |
-| M5 | global search and command palette |
-| M6 | issues panel; evaluate `compatible_*_condition` expressions |
-| M7 | dock layout, themes, multiple windows |
-| Stretch | 2D G-code layer viewer |
+[docs/roadmap.md](docs/roadmap.md) (Chinese) is the roadmap: stages and status, key design decisions
+of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
+M1, M2; next: M3 (edit form). When a stage is finished, move it to "已完成" there with its design
+decisions and commit, and update the status line in README.
 
 Changing the exporter is work in another repository (`../OrcaSlicer`); confirm with the user first.
+
+## Working with the user
+
+- The user is a C++ developer on Snapmaker's OrcaSlicer fork and writes in Chinese; reply in Chinese.
+- Do not fix, or offer to fix, OrcaSlicer's profile data (`../OrcaSlicer/resources/profiles`), even
+  when the checks find real bugs there; report findings only.
+- Any change in the OrcaSlicer repository (e.g. the schema exporter) needs the user's confirmation
+  first. The exporter lives on its own branch, `personal/schema-export`.

@@ -16,7 +16,10 @@ crates/
 │   └── schema/      # 从 OrcaSlicer 导出的 schema.json，编译时内嵌
 ├── profile-tool/    # 命令行：stats / check / resolve
 └── profile-studio/  # gpui-kit 桌面应用
+docs/roadmap.md      # 开发路线图
 docs/reference/      # 配置格式说明（profile_format_spec.md）和参考统计脚本
+AGENTS.md            # 给 Codex 的项目说明
+CLAUDE.md            # 给 Claude Code 的项目说明，和 AGENTS.md 内容保持一致
 ```
 
 ## 桌面应用
@@ -100,7 +103,7 @@ cargo run --release -p profile-tool -- resolve "Generic ABS @U1 0.2 nozzle" --ke
 
 严重程度按 OrcaSlicer 实际的加载行为来定，见 `crates/profile-core/src/issue.rs`。
 
-导出程序是 OrcaSlicer 仓库里的 `src/dev-utils/Snapmaker_Orca_schema_export.cpp`（`personal/schema-export` 分支）。OrcaSlicer 更新后按 `CLAUDE.md` 里的命令重新生成。`src/legacy.rs` 是 `PrintConfigDef::handle_legacy` 的手工移植，重新生成 schema 时也要对照更新。
+导出程序是 OrcaSlicer 仓库里的 `src/dev-utils/Snapmaker_Orca_schema_export.cpp`（`personal/schema-export` 分支）。OrcaSlicer 更新后按 `AGENTS.md` 里的命令重新生成。`src/legacy.rs` 是 `PrintConfigDef::handle_legacy` 的手工移植，重新生成 schema 时也要对照更新。
 
 ## 测试
 
@@ -112,15 +115,4 @@ cargo test
 
 ## 路线图
 
-| 阶段 | 内容 |
-|---|---|
-| M0 ✅ | core：清单解析、继承解析、校验；CLI：stats / check / resolve |
-| M0.5 ✅ | 从 OrcaSlicer 导出 `schema.json`；参数值校验、默认值层、界面显示配置项名称 |
-| M1 ✅ | gpui-kit 界面：厂商 → 机型、耗材、工艺三层树，后台加载 |
-| M2 ✅ | 继承链视图：每个字段的最终值和来源层 |
-| M3 | 编辑表单：修改标记、撤销和重做、保存时保留原有格式 |
-| M4 | 两个预设并排对比 |
-| M5 | 全局搜索和命令面板 |
-| M6 | 校验结果面板，以及兼容性条件表达式求值 |
-| M7 | 可停靠布局、主题、多窗口 |
-| 扩展 | 2D G-code 分层查看器 |
+已完成 M0、M0.5、M1、M2，下一步是 M3 编辑表单。各阶段的范围、关键设计决定、依赖和完成标准见 [docs/roadmap.md](docs/roadmap.md)。
