@@ -122,8 +122,9 @@ from the package directory).
 - `rustfmt.toml`: `max_width = 120`, `use_small_heuristics = "Max"`. Run `cargo fmt` and keep
   clippy clean.
 - Identifiers, comments, CLI and UI strings in English; README is in Chinese.
-- Commit messages: conventional style (`feat: …`, `fix: …`, `docs: …`) with a short bullet body.
-  Commit only when asked. No remote is configured yet.
+- Commit messages: conventional style (`feat: …`, `fix: …`, `docs: …`) with a short bullet body,
+  ending with a blank line and the trailer `Co-Authored-By: Codex <noreply@openai.com>`. Commit only
+  when asked. No remote is configured yet.
 - `Cargo.toml` deliberately has no `license` field; the user has not chosen one.
 - `rust-version = "1.88"` makes Cargo pick older dependency versions; the local toolchain is 1.97.
 
