@@ -29,6 +29,7 @@ cargo fmt
 cargo run --release -p profile-tool -- stats
 cargo run --release -p profile-tool -- check --vendor Snapmaker --min info
 cargo run --release -p profile-tool -- resolve "Generic ABS @U1 0.2 nozzle"
+cargo run --release -p profile-tool -- search "nozzle_temperature 270"
 cargo run -p profile-studio -- ../OrcaSlicer/resources/profiles
 ```
 
@@ -108,12 +109,22 @@ from the package directory).
   `TableState::dump(cx)` (via `TableDelegate::cell_text`) reads table contents.
 - After a click whose effect goes through a subscription (e.g. `TableEvent::SelectRow`), call
   `cx.run_until_parked()` and `render_frame` before asserting on the new frame.
-- Views that need a `Window` (`TableState`, `InputState`) are created lazily in `render`, e.g. the
-  preset's `ValuesView` in `StudioApp::render_preset` and its value editor in `ValuesView::sync_editor`.
+- Read the gpui-kit Coding Guides (skill `gpui-kit`, `references/coding-guides.md`) before UI work.
+  Known deviation, do not copy: `ValuesView` (`StudioApp::ensure_values`, called from `render_preset`)
+  and its value editor (`ValuesView::sync_editor`) are created lazily in `render`. New code creates
+  views in event handlers; `StudioApp::new` has the `Window` for `observe_in` / `subscribe_in`.
 - With `test-support`, `.test_support()` wraps an element in `Observed<…>`: a helper that adds it
   cannot return `Stateful<Div>`; return `AnyElement` (an `impl IntoElement` return captures `cx`).
 - Saving writes into the profiles directory, i.e. the OrcaSlicer checkout. UI tests that save use a
   temporary fixture (`editable_fixture` in `app.rs`), never the real profiles.
+- Shortcuts only dispatch when something is focused: `StudioApp` focuses its root `FocusHandle` at
+  creation and takes it back through `cx.on_focus_lost` when the focused element goes away. Never
+  request focus from `render`.
+- Modal surfaces go through `Root`: the palette is `window.open_dialog(...)`, which traps focus,
+  handles Escape and restores focus on close. The dialog builder may rerun; it only reads state.
+- `InputState::set_value` does not emit `InputEvent::Change`; update dependent state yourself.
+- The palette is a `Command` with `filterable(false)`: the app builds the groups from `on_query`
+  and maps `on_confirm`'s `IndexPath { section, row }` to its own targets (`palette.rs`).
 - `TreeItem` holds `Rc` and is not `Send`: do heavy work (repository load, `Catalog::new`) on the
   background executor, build tree items on the foreground.
 
@@ -132,7 +143,7 @@ from the package directory).
 
 [docs/roadmap.md](docs/roadmap.md) (Chinese) is the roadmap: stages and status, key design decisions
 of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
-M1, M2, M3, M4; next: M5 (global search and command palette). When a stage is finished, move it to "已完成" there with its design
+M1, M2, M3, M4, M5; next: M6 (issues panel and condition expressions). When a stage is finished, move it to "已完成" there with its design
 decisions and commit, and update the status line in README.
 
 Changing the exporter is work in another repository (`../OrcaSlicer`); confirm with the user first.

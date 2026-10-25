@@ -3,6 +3,7 @@ mod catalog;
 mod compare;
 mod details;
 mod edits;
+mod palette;
 mod tree;
 mod values;
 
@@ -17,6 +18,7 @@ fn main() {
     gpui_kit::application().with_assets(gpui_kit::assets::AllAssets).run(move |cx| {
         gpui_kit::init(cx);
         values::init(cx);
+        app::init(cx);
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.set_menus([Menu {
@@ -31,7 +33,7 @@ fn main() {
             titlebar: Some(TitlebarOptions { title: Some("Orca Profile Studio".into()), ..Default::default() }),
             ..Default::default()
         };
-        gpui_kit::open_window(options, cx, |_, cx| cx.new(|cx| app::StudioApp::new(profiles_dir, cx)))
+        gpui_kit::open_window(options, cx, |window, cx| cx.new(|cx| app::StudioApp::new(profiles_dir, window, cx)))
             .expect("failed to open window");
         cx.on_window_closed(|cx, _| cx.quit()).detach();
         cx.activate(true);

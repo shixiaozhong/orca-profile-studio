@@ -493,6 +493,17 @@ impl ValuesView {
         self.preset
     }
 
+    /// Filters the table to `key` and selects its row, e.g. after a global search.
+    pub fn reveal_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.comparing = false;
+        self.confirming_save = false;
+        // set_value does not emit a change event, so update the filter directly.
+        self.search.update(cx, |search, cx| search.set_value(key.to_owned(), window, cx));
+        self.filter.query = key.to_owned();
+        self.selected = Some(key.to_owned());
+        self.apply_filter(cx);
+    }
+
     #[cfg(test)]
     pub fn table(&self) -> &Entity<TableState<ValuesDelegate>> {
         &self.table

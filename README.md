@@ -2,13 +2,14 @@
 
 OrcaSlicer 系统配置文件（`resources/profiles`）的浏览、校验与编辑工具，也是一个 GPUI 练手项目。
 
-目前完成了 M0、M0.5、M1、M2、M3 和 M4：
+目前完成了 M0 到 M5：
 - M0：不依赖界面的 core 库，加一个命令行工具；
 - M0.5：从 OrcaSlicer 导出的配置项 schema，用来校验参数值、补全默认值；
 - M1：用 gpui-kit 写的桌面浏览器；
 - M2：继承链视图，列出预设每个键的最终值和来源层；
 - M3：在界面里编辑预设的值，支持撤销和重做，保存时只改动变化的那几行；
-- M4：并排对比同类型预设的最终值和来源，包含未保存的修改。
+- M4：并排对比同类型预设的最终值和来源，包含未保存的修改；
+- M5：全局搜索和命令面板（⌘K）。
 
 ## 结构
 
@@ -54,6 +55,11 @@ profiles 目录按以下顺序确定：
   - 对比包含两边各自的编辑会话，未保存的修改在标题中标明；祖先值与 Values 页一致，使用加载时的快照，修改祖先后需 Reload。
   - 按 `RawValue` 比较，字符串与数组、数组顺序、数值的不同字符串写法均计为差异；数组保留方括号显示，缺失值显示为 `(missing)`。
   - 对比页只读，点「Back to values」返回后保留原有的编辑、筛选和选择。
+- **搜索和命令面板**：按 ⌘K 或点工具栏的「Search…」。
+  - 可以搜预设（名称、别名、`setting_id`、`filament_id`）、配置项（键名和名称），以及文件里写的值；查询里的每个词都要出现，比如 `nozzle_temperature 270` 会找出把它设成 270 的文件。
+  - 回车跳到选中的结果：预设会在树上展开并选中；值和配置项会打开 Values 页并筛选到这个键。
+  - 也可以运行命令：重新加载、打开目录、切换 Overview / Values。
+  - 只搜加载时的数据，未保存的编辑要保存并 Reload 后才能搜到。
 - **后台加载**：加载在后台线程进行，界面期间保持可响应。重新加载或打开新目录时，会丢弃旧的加载结果。
 
 界面测试在 `crates/profile-studio/src/app.rs` 的 `tests` 模块里，用的是 gpui-kit 的 headless 测试：渲染真实界面，模拟点击，然后断言状态。
@@ -93,6 +99,12 @@ cargo run --release -p profile-tool -- resolve "Generic ABS @U1 0.2 nozzle" --ke
 
 `check` 默认在出现 `error` 及以上级别的问题时返回退出码 1（用 `--fail-on` 调整），可以直接放进 CI。
 
+```bash
+cargo run --release -p profile-tool -- search "nozzle_temperature 270"
+```
+
+`search` 和桌面应用的 ⌘K 用同一套搜索，列出匹配的预设、配置项和文件里写的值。
+
 `resolve` 默认只列出继承链上的文件设置过的值；加 `--defaults` 会把来自 schema 默认值的键也列出来（标记为 `[d]`）。
 
 ## Schema
@@ -128,4 +140,4 @@ cargo test
 
 ## 路线图
 
-已完成 M0、M0.5、M1、M2、M3、M4，下一步是 M5 全局搜索和命令面板。各阶段的范围、关键设计决定、依赖和完成标准见 [docs/roadmap.md](docs/roadmap.md)。
+已完成 M0 到 M5，下一步是 M6 校验结果面板和条件表达式。各阶段的范围、关键设计决定、依赖和完成标准见 [docs/roadmap.md](docs/roadmap.md)。

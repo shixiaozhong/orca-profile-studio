@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
-use profile_core::{Issue, Origin, PresetId, PresetKind, RawValue, Repository, Schema, Severity, Stats};
+use profile_core::{Issue, Origin, PresetId, PresetKind, RawValue, Repository, Schema, SearchIndex, Severity, Stats};
 
 #[derive(Parser)]
 #[command(name = "profile-tool", version, about = "Inspect and validate OrcaSlicer system profiles")]
@@ -56,6 +56,13 @@ enum Command {
         /// Also show keys no file in the chain sets (schema defaults)
         #[arg(long)]
         defaults: bool,
+    },
+    /// Search presets, options and the values preset files set; every term must match
+    Search {
+        query: String,
+        /// Hits printed per section
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
     },
 }
 
@@ -131,6 +138,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Command::Resolve { name, kind, key, defaults } => {
             resolve(&repo, &name, kind.map(Into::into), key.as_deref(), defaults)?
         }
+        Command::Search { query, limit } => search(&repo, &query, limit),
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -200,6 +208,31 @@ fn check(repo: &Repository, min: Severity, fail_on: Severity, vendor: Option<&st
     let failing = shown.iter().filter(|issue| issue.severity() >= fail_on).count();
     println!("{} issue(s) shown, {failing} at or above {fail_on}", shown.len());
     if failing > 0 { ExitCode::FAILURE } else { ExitCode::SUCCESS }
+}
+
+fn search(repo: &Repository, query: &str, limit: usize) {
+    let started = Instant::now();
+    let index = SearchIndex::build(repo);
+    let built = started.elapsed();
+    let started = Instant::now();
+    let results = index.search(query, limit);
+    println!("index built in {built:.0?}, searched in {:.0?}", started.elapsed());
+    let describe = |id: PresetId| {
+        let preset = repo.preset(id);
+        format!("{} / {} ({})", repo.vendor(preset.vendor).name, preset.name(), preset.kind)
+    };
+    println!("\npresets ({}):", results.total_presets);
+    for &id in &results.presets {
+        println!("  {}", describe(id));
+    }
+    println!("\noptions ({}):", results.total_options);
+    for hit in &results.options {
+        println!("  {:<40} {}", hit.key, hit.label);
+    }
+    println!("\nvalues ({}):", results.total_values);
+    for hit in &results.values {
+        println!("  {}  {} = {}", describe(hit.preset), hit.key, hit.snippet);
+    }
 }
 
 fn resolve(

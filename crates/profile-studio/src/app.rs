@@ -1,19 +1,22 @@
 //! The main window: toolbar, vendor tree, details pane and status bar.
 
+use std::cell::Cell;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::Button;
+use gpui_kit::component::command::{Command, CommandGroup, CommandState};
 use gpui_kit::component::list::ListItem;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tab::{Tab, TabBar};
-use gpui_kit::component::tree::{TreeEntry, TreeState, tree};
+use gpui_kit::component::tree::{TreeEntry, TreeItem, TreeState, tree};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _, h_flex, h_resizable, resizable_panel,
     v_flex,
 };
+use gpui_kit::component::{IndexPath, WindowExt as _};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use profile_core::{Repository, Schema, Severity};
@@ -21,6 +24,7 @@ use profile_core::{Repository, Schema, Severity};
 use crate::catalog::Catalog;
 use crate::details::{self, severity_color};
 use crate::edits::Edits;
+use crate::palette::{self, AppCommand, Target};
 use crate::tree::{self as nav, Node, kind_icon};
 use crate::values::ValuesView;
 
@@ -39,6 +43,18 @@ enum PresetTab {
     Values,
 }
 
+actions!(studio, [OpenPalette]);
+
+#[derive(Default)]
+struct PaletteEntries {
+    groups: Vec<CommandGroup>,
+    targets: Vec<Vec<Target>>,
+}
+
+pub fn init(cx: &mut App) {
+    cx.bind_keys([KeyBinding::new("cmd-k", OpenPalette, None)]);
+}
+
 pub struct StudioApp {
     profiles_dir: Option<PathBuf>,
     state: LoadState,
@@ -51,12 +67,20 @@ pub struct StudioApp {
     edits: Option<Entity<Edits>>,
     /// Reload or Open was asked for while edits are unsaved; the next click discards them.
     confirm_discard: bool,
+    /// The command palette's state; created when first opened, shown in a `Root` dialog.
+    palette: Option<Entity<CommandState>>,
+    /// The palette's groups and what each row targets, by section and row; rebuilt when the
+    /// palette opens and when its query changes, never during render.
+    palette_entries: PaletteEntries,
+    /// The window's default focus target, so app shortcuts such as ⌘K always have a dispatch path.
+    focus: FocusHandle,
+    _focus_lost: Subscription,
     load_task: Option<Task<()>>,
     _tree_observer: Subscription,
 }
 
 impl StudioApp {
-    pub fn new(profiles_dir: Option<PathBuf>, cx: &mut Context<Self>) -> Self {
+    pub fn new(profiles_dir: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let tree = cx.new(|cx| TreeState::new(cx));
         let tree_observer = cx.observe(&tree, |this, tree, cx| {
             let selected = tree.read(cx).selected_item().and_then(|item| Node::parse(&item.id));
@@ -65,6 +89,10 @@ impl StudioApp {
                 cx.notify();
             }
         });
+        let focus = cx.focus_handle();
+        focus.focus(window, cx);
+        // When the focused element goes away (a closed view, a reload), shortcuts need a new home.
+        let focus_lost = cx.on_focus_lost(window, |this, window, cx| this.focus.focus(window, cx));
         let mut app = StudioApp {
             profiles_dir: None,
             state: LoadState::Empty,
@@ -74,6 +102,10 @@ impl StudioApp {
             values: None,
             edits: None,
             confirm_discard: false,
+            palette: None,
+            palette_entries: PaletteEntries::default(),
+            focus: focus.clone(),
+            _focus_lost: focus_lost,
             load_task: None,
             _tree_observer: tree_observer,
         };
@@ -91,6 +123,7 @@ impl StudioApp {
         self.values = None;
         self.edits = None;
         self.confirm_discard = false;
+        self.palette_entries = PaletteEntries::default();
         self.tree.update(cx, |tree, cx| tree.set_items(Vec::new(), cx));
 
         let job = cx.background_executor().spawn({
@@ -184,6 +217,15 @@ impl StudioApp {
             .child(Icon::new(IconName::FolderTree).text_color(theme.muted_foreground))
             .child(div().font_semibold().child("Orca Profile Studio"))
             .child(div().flex_1().min_w_0().truncate().text_sm().text_color(theme.muted_foreground).child(location))
+            .child(
+                Button::new("open-palette")
+                    .small()
+                    .icon(IconName::Search)
+                    .label("Search…")
+                    .tooltip("Search presets, options and values; run commands (⌘K)")
+                    .disabled(!matches!(self.state, LoadState::Ready(_)))
+                    .on_click(cx.listener(|this, _, window, cx| this.open_palette(window, cx))),
+            )
             .child(
                 Button::new("open")
                     .small()
@@ -299,17 +341,114 @@ impl StudioApp {
                 .child(details::render(catalog, Node::Preset(index), cx))
                 .into_any_element(),
             PresetTab::Values => {
-                let current = self.values.as_ref().filter(|values| values.read(cx).preset() == index).cloned();
-                let edits = self.edits.clone().expect("loaded profiles have an edit model");
-                let values = current.unwrap_or_else(|| {
-                    let values = cx.new(|cx| ValuesView::new(catalog, &edits, index, window, cx));
-                    self.values = Some(values.clone());
-                    values
-                });
-                div().size_full().child(values).into_any_element()
+                div().size_full().child(self.ensure_values(catalog, index, window, cx)).into_any_element()
             }
         };
         v_flex().size_full().child(tabs).child(div().flex_1().min_h_0().pt_3().child(content)).into_any_element()
+    }
+
+    /// The Values view of `preset`, created on first use; it needs a `Window` for its inputs.
+    fn ensure_values(
+        &mut self,
+        catalog: &Arc<Catalog>,
+        preset: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ValuesView> {
+        if let Some(values) = self.values.as_ref().filter(|values| values.read(cx).preset() == preset) {
+            return values.clone();
+        }
+        let edits = self.edits.clone().expect("loaded profiles have an edit model");
+        let values = cx.new(|cx| ValuesView::new(catalog, &edits, preset, window, cx));
+        self.values = Some(values.clone());
+        values
+    }
+
+    /// Rebuilds the palette's groups and targets for `query` and the current selection.
+    fn refresh_palette(&mut self, query: &str, cx: &mut Context<Self>) {
+        let LoadState::Ready(catalog) = &self.state else { return };
+        let preset_selected = matches!(self.selected, Some(Node::Preset(_)));
+        let (groups, targets) = palette::build(catalog, query, preset_selected);
+        self.palette_entries = PaletteEntries { groups, targets };
+        cx.notify();
+    }
+
+    /// Opens the palette in a `Root` dialog, which traps focus, closes on Escape or a click
+    /// outside and restores the previous focus.
+    fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !matches!(self.state, LoadState::Ready(_)) || window.has_active_dialog(cx) {
+            return;
+        }
+        let palette = self.palette.get_or_insert_with(|| cx.new(|cx| CommandState::new(window, cx))).clone();
+        palette.update(cx, |palette, cx| palette.set_query("", window, cx));
+        self.refresh_palette("", cx);
+        let app = cx.entity();
+        let initial_focus = Cell::new(true);
+        window.open_dialog(cx, move |dialog, window, cx| {
+            // The builder may run again when the dialog layer is rebuilt; focus only once.
+            if initial_focus.replace(false) {
+                palette.update(cx, |palette, cx| palette.focus(window, cx));
+            }
+            let groups = app.read(cx).palette_entries.groups.clone();
+            let command = groups
+                .into_iter()
+                .fold(Command::new(&palette).filterable(false), |command, group| command.group(group))
+                .placeholder("Search presets, options and values, or type a command…")
+                .max_h(px(440.))
+                .on_query({
+                    let app = app.clone();
+                    move |query, _, cx| app.update(cx, |this, cx| this.refresh_palette(query, cx))
+                })
+                .on_confirm({
+                    let app = app.clone();
+                    move |index, window, cx| {
+                        window.close_dialog(cx);
+                        app.update(cx, |this, cx| this.confirm_palette(index, window, cx));
+                    }
+                });
+            dialog.w(px(680.)).close_button(false).margin_top(px(64.)).child(command)
+        });
+    }
+
+    fn confirm_palette(&mut self, index: IndexPath, window: &mut Window, cx: &mut Context<Self>) {
+        let targets = &self.palette_entries.targets;
+        let Some(target) = targets.get(index.section).and_then(|row| row.get(index.row)).cloned() else {
+            return;
+        };
+        let LoadState::Ready(catalog) = &self.state else { return };
+        let catalog = catalog.clone();
+        let reveal = |this: &mut Self, preset: usize, key: &str, window: &mut Window, cx: &mut Context<Self>| {
+            this.preset_tab = PresetTab::Values;
+            let values = this.ensure_values(&catalog, preset, window, cx);
+            values.update(cx, |values, cx| values.reveal_key(key, window, cx));
+        };
+        match target {
+            Target::Command(AppCommand::Reload) => self.reload(cx),
+            Target::Command(AppCommand::Open) => self.choose_folder(cx),
+            Target::Command(AppCommand::ShowOverview) => self.preset_tab = PresetTab::Overview,
+            Target::Command(AppCommand::ShowValues) => self.preset_tab = PresetTab::Values,
+            Target::Preset(preset) => self.go_to_preset(preset, window, cx),
+            Target::Option(key) => {
+                if let Some(Node::Preset(preset)) = self.selected {
+                    reveal(self, preset, &key, window, cx);
+                }
+            }
+            Target::Value(preset, key) => {
+                self.go_to_preset(preset, window, cx);
+                reveal(self, preset, &key, window, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Selects a preset in the tree, expanding its ancestors and scrolling it into view.
+    fn go_to_preset(&mut self, preset: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let id = Node::Preset(preset).id();
+        self.tree.update(cx, |tree, cx| {
+            tree.set_selected_item(Some(&TreeItem::new(id.clone(), "")), cx);
+            tree.reveal_item(&id, ScrollStrategy::Center, cx);
+            tree.focus(window, cx);
+        });
     }
 
     fn render_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -355,6 +494,8 @@ impl Render for StudioApp {
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
+            .track_focus(&self.focus)
+            .on_action(cx.listener(|this, _: &OpenPalette, window, cx| this.open_palette(window, cx)))
             .child(self.render_toolbar(cx))
             .child(div().flex_1().min_h_0().child(self.render_body(window, cx)))
             .child(self.render_status(cx))
@@ -435,6 +576,7 @@ mod tests {
 
     // Explicit imports: the `gpui_kit::*` glob would shadow `#[test]` with GPUI's test macro.
     use gpui_kit::base::Root;
+    use gpui_kit::component::WindowExt as _;
     use gpui_kit::test::TestWindowExt as _;
     use gpui_kit::{
         AppContext as _, Bounds, Entity, Point, ScrollStrategy, TestAppContext, WindowBounds, WindowHandle,
@@ -442,7 +584,7 @@ mod tests {
     };
     use profile_core::PresetKind;
 
-    use super::{Catalog, LoadState, Node, StudioApp, nav};
+    use super::{Catalog, LoadState, Node, PresetTab, StudioApp, nav};
 
     fn profiles_dir() -> Option<PathBuf> {
         // Tests run from the package directory; a relative `ORCA_PROFILES_DIR` means the workspace root.
@@ -456,11 +598,13 @@ mod tests {
     fn open(cx: &mut TestAppContext, dir: PathBuf) -> (WindowHandle<Root>, Entity<StudioApp>) {
         cx.update(gpui_kit::init);
         cx.update(crate::values::init);
+        cx.update(super::init);
         cx.update(|cx| {
             let bounds = Bounds { origin: Point::default(), size: size(px(1200.), px(900.)) };
             let options = WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() };
             let (window, app) =
-                gpui_kit::open_window(options, cx, |_, cx| cx.new(|cx| StudioApp::new(Some(dir), cx))).unwrap();
+                gpui_kit::open_window(options, cx, |window, cx| cx.new(|cx| StudioApp::new(Some(dir), window, cx)))
+                    .unwrap();
             (window.downcast::<Root>().unwrap(), app)
         })
     }
@@ -739,6 +883,78 @@ mod tests {
         click(window, "reload", cx);
         assert!(app.read_with(cx, |app, cx| app.edits.as_ref().is_some_and(|edits| edits.read(cx).dirty().is_empty())));
         assert_eq!(std::fs::read_to_string(&file).unwrap(), expected, "discarded edits are not written");
+    }
+
+    /// Opens the palette with ⌘K, types `query` and confirms the highlighted entry.
+    fn run_palette(window: WindowHandle<Root>, query: &str, cx: &mut TestAppContext) {
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.press("cmd-k", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| window.input(query, cx)).unwrap();
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.press("enter", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+
+    #[gpui_kit::test]
+    fn palette_searches_and_navigates(cx: &mut TestAppContext) {
+        let dir = editable_fixture();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        let loaded = catalog(&app, cx);
+        let child = loaded.repo.find(PresetKind::Process, "Acme 0.2")[0];
+
+        // A preset: selected and revealed in the collapsed tree.
+        run_palette(window, "acme 0.2", cx);
+        let dialog_open = |cx: &mut TestAppContext| {
+            cx.update_window(window.into(), |_, window, cx| window.has_active_dialog(cx)).unwrap()
+        };
+        assert!(!dialog_open(cx), "confirming closes the palette");
+        app.read_with(cx, |app, cx| {
+            assert_eq!(app.selected, Some(Node::Preset(child.index())));
+            assert!(app.tree.read(cx).index_of(&Node::Preset(child.index()).id()).is_some());
+        });
+
+        // A value set in a file: its preset's Values tab, filtered to the key.
+        run_palette(window, "wall_loops = 2", cx);
+        let values = app.read_with(cx, |app, _| {
+            assert_eq!(app.preset_tab, PresetTab::Values);
+            app.values.clone().unwrap()
+        });
+        let rows = |cx: &mut TestAppContext| values.read_with(cx, |values, cx| values.table().read(cx).dump(cx).1);
+        assert_eq!(rows(cx).iter().map(|row| row[2].as_str()).collect::<Vec<_>>(), ["wall_loops"]);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("value-detail").label(), Some("wall_loops"));
+        })
+        .unwrap();
+
+        // An option, shown in the selected preset.
+        run_palette(window, "enable_support", cx);
+        assert_eq!(rows(cx)[0][2], "enable_support");
+
+        // Escape closes the palette without doing anything.
+        cx.update_window(window.into(), |_, window, cx| window.press("cmd-k", cx)).unwrap();
+        cx.run_until_parked();
+        assert!(dialog_open(cx));
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.press("escape", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert!(!dialog_open(cx));
+
+        // A command.
+        run_palette(window, "reload", cx);
+        assert!(!Arc::ptr_eq(&catalog(&app, cx), &loaded), "profiles were loaded again");
     }
 
     #[gpui_kit::test]

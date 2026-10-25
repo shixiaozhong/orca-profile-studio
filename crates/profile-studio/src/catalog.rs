@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::time::Duration;
 
-use profile_core::{Issue, PresetKind, Repository, Severity};
+use profile_core::{Issue, PresetKind, Repository, SearchIndex, Severity};
 
 /// Printers grouped under the machine model their `printer_model` names.
 pub struct ModelEntry {
@@ -48,6 +48,8 @@ pub struct Catalog {
     /// Issue indexes per preset, including file-level issues such as a BOM.
     pub preset_issues: Vec<Vec<usize>>,
     pub preset_severity: Vec<Option<Severity>>,
+    /// Global search over the loaded data (not over unsaved edits).
+    pub search: SearchIndex,
 }
 
 impl Catalog {
@@ -64,7 +66,8 @@ impl Catalog {
             .iter()
             .map(|issues| issues.iter().map(|&index| repo.issues()[index].severity()).max())
             .collect();
-        Catalog { repo, load_time, vendors, model_printer_counts, preset_issues, preset_severity }
+        let search = SearchIndex::build(&repo);
+        Catalog { repo, load_time, vendors, model_printer_counts, preset_issues, preset_severity, search }
     }
 
     pub fn issues_of(&self, preset: usize) -> impl Iterator<Item = &Issue> {

@@ -9,7 +9,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use profile_core::{IssueKind, KindStats, Origin, PresetKind, RawValue, Repository, Schema, Severity, Stats};
+use profile_core::{
+    IssueKind, KindStats, Origin, PresetKind, RawValue, Repository, Schema, SearchIndex, Severity, Stats,
+};
 
 fn profiles_dir() -> Option<PathBuf> {
     // Cargo runs integration tests from the package directory, so a relative
@@ -175,4 +177,20 @@ fn compares_snapmaker_abs_nozzle_variants() {
     assert_eq!(temperature.right.as_ref().unwrap().effective().value.as_scalar(), Some("270"));
     assert_eq!(temperature.left.as_ref().unwrap().effective().origin, Origin::Preset(left));
     assert_eq!(temperature.right.as_ref().unwrap().effective().origin, Origin::Preset(right));
+}
+
+#[test]
+fn search_finds_presets_options_and_values() {
+    let Some(repo) = repo_with_schema() else { return };
+    let index = SearchIndex::build(repo);
+    let abs = repo.find(PresetKind::Filament, "Generic ABS @U1 0.2 nozzle")[0];
+
+    let results = index.search("generic abs @u1 0.2", 5);
+    assert_eq!(results.presets.first(), Some(&abs));
+    let results = index.search("wall loops", 5);
+    assert_eq!(results.options.first().map(|hit| hit.key.as_str()), Some("wall_loops"));
+    // Where is 270 set as a nozzle temperature?
+    let results = index.search("nozzle_temperature 270", usize::MAX);
+    assert!(results.values.iter().any(|hit| hit.preset == abs && hit.key == "nozzle_temperature"));
+    assert_eq!(results.total_values, results.values.len());
 }
