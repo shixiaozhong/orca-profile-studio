@@ -180,4 +180,4 @@ cargo test
 
 ## 路线图
 
-已完成 M0 到 M12。下一项是 M13 Git 对比。各阶段的范围、关键设计决定、依赖和完成标准见 [docs/roadmap.md](docs/roadmap.md)。
+已完成 M0 到 M12。接下来是 M13 新增机型、M14 检测多余的覆盖值并提到父项、M15 打包成 macOS 应用；和 Git 对比暂时待定。各阶段的范围、关键设计决定、依赖和完成标准见 [docs/roadmap.md](docs/roadmap.md)。
