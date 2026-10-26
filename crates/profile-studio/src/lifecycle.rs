@@ -18,27 +18,36 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &Quit, cx| cx.defer(|cx| request_quit(cx, None)));
 }
 
-type QuitScope = Vec<(AnyWindowHandle, Vec<PathBuf>)>;
+type QuitScope = Vec<(AnyWindowHandle, Vec<PathBuf>, bool)>;
 
 fn scope(cx: &mut App) -> QuitScope {
     cx.windows()
         .into_iter()
         .filter_map(|handle| {
-            let files = handle
+            let (files, writing) = handle
                 .update(cx, |_, window, cx| {
                     let view = Root::read(window, cx).view().clone().downcast::<StudioApp>().ok()?;
-                    Some(view.read(cx).unsaved_files(cx))
+                    Some((view.read(cx).unsaved_files(cx), view.read(cx).is_writing_files(cx)))
                 })
                 .ok()??;
-            Some((handle, files))
+            Some((handle, files, writing))
         })
         .collect()
 }
 
 fn request_quit(cx: &mut App, approved: Option<QuitScope>) {
     let scope = scope(cx);
-    if scope.iter().all(|(_, files)| files.is_empty()) || approved.as_ref() == Some(&scope) {
-        for (handle, _) in scope {
+    if scope.iter().any(|(_, _, writing)| *writing) {
+        crate::feedback::error(
+            "manage-writing",
+            "Preset changes are being written",
+            "Wait for file changes in all windows to finish before quitting.".into(),
+            cx,
+        );
+        return;
+    }
+    if scope.iter().all(|(_, files, _)| files.is_empty()) || approved.as_ref() == Some(&scope) {
+        for (handle, _, _) in scope {
             handle
                 .update(cx, |_, window, cx| {
                     crate::app::remember_window_size(window, cx);
@@ -49,7 +58,7 @@ fn request_quit(cx: &mut App, approved: Option<QuitScope>) {
         cx.quit();
         return;
     }
-    let Some(target) = cx.active_window().or_else(|| scope.first().map(|(handle, _)| *handle)) else { return };
+    let Some(target) = cx.active_window().or_else(|| scope.first().map(|(handle, _, _)| *handle)) else { return };
     target
         .update(cx, |_, window, cx| {
             if window.has_active_dialog(cx) {
@@ -58,7 +67,7 @@ fn request_quit(cx: &mut App, approved: Option<QuitScope>) {
             window.open_alert_dialog(cx, move |dialog, _, _| {
                 let approved = scope.clone();
                 let files =
-                    scope.iter().flat_map(|(_, files)| files).map(|path| div().child(path.display().to_string()));
+                    scope.iter().flat_map(|(_, files, _)| files).map(|path| div().child(path.display().to_string()));
                 dialog
                     .title("Discard edits in all windows and quit?")
                     .width(px(640.))

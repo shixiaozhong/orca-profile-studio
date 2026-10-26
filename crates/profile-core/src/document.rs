@@ -85,6 +85,118 @@ impl Document {
         self.members.iter().any(|member| member.key == key)
     }
 
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.members.iter().map(|member| member.key.as_str())
+    }
+
+    /// A top-level JSON value, including manifest arrays of objects.
+    pub fn value(&self, key: &str) -> Option<serde_json::Value> {
+        let member = self.members.iter().find(|member| member.key == key)?;
+        serde_json::from_str(&self.text[member.value.clone()]).ok()
+    }
+
+    fn array_spans(&self, key: &str) -> Result<(usize, usize, Vec<Range<usize>>), DocumentError> {
+        let member = self
+            .members
+            .iter()
+            .find(|member| member.key == key)
+            .ok_or(DocumentError { offset: self.close, reason: "array member not found" })?;
+        let mut scanner = Scanner { bytes: self.text.as_bytes(), pos: member.value.start };
+        let open = scanner.pos;
+        scanner.expect(b'[', "expected an array")?;
+        scanner.skip_ws();
+        let mut spans = Vec::new();
+        while scanner.peek() != Some(b']') {
+            spans.push(scanner.value()?);
+            scanner.skip_ws();
+            if scanner.peek() == Some(b',') {
+                scanner.pos += 1;
+                scanner.skip_ws();
+            } else {
+                break;
+            }
+        }
+        scanner.expect(b']', "expected `]`")?;
+        Ok((open, scanner.pos - 1, spans))
+    }
+
+    /// Inserts one array element while retaining every existing element byte-for-byte.
+    pub fn array_insert(&mut self, key: &str, ix: usize, value: &serde_json::Value) -> Result<(), DocumentError> {
+        if !self.contains(key) && ix != 0 {
+            return Err(DocumentError { offset: self.close, reason: "array index out of bounds" });
+        }
+        if !self.contains(key) {
+            self.set(key, &RawValue::List(Vec::new()));
+        }
+        let (open, close, spans) = self.array_spans(key)?;
+        if ix > spans.len() {
+            return Err(DocumentError { offset: close, reason: "array index out of bounds" });
+        }
+        let multiline = self.text[open..close].contains('\n');
+        let indent = spans
+            .first()
+            .map(|span| self.member_indent(span.start).to_owned())
+            .unwrap_or_else(|| format!("{}{}", self.member_indent(open), self.indent()));
+        let separator = if multiline {
+            format!(",{}{indent}", self.newline())
+        } else if spans.len() > 1 {
+            self.text[spans[0].end..spans[1].start].to_owned()
+        } else {
+            ", ".to_owned()
+        };
+        let rendered = serde_json::to_string(value).expect("JSON values serialize");
+        if let Some(next) = spans.get(ix) {
+            self.replace(next.start..next.start, &format!("{rendered}{separator}"));
+        } else if let Some(last) = spans.last() {
+            self.replace(last.end..last.end, &format!("{separator}{rendered}"));
+        } else if multiline {
+            self.replace(open + 1..open + 1, &format!("{}{indent}{rendered}", self.newline()));
+        } else {
+            self.replace(close..close, &rendered);
+        }
+        Ok(())
+    }
+
+    /// Replaces just one element, leaving siblings, separators and surrounding whitespace intact.
+    pub fn array_set(&mut self, key: &str, ix: usize, value: &serde_json::Value) -> Result<(), DocumentError> {
+        let (_, close, spans) = self.array_spans(key)?;
+        let span = spans.get(ix).ok_or(DocumentError { offset: close, reason: "array index out of bounds" })?.clone();
+        if serde_json::from_str::<serde_json::Value>(&self.text[span.clone()]).ok().as_ref() != Some(value) {
+            self.replace(span, &serde_json::to_string(value).expect("JSON values serialize"));
+        }
+        Ok(())
+    }
+
+    pub fn array_remove(&mut self, key: &str, ix: usize) -> Result<(), DocumentError> {
+        let (_, close, spans) = self.array_spans(key)?;
+        let span = spans.get(ix).ok_or(DocumentError { offset: close, reason: "array index out of bounds" })?;
+        let range = if let Some(next) = spans.get(ix + 1) {
+            span.start..next.start
+        } else if ix > 0 {
+            spans[ix - 1].end..span.end
+        } else {
+            span.clone()
+        };
+        self.replace(range, "");
+        Ok(())
+    }
+
+    /// Edits one member inside an array's object without reformatting that object or its siblings.
+    pub fn array_set_member(
+        &mut self,
+        key: &str,
+        ix: usize,
+        member: &str,
+        value: &RawValue,
+    ) -> Result<(), DocumentError> {
+        let (_, close, spans) = self.array_spans(key)?;
+        let span = spans.get(ix).ok_or(DocumentError { offset: close, reason: "array index out of bounds" })?.clone();
+        let mut object = Self::parse(self.text[span.clone()].to_owned())?;
+        object.set(member, value);
+        self.replace(span, object.text());
+        Ok(())
+    }
+
     /// Sets a top-level member, keeping the style of the value it replaces. A new member is
     /// appended after the last one, using the file's indentation. Setting the value a member
     /// already has leaves the text untouched.
@@ -147,7 +259,8 @@ impl Document {
     fn indent(&self) -> &str {
         let Some(first) = self.members.first() else { return "    " };
         let line_start = self.text[..first.start].rfind('\n').map_or(0, |at| at + 1);
-        &self.text[line_start..first.start]
+        let prefix = &self.text[line_start..first.start];
+        if prefix.chars().all(|c| c == ' ' || c == '\t') { prefix } else { "    " }
     }
 
     fn newline(&self) -> &'static str {
@@ -323,6 +436,34 @@ mod tests {
     use crate::model::RawValue;
 
     const FILE: &str = "{\n    \"type\": \"filament\",\n    \"name\": \"Acme PLA\",\n    \"nozzle_temperature\": [\n        \"210\",\n        \"215\"\n    ],\n    \"compatible_printers\": [\"A\", \"B\"]\n}";
+
+    #[test]
+    fn array_edits_keep_siblings_bom_crlf_and_nested_object_style() {
+        let source = "\u{feff}{\r\n\t\"list\": [\r\n\t\t{ \"name\" : \"A\", \"sub_path\": \"a.json\" },\r\n\t\t{\"name\":\"B\",\"sub_path\":\"b.json\"}\r\n\t]\r\n}";
+        let mut doc = Document::parse(source).unwrap();
+        doc.array_set_member("list", 0, "name", &RawValue::Str("New A".into())).unwrap();
+        assert_eq!(doc.text(), source.replace("\"A\"", "\"New A\""));
+        doc.array_insert("list", 1, &serde_json::json!({"name":"C"})).unwrap();
+        assert!(doc.text().contains("{ \"name\" : \"New A\", \"sub_path\": \"a.json\" },\r\n\t\t{\"name\":\"C\"},\r\n\t\t{\"name\":\"B\",\"sub_path\":\"b.json\"}"));
+        doc.array_remove("list", 1).unwrap();
+        assert_eq!(doc.text(), source.replace("\"A\"", "\"New A\""));
+        doc.array_remove("list", 1).unwrap();
+        doc.array_remove("list", 0).unwrap();
+        doc.array_insert("list", 0, &serde_json::json!("new")).unwrap();
+        assert_eq!(doc.value("list").unwrap(), serde_json::json!(["new"]));
+    }
+
+    #[test]
+    fn inline_arrays_and_new_metadata_keep_untouched_members_valid() {
+        let mut doc = Document::parse(r#"{"x":[ "a" ,  "b" ],"other":"keep"}"#).unwrap();
+        doc.array_insert("x", 1, &serde_json::json!("new")).unwrap();
+        assert_eq!(doc.text(), r#"{"x":[ "a" ,  "new" ,  "b" ],"other":"keep"}"#);
+        doc.array_remove("x", 1).unwrap();
+        doc.set("name", &RawValue::Str("new name".into()));
+        assert_eq!(doc.value("other").unwrap(), "keep");
+        serde_json::from_str::<serde_json::Value>(doc.text()).unwrap();
+        assert!(doc.array_set("x", 4, &serde_json::json!("bad")).is_err());
+    }
 
     fn list(items: &[&str]) -> RawValue {
         RawValue::List(items.iter().map(|item| item.to_string()).collect())

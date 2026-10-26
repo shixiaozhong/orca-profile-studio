@@ -26,6 +26,7 @@ use crate::catalog::Catalog;
 use crate::details::{self, Compatibility, severity_color};
 use crate::edits::{Edits, EditsEvent, RefreshConflict};
 use crate::issues::{IssuesEvent, IssuesView};
+use crate::manage::{ManagementEvent, ManagementView};
 use crate::palette::{self, AppCommand, Target};
 use crate::settings::{self, ThemePreference};
 use crate::tree::{self as nav, Node, kind_icon};
@@ -92,6 +93,9 @@ pub struct StudioApp {
     preset_tab: PresetTab,
     /// The values table of the selected preset; created when the Values tab is first shown.
     values: Option<Entity<ValuesView>>,
+    management: Option<Entity<ManagementView>>,
+    managing: bool,
+    _management_events: Option<Subscription>,
     /// Unsaved edits of the loaded profiles.
     edits: Option<Entity<Edits>>,
     /// The command palette's state; created when first opened, shown in a `Root` dialog.
@@ -169,6 +173,16 @@ impl StudioApp {
         let app = cx.weak_entity();
         window.on_window_should_close(cx, move |window, cx| {
             let Some(app) = app.upgrade() else { return true };
+            if app.read(cx).is_writing_files(cx) {
+                crate::feedback::window_error(
+                    window.window_handle(),
+                    "manage-writing",
+                    "Preset changes are being written",
+                    "Wait for the file changes to finish before closing this window.".into(),
+                    cx,
+                );
+                return false;
+            }
             if app.read(cx).unsaved_files(cx).is_empty() {
                 remember_window_size(window, cx);
                 true
@@ -184,6 +198,9 @@ impl StudioApp {
             selected: None,
             preset_tab: PresetTab::Overview,
             values: None,
+            management: None,
+            managing: false,
+            _management_events: None,
             edits: None,
             palette: None,
             palette_entries: PaletteEntries::default(),
@@ -222,6 +239,9 @@ impl StudioApp {
             self.state = LoadState::Loading(dir.clone());
             self.selected = None;
             self.values = None;
+            self.management = None;
+            self.managing = false;
+            self._management_events = None;
             self.edits = None;
             self._edit_events = None;
             self.palette_entries = PaletteEntries::default();
@@ -329,6 +349,9 @@ impl StudioApp {
         if let Some(issues) = &self.issues {
             issues.update(cx, |issues, cx| issues.refresh(&catalog, window, cx));
         }
+        if let Some(management) = &self.management {
+            management.update(cx, |management, cx| management.refresh(&catalog, window, cx));
+        }
         self.compatibility = match self.selected {
             Some(Node::Preset(preset)) => Some(Compatibility::compute(&catalog, preset)),
             _ => None,
@@ -353,6 +376,9 @@ impl StudioApp {
     }
 
     fn choose_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.may_leave_during_write(window, cx) {
+            return;
+        }
         if window.has_active_dialog(cx) {
             return;
         }
@@ -387,6 +413,9 @@ impl StudioApp {
     }
 
     fn request_open(&mut self, dir: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.may_leave_during_write(window, cx) {
+            return;
+        }
         let dir = dir.canonicalize().or_else(|_| std::path::absolute(&dir)).unwrap_or(dir);
         let dirty = self.unsaved_files(cx).len();
         if dirty == 0 || self.profiles_dir.as_ref() == Some(&dir) {
@@ -426,7 +455,29 @@ impl StudioApp {
         presets.into_iter().map(|index| catalog.repo.root().join(&catalog.repo.presets()[index].path)).collect()
     }
 
+    pub fn is_writing_files(&self, cx: &App) -> bool {
+        self.management.as_ref().is_some_and(|view| view.read(cx).is_applying())
+    }
+
+    fn may_leave_during_write(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.is_writing_files(cx) {
+            crate::feedback::window_error(
+                window.window_handle(),
+                "manage-writing",
+                "Preset changes are being written",
+                "Wait for the file changes to finish before closing, reloading or opening a folder.".into(),
+                cx,
+            );
+            false
+        } else {
+            true
+        }
+    }
+
     fn request_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.may_leave_during_write(window, cx) {
+            return;
+        }
         if window.has_active_dialog(cx) {
             return;
         }
@@ -460,6 +511,9 @@ impl StudioApp {
     }
 
     fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.may_leave_during_write(window, cx) {
+            return;
+        }
         if let Some(dir) = self.profiles_dir.clone() {
             self.load(dir, window, cx);
         }
@@ -509,6 +563,38 @@ impl StudioApp {
         });
     }
 
+    fn open_management(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.unsaved_files(cx).is_empty() {
+            crate::feedback::window_error(
+                window.window_handle(),
+                "manage-unsaved",
+                "Save applied edits first",
+                "Save or undo existing edits, and apply or discard input before managing preset files.".into(),
+                cx,
+            );
+            return;
+        }
+        let LoadState::Ready(catalog) = &self.state else { return };
+        if self.management.is_none() {
+            let catalog = catalog.clone();
+            let selected = match self.selected {
+                Some(Node::Preset(ix)) => Some(ix),
+                _ => None,
+            };
+            let management = cx.new(|cx| ManagementView::new(&catalog, selected, window, cx));
+            self._management_events = Some(cx.subscribe_in(&management, window, |this, _, event, window, cx| {
+                match event {
+                    ManagementEvent::Applied => this.reload(window, cx),
+                    ManagementEvent::Close => this.managing = false,
+                }
+                cx.notify();
+            }));
+            self.management = Some(management);
+        }
+        self.managing = true;
+        cx.notify();
+    }
+
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let location = self
@@ -524,6 +610,14 @@ impl StudioApp {
             .child(Icon::new(IconName::FolderTree).text_color(theme.muted_foreground))
             .child(div().font_semibold().child("Orca Profile Studio"))
             .child(div().flex_1().min_w_0().truncate().text_sm().text_color(theme.muted_foreground).child(location))
+            .child(
+                Button::new("manage-presets")
+                    .small()
+                    .label("Presets")
+                    .selected(self.managing)
+                    .disabled(!matches!(self.state, LoadState::Ready(_)))
+                    .on_click(cx.listener(|this, _, window, cx| this.open_management(window, cx))),
+            )
             .child(
                 Button::new("open-palette")
                     .small()
@@ -564,6 +658,11 @@ impl StudioApp {
     }
 
     fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {
+        if self.managing
+            && let Some(management) = &self.management
+        {
+            return management.clone().into_any_element();
+        }
         match &self.state {
             LoadState::Empty => placeholder(
                 IconName::FolderOpen,
@@ -693,6 +792,7 @@ impl StudioApp {
     }
 
     fn set_preset_tab(&mut self, tab: PresetTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.managing = false;
         self.preset_tab = tab;
         self.sync_values(window, cx);
         cx.notify();
@@ -751,6 +851,7 @@ impl StudioApp {
             return;
         };
         let reveal = |this: &mut Self, preset: usize, key: &str, window: &mut Window, cx: &mut Context<Self>| {
+            this.managing = false;
             this.preset_tab = PresetTab::Values;
             if let Some(values) = this.ensure_values(preset, window, cx) {
                 values.update(cx, |values, cx| values.reveal_key(key, window, cx));
@@ -764,7 +865,11 @@ impl StudioApp {
             Target::Command(AppCommand::ShowOverview) => self.set_preset_tab(PresetTab::Overview, window, cx),
             Target::Command(AppCommand::ShowValues) => self.set_preset_tab(PresetTab::Values, window, cx),
             Target::Command(AppCommand::ShowIssues) => self.open_issues(window, cx),
-            Target::Preset(preset) => self.select_node(Node::Preset(preset), true, window, cx),
+            Target::Command(AppCommand::ManagePresets) => self.open_management(window, cx),
+            Target::Preset(preset) => {
+                self.managing = false;
+                self.select_node(Node::Preset(preset), true, window, cx);
+            }
             Target::Option(key) => {
                 if let Some(Node::Preset(preset)) = self.selected {
                     reveal(self, preset, &key, window, cx);
@@ -793,6 +898,7 @@ impl StudioApp {
     }
 
     fn open_issues(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.managing = false;
         let LoadState::Ready(catalog) = &self.state else { return };
         if self.issues.is_none() {
             let catalog = catalog.clone();
@@ -815,7 +921,7 @@ impl StudioApp {
     }
 
     fn toggle_issues(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.issues_open {
+        if self.issues_open && !self.managing {
             self.close_issues(cx);
         } else {
             self.open_issues(window, cx);
@@ -1906,6 +2012,292 @@ mod tests {
         cx.run_until_parked();
         run_palette(window, "new window", cx);
         assert_eq!(cx.update(|cx| cx.windows().len()), 2);
+    }
+
+    fn management_fixture() -> tempfile::TempDir {
+        let dir = editable_fixture();
+        for file in ["Acme.json", "Acme/process/fdm_process_common.json", "Acme/process/Acme 0.2.json"] {
+            let path = dir.path().join(file);
+            let text = std::fs::read_to_string(&path).unwrap();
+            // Keep source paths fixed, so choosing a row tests selection by file identity.
+            let mut object: serde_json::Value = serde_json::from_str(&text).unwrap();
+            if file == "Acme.json" {
+                object["process_list"][0]["name"] = "Base 0.4 nozzle".into();
+                object["process_list"][1]["name"] = "Process 0.4 nozzle".into();
+            } else {
+                object["name"] =
+                    if file.ends_with("fdm_process_common.json") { "Base 0.4 nozzle" } else { "Process 0.4 nozzle" }
+                        .into();
+                if object.get("inherits").is_some() {
+                    object["inherits"] = "Base 0.4 nozzle".into();
+                }
+            }
+            std::fs::write(path, serde_json::to_string_pretty(&object).unwrap()).unwrap();
+        }
+        dir
+    }
+
+    fn management_operation(window: WindowHandle<Root>, label: &str, cx: &mut TestAppContext) {
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.within("manage-operation").click("input", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.press("cmd-a", cx);
+            window.input(label, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.press("down", cx);
+            window.press("enter", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+
+    fn management_input(window: WindowHandle<Root>, id: &'static str, text: &str, cx: &mut TestAppContext) {
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.click(id, cx);
+            window.press("cmd-a", cx);
+            if text.is_empty() {
+                window.press("backspace", cx);
+            } else {
+                window.input(text, cx);
+            }
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+
+    #[gpui_kit::test]
+    fn manages_new_copy_rename_and_delete_with_explicit_previews(cx: &mut TestAppContext) {
+        let dir = management_fixture();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "Process 0.4 nozzle", cx);
+        click(window, "manage-presets", cx);
+        management_input(window, "manage-name", "Process copy", cx);
+        click(window, "manage-preview-button", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find("manage-preview").label().unwrap().contains("2 file changes"));
+            window.press("escape", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert!(!dir.path().join("Acme/process/Process copy.json").exists());
+        click(window, "manage-preview-button", cx);
+        click(window, "ok", cx);
+        let loaded = catalog(&app, cx);
+        assert_eq!(loaded.repo.find(PresetKind::Process, "Process copy").len(), 1);
+        assert!(app.read_with(cx, |app, _| app.managing));
+
+        management_operation(window, "New preset", cx);
+        management_input(window, "manage-name", "Fresh process", cx);
+        click(window, "manage-inherit-source", cx);
+        click(window, "manage-preview-button", cx);
+        click(window, "ok", cx);
+        let loaded = catalog(&app, cx);
+        let fresh = loaded.repo.find(PresetKind::Process, "Fresh process")[0];
+        assert_eq!(loaded.repo.preset(fresh).meta.inherits(), Some("Process 0.4 nozzle"));
+
+        management_operation(window, "Rename preset", cx);
+        management_input(window, "manage-name", "Renamed process", cx);
+        click(window, "manage-preview-button", cx);
+        click(window, "ok", cx);
+        let loaded = catalog(&app, cx);
+        assert!(loaded.repo.find(PresetKind::Process, "Process 0.4 nozzle").is_empty());
+        let renamed = loaded.repo.find(PresetKind::Process, "Renamed process")[0];
+        assert!(loaded.repo.preset(renamed).meta.renamed_from.as_ref().unwrap().contains("Process 0.4 nozzle"));
+        let fresh = loaded.repo.find(PresetKind::Process, "Fresh process")[0];
+        assert_eq!(loaded.repo.preset(fresh).meta.inherits(), Some("Renamed process"));
+
+        management_operation(window, "Delete presets", cx);
+        click(window, "manage-select-shown", cx);
+        click(window, "manage-preview-button", cx);
+        click(window, "ok", cx);
+        assert!(catalog(&app, cx).repo.presets().is_empty());
+        let manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.path().join("Acme.json")).unwrap()).unwrap();
+        assert_eq!(manifest["process_list"], serde_json::json!([]));
+    }
+
+    #[gpui_kit::test]
+    fn batch_copy_keeps_inheritance_and_applies_multiple_values(cx: &mut TestAppContext) {
+        let dir = management_fixture();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "Process 0.4 nozzle", cx);
+        run_palette(window, "manage presets", cx);
+        cx.simulate_window_resize(window.into(), size(px(1280.), px(1100.)));
+        management_operation(window, "Copy group", cx);
+        click(window, "manage-select-shown", cx);
+        management_input(window, "manage-from", "0.4 nozzle", cx);
+        management_input(window, "manage-to", "0.2 nozzle", cx);
+        management_input(window, "manage-overrides", "wall_loops = 5\nenable_support = 1", cx);
+        click(window, "manage-preview-button", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("manage-preview").label(), Some("3 file changes"));
+        })
+        .unwrap();
+        click(window, "ok", cx);
+        let loaded = catalog(&app, cx);
+        let parent = loaded.repo.find(PresetKind::Process, "Base 0.2 nozzle")[0];
+        let child = loaded.repo.find(PresetKind::Process, "Process 0.2 nozzle")[0];
+        assert_eq!(loaded.repo.preset(child).parent, Some(parent));
+        assert_eq!(loaded.repo.lookup_scalar(child, "wall_loops"), Some("5"));
+        assert_eq!(loaded.repo.lookup_scalar(child, "enable_support"), Some("1"));
+        assert!(parent.index() < child.index());
+        assert!(!loaded.repo.issues().iter().any(|issue| issue.severity() >= Severity::Error));
+    }
+
+    #[gpui_kit::test]
+    fn management_rejects_collisions_and_stale_previews_without_writing(cx: &mut TestAppContext) {
+        let dir = management_fixture();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "Process 0.4 nozzle", cx);
+        click(window, "manage-presets", cx);
+        management_input(window, "manage-name", "Process 0.4 nozzle", cx);
+        click(window, "manage-preview-button", cx);
+        click(window, "ok", cx); // A blocking preview's button only returns to the form.
+        assert_eq!(catalog(&app, cx).repo.presets().len(), 2);
+        management_input(window, "manage-name", "Stale copy", cx);
+        click(window, "manage-preview-button", cx);
+        let path = dir.path().join("Acme/process/Acme 0.2.json");
+        let before = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, before.replace("\"wall_loops\": \"2\"", "\"wall_loops\": \"9\"")).unwrap();
+        click(window, "ok", cx);
+        assert!(!dir.path().join("Acme/process/Stale copy.json").exists());
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find("manage-status").label().unwrap().contains("changed since the preview"));
+        })
+        .unwrap();
+        assert!(std::fs::read_to_string(path).unwrap().contains("\"wall_loops\": \"9\""));
+    }
+
+    #[gpui_kit::test]
+    fn management_preserves_existing_edits_and_filters_selection_by_model(cx: &mut TestAppContext) {
+        let dir = management_fixture();
+        let path = dir.path().join("Acme.json");
+        let mut manifest: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        manifest["machine_model_list"] = serde_json::json!([{"name":"A","sub_path":"machine/model.json"}]);
+        manifest["machine_list"] = serde_json::json!([{"name":"A printer","sub_path":"machine/a.json"}]);
+        std::fs::write(path, manifest.to_string()).unwrap();
+        std::fs::create_dir_all(dir.path().join("Acme/machine")).unwrap();
+        std::fs::write(
+            dir.path().join("Acme/machine/model.json"),
+            r#"{"type":"machine_model","name":"A","nozzle_diameter":"0.4"}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("Acme/machine/a.json"),r#"{"type":"machine","name":"A printer","from":"system","instantiation":"true","printer_model":"A","printer_variant":"0.4","nozzle_diameter":["0.4"]}"#).unwrap();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "Process 0.4 nozzle", cx);
+        run_palette(window, "show preset values", cx);
+        find_key(window, "wall_loops", cx);
+        enter_value(window, "6", cx);
+        click(window, "manage-presets", cx);
+        assert!(!app.read_with(cx, |app, _| app.managing));
+        assert_eq!(first_row(&app, cx).1, "6");
+        click(window, "undo", cx);
+        click(window, "manage-presets", cx);
+        management_input(window, "manage-model", "A", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("manage-count").label(), Some("1 selected · 1 shown"));
+        })
+        .unwrap();
+        // A filter that hides the selected preset also removes it from the selection, so an
+        // operation never includes rows the user cannot see.
+        management_input(window, "manage-model", "no matching model", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("manage-count").label(), Some("0 selected · 0 shown"));
+        })
+        .unwrap();
+        management_input(window, "manage-model", "", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("manage-count").label(), Some("0 selected · 2 shown"));
+        })
+        .unwrap();
+        click(window, "manage-select-shown", cx);
+        management_input(window, "manage-search", "Base", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("manage-count").label(), Some("1 selected · 1 shown"));
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn management_write_finishes_before_close_quit_or_folder_switch(cx: &mut TestAppContext) {
+        let dir = management_fixture();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "Process 0.4 nozzle", cx);
+        click(window, "manage-presets", cx);
+        management_input(window, "manage-name", "Protected copy", cx);
+        click(window, "manage-preview-button", cx);
+        let generation = app.read_with(cx, |app, _| app.load_generation);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.click("ok", cx);
+            assert!(app.read(cx).is_writing_files(cx));
+            window.press("cmd-w", cx);
+            window.click("open", cx);
+            window.click("reload", cx);
+            window.press("cmd-q", cx);
+            assert_eq!(app.read(cx).load_generation, generation);
+        })
+        .unwrap();
+        assert_eq!(cx.windows().len(), 1);
+        assert!(!cx.did_prompt_for_paths());
+        let mut visual = gpui_kit::VisualTestContext::from_window(window.into(), cx);
+        assert!(!visual.simulate_close(), "native close also waits for the write to finish");
+        cx.run_until_parked();
+        assert_eq!(cx.windows().len(), 1);
+        assert!(!app.read_with(cx, |app, cx| app.is_writing_files(cx)));
+        assert_eq!(catalog(&app, cx).repo.find(PresetKind::Process, "Protected copy").len(), 1);
+        assert!(dir.path().join("Acme/process/Protected copy.json").exists());
+    }
+
+    #[gpui_kit::test]
+    fn long_management_preview_keeps_confirmation_visible_in_a_small_window(cx: &mut TestAppContext) {
+        let dir = management_fixture();
+        let (window, _) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "Process 0.4 nozzle", cx);
+        click(window, "manage-presets", cx);
+        cx.simulate_window_resize(window.into(), size(px(1280.), px(1100.)));
+        management_input(window, "manage-name", "Long preview copy", cx);
+        let values = (0..24).map(|ix| format!("review_key_{ix} = example")).collect::<Vec<_>>().join("\n");
+        management_input(window, "manage-overrides", &values, cx);
+        cx.simulate_window_resize(window.into(), size(px(960.), px(720.)));
+        cx.update(|cx| gpui_kit::component::Theme::update(cx, |theme| theme.font_size = px(20.)));
+        click(window, "manage-preview-button", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let preview = window.find("manage-preview").bounds();
+            for id in ["ok", "cancel"] {
+                let button = window.find(id);
+                assert!(button.visible());
+                assert!(button.bounds().bottom() <= px(720.), "{id}: {:?}", button.bounds());
+                assert!(preview.bottom() <= button.bounds().top());
+            }
+            window.press("escape", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert!(!dir.path().join("Acme/process/Long preview copy.json").exists());
     }
 
     #[gpui_kit::test]

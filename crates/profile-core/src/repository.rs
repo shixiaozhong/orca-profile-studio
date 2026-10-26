@@ -11,7 +11,7 @@ use serde_json::{Map, Value};
 use crate::check::check_params;
 use crate::compat::{CompatibilityIndex, Verdict};
 use crate::issue::{Issue, IssueKind};
-use crate::json::read_json;
+use crate::json::{fingerprint, read_json};
 use crate::model::{MachineModel, Preset, PresetId, PresetKind, PresetMeta, RawValue, Vendor, VendorId, derived_alias};
 use crate::schema::Schema;
 
@@ -75,6 +75,9 @@ pub struct Repository {
     by_name: BTreeMap<(PresetKind, String), Vec<PresetId>>,
     /// Every path named by a vendor index, whether or not it could be loaded.
     listed: HashSet<PathBuf>,
+    /// Content fingerprint of every JSON file the load looked at, relative to `root`; `None` when
+    /// the file did not exist or could not be read.
+    sources: HashMap<PathBuf, Option<u64>>,
 }
 
 struct ManifestItem {
@@ -125,6 +128,12 @@ impl Repository {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Files this load looked at, relative to [`Self::root`], with a content fingerprint each
+    /// (`None`: missing or unreadable).
+    pub(crate) fn sources(&self) -> impl Iterator<Item = (&Path, Option<u64>)> {
+        self.sources.iter().map(|(path, &fingerprint)| (path.as_path(), fingerprint))
     }
 
     pub fn schema(&self) -> Option<&Schema> {
@@ -539,12 +548,17 @@ impl Repository {
     fn read_object(&mut self, vendor: VendorId, path: &Path) -> Option<(Map<String, Value>, bool)> {
         let full_path = self.root.join(path);
         if !full_path.is_file() {
+            self.sources.insert(path.to_owned(), None);
             self.issue(vendor, path, None, IssueKind::ListedFileMissing);
             return None;
         }
         let file = match read_json(&full_path) {
-            Ok(file) => file,
+            Ok(file) => {
+                self.sources.insert(path.to_owned(), Some(file.fingerprint));
+                file
+            }
             Err(err) => {
+                self.sources.insert(path.to_owned(), fs::read(&full_path).ok().map(|bytes| fingerprint(&bytes)));
                 self.issue(vendor, path, None, IssueKind::FileUnreadable(err.to_string()));
                 return None;
             }

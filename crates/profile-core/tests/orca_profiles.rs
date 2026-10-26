@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use profile_core::{
-    IssueKind, KindStats, Origin, PresetKind, RawValue, Repository, Schema, SearchIndex, Severity, Stats, Verdict,
+    IssueKind, KindStats, ManagementPlan, Origin, PresetDraft, PresetKind, RawValue, Repository, Schema, SearchIndex,
+    Severity, Stats, Verdict,
 };
 
 fn profiles_dir() -> Option<PathBuf> {
@@ -25,6 +26,35 @@ fn profiles_dir() -> Option<PathBuf> {
         eprintln!("skipping: set ORCA_PROFILES_DIR to OrcaSlicer's resources/profiles");
     }
     dir
+}
+
+#[test]
+fn management_preview_handles_real_profiles_without_writing_the_checkout() {
+    let Some(repo) = repo_with_schema() else { return };
+    let source = repo
+        .presets()
+        .iter()
+        .find(|preset| {
+            preset.kind == PresetKind::Process
+                && repo.vendor(preset.vendor).name == "Snapmaker"
+                && repo.is_selectable(preset.id)
+                && repo.check_values(preset.id, &preset.params).iter().all(|issue| issue.severity() < Severity::Error)
+        })
+        .expect("a valid Snapmaker process");
+    let name = "M10 readonly preview process";
+    let path = source.path.parent().unwrap().join("M10 readonly preview process.json");
+    assert!(!repo.root().join(&path).exists());
+    let original = std::fs::read_to_string(repo.root().join(&source.path)).unwrap();
+    let plan = ManagementPlan::copy(
+        repo,
+        vec![PresetDraft::copy(repo, source.id, name, "M10 readonly preview process.json")],
+        None,
+    )
+    .unwrap();
+    assert!(plan.is_ready(), "{:?}", plan.notices());
+    assert_eq!(plan.changes().count(), 2);
+    assert!(!repo.root().join(path).exists());
+    assert_eq!(std::fs::read_to_string(repo.root().join(&source.path)).unwrap(), original);
 }
 
 fn repo() -> Option<&'static Repository> {

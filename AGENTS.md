@@ -150,6 +150,16 @@ from the package directory).
   Command-W check one window. Both include unapplied editor text. Quit rechecks the window/file
   scope before discarding because another window may gain edits while confirmation is open.
   GPUI's non-cancellable system shutdown callback cannot protect direct OS termination.
+- Preset management (M10): `profile_core::ManagementPlan` (`manage.rs`) plans create/copy/rename/delete
+  as file snapshots plus blocking or review notices and never writes while planning. Staleness is
+  checked against `Repository`'s content fingerprints of every file it read (any byte change means
+  Reload). `validate` loads only the candidate (unchanged files hard-linked into a temp dir) and diffs
+  its issues against the loaded repository, mapping renamed paths. `apply` takes an in-process
+  per-folder lock (never a lock file), stages in `.orca-profile-studio-transaction-*`, applies
+  removals, then preset files, then manifests, and rolls back on failure. `Document::array_*` edits
+  one array element and keeps all other bytes. The studio's `ManagementView` (`manage.rs`) and the
+  reusable `PresetPicker` (`preset_picker.rs`, selection by file path, pruned to visible rows) run
+  previews and writes on the background executor; writing blocks close, quit, reload and open.
 - Saving writes into the profiles directory, i.e. the OrcaSlicer checkout. UI tests that save use a
   temporary fixture (`editable_fixture` in `app.rs`), never the real profiles.
 - App preferences live in the `SettingsStore` global (`settings.rs`), saved on every change to
@@ -190,8 +200,9 @@ from the package directory).
 
 [docs/roadmap.md](docs/roadmap.md) (Chinese) is the roadmap: stages and status, key design decisions
 of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
-M1–M8; M9 review/fixes are implemented and awaiting user validation in a real window. Next: M10–M13 (new/copy/batch-copy/rename
-presets, batch edit incl. array elements, Chinese UI, Git diff); the G-code viewer and OrcaSlicer sync automation are deferred. When a stage is finished, move it to "已完成" there with its design
+M1–M8; M9 review/fixes and M10 preset management (new/copy/batch copy/rename/delete) are implemented
+and awaiting user validation in a real window. Next: M11–M13 (batch edit incl. array elements, Chinese UI,
+Git diff); the G-code viewer and OrcaSlicer sync automation are deferred. When a stage is finished, move it to "已完成" there with its design
 decisions, and update the status line in README, all in the stage's own commit (see the
 commit rule above for the 提交 column).
 

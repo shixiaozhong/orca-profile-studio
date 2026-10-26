@@ -16,17 +16,19 @@ pub enum AppCommand {
     ShowOverview,
     ShowValues,
     ShowIssues,
+    ManagePresets,
     NewWindow,
     Theme(ThemePreference),
 }
 
 impl AppCommand {
-    const ALL: [AppCommand; 9] = [
+    const ALL: [AppCommand; 10] = [
         AppCommand::Reload,
         AppCommand::Open,
         AppCommand::ShowOverview,
         AppCommand::ShowValues,
         AppCommand::ShowIssues,
+        AppCommand::ManagePresets,
         AppCommand::NewWindow,
         AppCommand::Theme(ThemePreference::System),
         AppCommand::Theme(ThemePreference::Light),
@@ -40,6 +42,7 @@ impl AppCommand {
             AppCommand::ShowOverview => "Show preset overview".to_owned(),
             AppCommand::ShowValues => "Show preset values".to_owned(),
             AppCommand::ShowIssues => "Show issues".to_owned(),
+            AppCommand::ManagePresets => "Manage presets".to_owned(),
             AppCommand::NewWindow => "New window…".to_owned(),
             AppCommand::Theme(theme) => format!("Theme: {}", theme.label()),
         }
@@ -52,6 +55,7 @@ impl AppCommand {
             AppCommand::ShowOverview => IconName::Info,
             AppCommand::ShowValues => IconName::Table,
             AppCommand::ShowIssues => IconName::TriangleAlert,
+            AppCommand::ManagePresets => IconName::Files,
             AppCommand::NewWindow => IconName::AppWindow,
             AppCommand::Theme(_) => IconName::Palette,
         }
@@ -64,6 +68,7 @@ impl AppCommand {
             AppCommand::Reload
             | AppCommand::Open
             | AppCommand::ShowIssues
+            | AppCommand::ManagePresets
             | AppCommand::NewWindow
             | AppCommand::Theme(_) => true,
         }
