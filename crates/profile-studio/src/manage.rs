@@ -28,13 +28,13 @@ enum Operation {
 }
 impl Operation {
     const ALL: [Self; 5] = [Self::New, Self::Copy, Self::BatchCopy, Self::Rename, Self::Delete];
-    fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            Self::New => "New preset",
-            Self::Copy => "Copy preset",
-            Self::BatchCopy => "Copy group",
-            Self::Rename => "Rename preset",
-            Self::Delete => "Delete presets",
+            Self::New => t!("manage.new"),
+            Self::Copy => t!("manage.copy"),
+            Self::BatchCopy => t!("manage.copy_group"),
+            Self::Rename => t!("manage.rename"),
+            Self::Delete => t!("manage.delete"),
         }
     }
 }
@@ -81,8 +81,8 @@ impl ManagementView {
         let operation_select = cx.new(|cx| {
             SelectState::new(SearchableVec::new(choices), Some(IndexPath::new(1)), window, cx).searchable(true)
         });
-        let name = cx.new(|cx| InputState::new(window, cx).placeholder("New preset name"));
-        let file = cx.new(|cx| InputState::new(window, cx).placeholder("Generated from the new name"));
+        let name = cx.new(|cx| InputState::new(window, cx).placeholder(t!("manage.name_placeholder")));
+        let file = cx.new(|cx| InputState::new(window, cx).placeholder(t!("manage.file_placeholder")));
         let from = cx.new(|cx| InputState::new(window, cx).placeholder("0.4 nozzle"));
         let to = cx.new(|cx| InputState::new(window, cx).placeholder("0.2 nozzle"));
         let overrides = cx.new(|cx| TextareaState::new(window, cx));
@@ -142,6 +142,22 @@ impl ManagementView {
         }
     }
 
+    pub fn refresh_language(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.picker.update(cx, |picker, cx| picker.refresh_language(window, cx));
+        let choices = Operation::ALL
+            .iter()
+            .enumerate()
+            .map(|(value, op)| Choice { value, title: op.label().into() })
+            .collect::<Vec<_>>();
+        self.operation_select.update(cx, |state, cx| {
+            state.set_items(SearchableVec::new(choices), window, cx);
+            state.set_selected_value(&(self.operation as usize), window, cx);
+        });
+        self.name.update(cx, |state, cx| state.set_placeholder(t!("manage.name_placeholder"), window, cx));
+        self.file.update(cx, |state, cx| state.set_placeholder(t!("manage.file_placeholder"), window, cx));
+        cx.notify();
+    }
+
     pub fn refresh(&mut self, catalog: &Arc<Catalog>, window: &mut Window, cx: &mut Context<Self>) {
         self.catalog = catalog.clone();
         self.picker.update(cx, |picker, cx| picker.refresh(catalog, window, cx));
@@ -197,14 +213,14 @@ impl ManagementView {
                 draft
             };
             let one = || {
-                if ids.len() == 1 { Ok(ids[0]) } else { Err("Select exactly one preset for this operation".to_owned()) }
+                if ids.len() == 1 { Ok(ids[0]) } else { Err(t!("manage.select_one")) }
             };
             let result = match op {
                 Operation::New => {
                     let vendor = vendor
                         .map(|ix| repo.vendors()[ix].id)
                         .or_else(|| ids.first().map(|id| repo.preset(*id).vendor))
-                        .ok_or_else(|| "Choose a vendor or select a parent preset".to_owned())?;
+                        .ok_or_else(|| t!("manage.choose_vendor"))?;
                     let mut draft = PresetDraft::new(vendor, kind, name, file);
                     if inherit {
                         draft = draft.with_parent(one()?);
@@ -249,7 +265,7 @@ impl ManagementView {
                 this.busy = false;
                 this.task = None;
                 if this.generation != generation {
-                    this.status = Some("Inputs changed while preparing the preview. Preview again.".into());
+                    this.status = Some(t!("manage.stale_input"));
                     cx.notify();
                     return;
                 }
@@ -278,15 +294,15 @@ impl ManagementView {
                 let color = if notice.is_blocking() { cx.theme().danger } else { cx.theme().warning };
                 content = content.child(div().text_color(color).child(format!(
                     "{}: {}",
-                    if notice.is_blocking() { "Cannot apply" } else { "Review" },
+                    if notice.is_blocking() { t!("manage.blocked") } else { t!("manage.review") },
                     notice.message()
                 )));
             }
             for change in plan.changes() {
                 let action = match (change.before(), change.after()) {
-                    (None, Some(_)) => "Create",
-                    (Some(_), None) => "Delete",
-                    _ => "Update",
+                    (None, Some(_)) => t!("manage.create"),
+                    (Some(_), None) => t!("manage.delete_file"),
+                    _ => t!("manage.update"),
                 };
                 content = content.child(div().child(format!("{action} {}", change.path().display())));
                 for line in change_summary(change.before(), change.after()) {
@@ -297,24 +313,20 @@ impl ManagementView {
             let plan = plan.clone();
             let ready = plan.is_ready();
             dialog
-                .title(if ready { "Apply these file changes?" } else { "Resolve the preview issues" })
+                .title(if ready { t!("manage.confirm") } else { t!("manage.resolve") })
                 .width(px(760.))
                 .confirm()
-                .description(if ready {
-                    "This writes the listed files and vendor manifests. Files are rechecked before writing."
-                } else {
-                    "No files have been written. Close this preview and adjust the selection or values."
-                })
+                .description(if ready { t!("manage.confirm_help") } else { t!("manage.blocked_help") })
                 .child(
                     div()
                         .id("manage-preview")
                         .test_support()
-                        .aria_label(format!("{} file changes", plan.changes().count()))
+                        .aria_label(t!("manage.file_count", arg0 = plan.changes().count()))
                         .max_h(window.viewport_size().height * 0.5)
                         .overflow_y_scroll()
                         .child(content),
                 )
-                .ok_text(if ready { "Apply changes" } else { "Back" })
+                .ok_text(if ready { t!("manage.apply") } else { t!("manage.back") })
                 .ok_variant(if ready && destructive { ButtonVariant::Danger } else { ButtonVariant::Primary })
                 .on_ok(move |_, window, cx| {
                     if ready {
@@ -322,7 +334,7 @@ impl ManagementView {
                             if view.generation == generation {
                                 view.apply(plan.clone(), window, cx);
                             } else {
-                                view.status = Some("The selection or profiles changed. Create a new preview.".into());
+                                view.status = Some(t!("manage.stale"));
                                 cx.notify();
                             }
                         });
@@ -350,10 +362,14 @@ impl ManagementView {
                 crate::feedback::clear("manage-writing", cx);
                 match result {
                     Ok(()) => {
-                        this.status = Some(format!("Applied changes to {count} file(s)."));
+                        this.status = Some(if count == 1 {
+                            t!("manage.applied.one", count = count)
+                        } else {
+                            t!("manage.applied.other", count = count)
+                        });
                         cx.emit(ManagementEvent::Applied);
                     }
-                    Err(err) => this.status = Some(format!("Could not apply changes: {err}")),
+                    Err(err) => this.status = Some(t!("manage.failed", err = err)),
                 }
                 cx.notify();
             })
@@ -366,11 +382,11 @@ impl ManagementView {
 fn parse_overrides(text: &str) -> Result<BTreeMap<String, RawValue>, String> {
     let mut values = BTreeMap::new();
     for (ix, line) in text.lines().enumerate().filter(|(_, line)| !line.trim().is_empty()) {
-        let (key, value) = line.split_once('=').ok_or_else(|| format!("Override line {} needs key = value", ix + 1))?;
+        let (key, value) = line.split_once('=').ok_or_else(|| t!("manage.missing_equals", arg0 = ix + 1))?;
         let key = key.trim();
         let value = value.trim();
         if key.is_empty() {
-            return Err(format!("Override line {} has no key", ix + 1));
+            return Err(t!("manage.missing_key", arg0 = ix + 1));
         }
         let raw = if value.starts_with('[') || value.starts_with('"') {
             serde_json::from_str::<RawValue>(value).map_err(|err| format!("{key}: {err}"))?
@@ -378,7 +394,7 @@ fn parse_overrides(text: &str) -> Result<BTreeMap<String, RawValue>, String> {
             RawValue::Str(value.into())
         };
         if values.insert(key.into(), raw).is_some() {
-            return Err(format!("Override {key} occurs more than once"));
+            return Err(t!("manage.duplicate_key", key = key));
         }
     }
     Ok(values)
@@ -407,10 +423,10 @@ fn change_summary(before: Option<&str>, after: Option<&str>) -> Vec<String> {
                     added.push(item);
                 }
             }
-            lines.extend(removed.iter().map(|item| format!("{key}: remove {item}")));
-            lines.extend(added.iter().map(|item| format!("{key}: add {item}")));
+            lines.extend(removed.iter().map(|item| t!("manage.remove_item", key = key, item = item)));
+            lines.extend(added.iter().map(|item| t!("manage.add_item", key = key, item = item)));
         } else {
-            let show = |value: Option<&serde_json::Value>| value.map_or("(missing)".into(), |v| v.to_string());
+            let show = |value: Option<&serde_json::Value>| value.map_or(t!("common.missing"), |v| v.to_string());
             lines.push(format!("{key}: {} → {}", show(old.get(key)), show(new.get(key))));
         }
     }
@@ -422,19 +438,24 @@ impl Render for ManagementView {
         let operation = self.operation;
         let single = matches!(operation, Operation::New | Operation::Copy | Operation::Rename);
         let copying = matches!(operation, Operation::Copy | Operation::BatchCopy);
-        let field = |label: &'static str, id: &'static str, input: &Entity<InputState>| {
+        let field = |label: String, id: &'static str, input: &Entity<InputState>| {
             v_flex()
                 .gap_1()
-                .child(div().text_sm().child(label))
+                .child(div().text_sm().child(label.clone()))
                 .child(Input::new(input).id(id).aria_label(label).small().w_64())
         };
-        let mut form = v_flex().gap_3().p_3().child(div().w_48().h_8().child(
-            Select::new(&self.operation_select).id("manage-operation").accessibility_label("Preset operation").small(),
-        ));
+        let mut form = v_flex().gap_3().p_3().child(
+            div().w_48().h_8().child(
+                Select::new(&self.operation_select)
+                    .id("manage-operation")
+                    .accessibility_label(t!("manage.operation"))
+                    .small(),
+            ),
+        );
         if single {
             form = form.child(
-                h_flex().gap_3().flex_wrap().child(field("New name", "manage-name", &self.name)).child(field(
-                    "File name (.json)",
+                h_flex().gap_3().flex_wrap().child(field(t!("manage.name"), "manage-name", &self.name)).child(field(
+                    t!("manage.filename"),
                     "manage-file",
                     &self.file,
                 )),
@@ -442,17 +463,17 @@ impl Render for ManagementView {
         }
         if operation == Operation::BatchCopy {
             form = form.child(
-                h_flex().gap_3().flex_wrap().child(field("Replace in names", "manage-from", &self.from)).child(field(
-                    "With",
-                    "manage-to",
-                    &self.to,
-                )),
+                h_flex()
+                    .gap_3()
+                    .flex_wrap()
+                    .child(field(t!("manage.replace"), "manage-from", &self.from))
+                    .child(field(t!("manage.with"), "manage-to", &self.to)),
             );
         }
         if matches!(operation, Operation::New | Operation::Copy) {
             form = form.child(
                 Checkbox::new("manage-inherit-source")
-                    .label("Inherit the selected preset")
+                    .label(t!("manage.inherit"))
                     .checked(self.inherit_source)
                     .on_click(cx.listener(|this, value: &bool, _, cx| {
                         this.inherit_source = *value;
@@ -463,7 +484,7 @@ impl Render for ManagementView {
         if copying {
             form = form.child(
                 Checkbox::new("manage-keep-identifiers")
-                    .label("Keep source setting_id and filament_id (review in preview)")
+                    .label(t!("manage.keep_ids"))
                     .checked(self.keep_identifiers)
                     .on_click(cx.listener(|this, value: &bool, _, cx| {
                         this.keep_identifiers = *value;
@@ -474,7 +495,7 @@ impl Render for ManagementView {
         if operation == Operation::BatchCopy {
             form = form.child(
                 Checkbox::new("manage-rewrite-arrays")
-                    .label("Also replace names in compatible_printers and compatible_prints")
+                    .label(t!("manage.replace_references"))
                     .checked(self.rewrite_arrays)
                     .on_click(cx.listener(|this, value: &bool, _, cx| {
                         this.rewrite_arrays = *value;
@@ -485,7 +506,7 @@ impl Render for ManagementView {
         if operation == Operation::Rename {
             form = form.child(
                 Checkbox::new("manage-remember-name")
-                    .label("Record the previous name in renamed_from")
+                    .label(t!("manage.record_name"))
                     .checked(self.remember_name)
                     .on_click(cx.listener(|this, value: &bool, _, cx| {
                         this.remember_name = *value;
@@ -497,23 +518,19 @@ impl Render for ManagementView {
             form = form.child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_sm().child("Set values on the new presets"))
-                    .child(div().text_xs().text_color(cx.theme().muted_foreground).child(
-                        "One key = value per line. Arrays use [\"value\", \"value\"]. Identifiers can be set here too.",
-                    ))
+                    .child(div().text_sm().child(t!("manage.values")))
+                    .child(div().text_xs().text_color(cx.theme().muted_foreground).child(t!("manage.values_help")))
                     .child(
                         div()
                             .id("manage-overrides")
                             .test_support()
-                            .aria_label("Override values")
-                            .child(Textarea::new(&self.overrides).aria_label("Values for new presets").h_24()),
+                            .aria_label(t!("manage.overrides"))
+                            .child(Textarea::new(&self.overrides).aria_label(t!("manage.new_values")).h_24()),
                     ),
             );
         }
         if operation == Operation::Delete {
-            form = form.child(div().text_sm().child(
-                "The preview lists references. Include dependent children in the selection; name-list references are removed only when you confirm.",
-            ));
+            form = form.child(div().text_sm().child(t!("manage.delete_help")));
         }
 
         v_flex()
@@ -525,11 +542,11 @@ impl Render for ManagementView {
                     .gap_3()
                     .child(
                         Button::new("close-management")
-                            .label("Back to browser")
+                            .label(t!("common.back_browser"))
                             .small()
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(ManagementEvent::Close))),
                     )
-                    .child(div().text_lg().child("Manage presets")),
+                    .child(div().text_lg().child(t!("common.manage_presets"))),
             )
             .child(div().h(rems(17.)).max_h(relative(0.45)).flex_shrink_0().child(self.picker.clone()))
             .child(div().id("manage-form").test_support().flex_1().min_h_0().overflow_y_scroll().child(form))
@@ -541,11 +558,11 @@ impl Render for ManagementView {
                     .gap_2()
                     .child(
                         Button::new("manage-preview-button")
-                            .label("Preview changes…")
+                            .label(t!("manage.preview"))
                             .disabled(self.busy)
                             .on_click(cx.listener(|this, _, window, cx| this.preview(window, cx))),
                     )
-                    .when(self.busy, |line| line.child(Spinner::new().small()).child("Preparing or writing changes")),
+                    .when(self.busy, |line| line.child(Spinner::new().small()).child(t!("manage.busy"))),
             )
     }
 }
@@ -557,6 +574,7 @@ mod tests {
 
     #[test]
     fn override_input_preserves_value_shapes_and_rejects_ambiguous_lines() {
+        let _locale = crate::i18n::test_locale();
         let values =
             parse_overrides("wall_loops = 3\nnozzle_diameter = [\"0.2\"]\nprinter_notes = \"one\\ntwo\"").unwrap();
         assert_eq!(values["wall_loops"], RawValue::Str("3".into()));
@@ -568,6 +586,7 @@ mod tests {
 
     #[test]
     fn manifest_preview_only_lists_changed_entries() {
+        let _locale = crate::i18n::test_locale();
         let before = r#"{"process_list":[{"name":"kept"},{"name":"old"}],"version":"1.0"}"#;
         let after = r#"{"process_list":[{"name":"kept"},{"name":"new"}],"version":"1.0"}"#;
         let lines = change_summary(Some(before), Some(after));

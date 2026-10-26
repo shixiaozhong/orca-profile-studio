@@ -7,6 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
+use crate::i18n::LanguagePreference;
 use gpui_kit::component::{Theme, ThemeMode};
 use gpui_kit::*;
 use serde::{Deserialize, Serialize};
@@ -22,11 +23,11 @@ pub enum ThemePreference {
 }
 
 impl ThemePreference {
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            ThemePreference::System => "System",
-            ThemePreference::Light => "Light",
-            ThemePreference::Dark => "Dark",
+            ThemePreference::System => t!("settings.system"),
+            ThemePreference::Light => t!("settings.light"),
+            ThemePreference::Dark => t!("settings.dark"),
         }
     }
 }
@@ -35,6 +36,7 @@ impl ThemePreference {
 #[serde(default)]
 pub struct Settings {
     pub theme: ThemePreference,
+    pub language: LanguagePreference,
     /// The directory loaded last.
     pub profiles_dir: Option<PathBuf>,
     /// Width of the navigation tree, in pixels.
@@ -95,6 +97,7 @@ pub fn init(path: Option<PathBuf>, cx: &mut App) {
     let (path, settings, load_error) = open(path);
     cx.set_global(SettingsStore { path, settings, load_error, save_failed: false });
     apply_theme(None, cx);
+    crate::i18n::apply(get(cx).language);
 }
 
 /// Loads `path`; returns where to save (`None` disables saving), the settings and a load error.
@@ -107,18 +110,11 @@ fn open(path: Option<PathBuf>) -> (Option<PathBuf>, Settings, Option<String>) {
     let backup = path.with_extension("json.invalid");
     match fs::copy(&path, &backup) {
         Ok(_) => {
-            let message = format!(
-                "{}: {err}. Using default settings; the unreadable file was copied to {}.",
-                path.display(),
-                backup.display()
-            );
+            let message = t!("settings.invalid_backup", arg0 = path.display(), err = err, arg1 = backup.display());
             (Some(path), Settings::default(), Some(message))
         }
         Err(_) => {
-            let message = format!(
-                "{}: {err}. Using default settings without saving them, so the file is left as it is.",
-                path.display()
-            );
+            let message = t!("settings.invalid_readonly", arg0 = path.display(), err = err);
             (None, Settings::default(), Some(message))
         }
     }
@@ -127,7 +123,7 @@ fn open(path: Option<PathBuf>) -> (Option<PathBuf>, Settings, Option<String>) {
 /// Called while creating the first view, so feedback is delivered after its Root exists.
 pub fn report_load_error(cx: &mut App) {
     if let Some(message) = cx.global_mut::<SettingsStore>().load_error.take() {
-        crate::feedback::error("settings-load", "Could not read settings", message, cx);
+        crate::feedback::error("settings-load", t!("settings.load_error"), message, cx);
     }
 }
 
@@ -153,12 +149,9 @@ pub fn update(cx: &mut App, change: impl FnOnce(&mut Settings)) {
             }
         }
         Err(err) => {
-            let message = format!(
-                "{}: {err}. Changes apply to this session. Check the folder's permissions and retry the setting.",
-                path.display()
-            );
+            let message = t!("settings.write_failed", arg0 = path.display(), err = err);
             store.save_failed = true;
-            crate::feedback::error("settings-save", "Could not save settings", message, cx);
+            crate::feedback::error("settings-save", t!("settings.save_error"), message, cx);
         }
     }
 }
@@ -183,12 +176,14 @@ mod tests {
 
     #[test]
     fn round_trips_and_tolerates_bad_files() {
+        let _locale = crate::i18n::test_locale();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nested/settings.json");
         assert_eq!(Settings::load(&path).unwrap(), Settings::default(), "a missing file gives defaults");
 
         let settings = Settings {
             theme: ThemePreference::Dark,
+            language: crate::i18n::LanguagePreference::Chinese,
             profiles_dir: Some("/profiles".into()),
             sidebar_width: Some(300.),
             issues_open: true,
@@ -207,6 +202,7 @@ mod tests {
 
     #[test]
     fn keeps_an_unreadable_file_before_saving_over_it() {
+        let _locale = crate::i18n::test_locale();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
         std::fs::write(&path, "{ not json").unwrap();

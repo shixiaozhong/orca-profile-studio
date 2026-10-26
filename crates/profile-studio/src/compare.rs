@@ -36,15 +36,18 @@ impl SelectItem for PresetChoice {
 struct DiffRow {
     key: String,
     category: String,
+    /// Whether the schema defines the key; rows outside it sort last.
+    in_schema: bool,
     label: String,
     left: Vec<Layer>,
     right: Vec<Layer>,
     different: bool,
+    search_labels: String,
 }
 
 impl DiffRow {
     fn cell(&self, column: usize) -> String {
-        let value = |layers: &[Layer]| layers.first().map_or("(missing)", |layer| layer.value.as_str()).to_owned();
+        let value = |layers: &[Layer]| layers.first().map_or_else(|| t!("common.missing"), |layer| layer.value.clone());
         let source = |layers: &[Layer]| layers.first().map_or_else(|| "—".into(), |layer| layer.source.label());
         match column {
             0 => self.category.clone(),
@@ -97,39 +100,42 @@ fn build_rows(catalog: &Catalog, edits: &Edits, left: usize, right: usize) -> Ve
         .map(|diff| {
             let different = diff.is_different();
             let option = repo.schema().and_then(|schema| schema.option(diff.key));
-            let unit = option.map_or("", |option| option.sidetext.as_str());
+            let unit = catalog.translate(option.map_or("", |option| option.sidetext.as_str()));
             DiffRow {
                 key: diff.key.to_owned(),
                 category: option
-                    .map_or(
-                        "Not in schema",
-                        |option| {
-                            if option.category.is_empty() { "Other" } else { &option.category }
-                        },
-                    )
+                    .map_or(t!("common.not_in_schema"), |option| {
+                        if option.category.is_empty() {
+                            t!("common.other")
+                        } else {
+                            catalog.translate(&option.category)
+                        }
+                    })
                     .to_owned(),
-                label: option.map_or(diff.key, |option| option.display_label()).to_owned(),
-                left: layers(left_id, diff.left, unit),
-                right: layers(right_id, diff.right, unit),
+                in_schema: option.is_some(),
+                label: catalog.translate(option.map_or(diff.key, |option| option.display_label())),
+                left: layers(left_id, diff.left, &unit),
+                right: layers(right_id, diff.right, &unit),
                 different,
+                search_labels: catalog.search_labels(option),
             }
         })
         .collect();
-    rows.sort_by_key(|row| {
-        (row.category == "Not in schema", row.category.clone(), row.label.to_lowercase(), row.key.clone())
-    });
+    rows.sort_by_key(|row| (!row.in_schema, row.category.clone(), row.label.to_lowercase(), row.key.clone()));
     rows
 }
 
-const COLUMNS: [(&str, &str, f32); 7] = [
-    ("category", "Category", 130.),
-    ("label", "Option", 190.),
-    ("key", "Key", 200.),
-    ("left", "Left value", 200.),
-    ("right", "Right value", 200.),
-    ("left-source", "Left source", 180.),
-    ("right-source", "Right source", 180.),
-];
+fn columns() -> [(&'static str, String, f32); 7] {
+    [
+        ("category", t!("common.category"), 130.),
+        ("label", t!("common.option"), 190.),
+        ("key", t!("common.key"), 200.),
+        ("left", t!("compare.left_value"), 200.),
+        ("right", t!("compare.right_value"), 200.),
+        ("left-source", t!("compare.left_source"), 180.),
+        ("right-source", t!("compare.right_source"), 180.),
+    ]
+}
 
 #[derive(Default)]
 pub struct DiffDelegate {
@@ -153,7 +159,9 @@ impl DiffDelegate {
             .enumerate()
             .filter(|(_, row)| {
                 (!only_differences || row.different)
-                    && [&row.key, &row.label, &row.category].iter().any(|text| text.to_lowercase().contains(&query))
+                    && [&row.key, &row.label, &row.category, &row.search_labels]
+                        .iter()
+                        .any(|text| text.to_lowercase().contains(&query))
             })
             .map(|(index, _)| index)
             .collect();
@@ -193,13 +201,13 @@ fn restore_selection(table: &mut TableState<DiffDelegate>, cx: &mut Context<Tabl
 
 impl TableDelegate for DiffDelegate {
     fn columns_count(&self, _: &App) -> usize {
-        COLUMNS.len()
+        columns().len()
     }
     fn rows_count(&self, _: &App) -> usize {
         self.visible.len()
     }
     fn column(&self, index: usize, _: &App) -> Column {
-        let (key, label, width) = COLUMNS[index];
+        let (key, label, width) = columns()[index].clone();
         Column::new(key, label).width(px(width)).sortable()
     }
     fn perform_sort(
@@ -272,6 +280,7 @@ impl CompareView {
                 picker.set_selected_index(None, window, cx);
             }
         });
+        self.search.update(cx, |state, cx| state.set_placeholder(t!("values.filter"), window, cx));
         self.rebuild(cx);
     }
 
@@ -295,7 +304,7 @@ impl CompareView {
             .collect();
         choices.sort_by(|a, b| a.title.cmp(&b.title));
         let picker = cx.new(|cx| SelectState::new(SearchableVec::new(choices), None, window, cx).searchable(true));
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Filter by key, option or category"));
+        let search = cx.new(|cx| InputState::new(window, cx).placeholder(t!("values.filter")));
         let table = cx.new(|cx| TableState::new(DiffDelegate::default(), window, cx).row_selectable(true));
         let subscriptions = vec![
             cx.subscribe_in(&picker, window, |this, _, event: &SelectEvent<SearchableVec<PresetChoice>>, _, cx| {
@@ -354,9 +363,9 @@ impl CompareView {
         cx.notify();
     }
 
-    fn side_title(&self, side: &str, index: usize, cx: &App) -> String {
+    fn side_title(&self, side: String, index: usize, cx: &App) -> String {
         let preset = &self.catalog.repo.presets()[index];
-        let dirty = if self.edits.read(cx).is_dirty(index) { " (unsaved changes)" } else { "" };
+        let dirty = if self.edits.read(cx).is_dirty(index) { t!("compare.unsaved") } else { String::new() };
         format!("{side}: {} / {}{dirty}", self.catalog.repo.vendor(preset.vendor).name, preset.name())
     }
 
@@ -365,19 +374,19 @@ impl CompareView {
         let row =
             table.delegate().selected.as_ref().and_then(|key| table.delegate().rows.iter().find(|row| row.key == *key));
         let Some(row) = row else {
-            return div().p_3().text_sm().child("Select a key to inspect both inheritance chains.").into_any_element();
+            return div().p_3().text_sm().child(t!("compare.select_hint")).into_any_element();
         };
-        let side = |name: &'static str, layers: &[Layer]| {
+        let side = |id: &'static str, name: String, layers: &[Layer]| {
             v_flex()
                 .flex_1()
                 .min_w_0()
                 .gap_1()
                 .child(div().font_semibold().child(name))
-                .when(layers.is_empty(), |panel| panel.child("(missing)"))
+                .when(layers.is_empty(), |panel| panel.child(t!("common.missing")))
                 .children(layers.iter().enumerate().map(|(index, layer)| {
                     let text = format!("{}: {}", layer.source.label(), layer.value);
                     div()
-                        .id((name, index))
+                        .id((id, index))
                         .test_support()
                         .aria_label(text.clone())
                         .when(index > 0, |line| line.text_color(cx.theme().muted_foreground))
@@ -400,9 +409,13 @@ impl CompareView {
             .child(div().font_semibold().child(format!(
                 "{} · {}",
                 row.key,
-                if row.different { "Different values" } else { "Equal values" }
+                if row.different { t!("compare.different") } else { t!("compare.equal") }
             )))
-            .child(h_flex().items_start().gap_4().child(side("Left", &row.left)).child(side("Right", &row.right)))
+            .child(h_flex().items_start().gap_4().child(side("Left", t!("compare.left"), &row.left)).child(side(
+                "Right",
+                t!("compare.right"),
+                &row.right,
+            )))
             .into_any_element()
     }
 }
@@ -410,25 +423,25 @@ impl CompareView {
 impl Render for CompareView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let delegate = self.table.read(cx).delegate();
-        let count = format!(
-            "{} shown · {} differences · {} keys",
-            delegate.visible.len(),
-            delegate.rows.iter().filter(|row| row.different).count(),
-            delegate.rows.len()
+        let count = t!(
+            "compare.count",
+            arg0 = delegate.visible.len(),
+            arg1 = delegate.rows.iter().filter(|row| row.different).count(),
+            arg2 = delegate.rows.len()
         );
         let empty = delegate.visible.is_empty();
         let empty_message = if self.right.is_none() {
-            "Choose a preset above to start comparing."
+            t!("compare.start")
         } else if self.search.read(cx).value().trim().is_empty() && self.only_differences {
-            "No differing values. Turn off Only differences to inspect their sources."
+            t!("compare.no_differences")
         } else {
-            "No keys match the current filters."
+            t!("compare.empty")
         };
         let picker = Select::new(&self.picker)
             .id("compare-picker")
-            .accessibility_label("Compare with preset")
-            .placeholder("Choose a preset of the same kind…")
-            .search_placeholder("Search vendor or preset")
+            .accessibility_label(t!("compare.preset"))
+            .placeholder(t!("compare.choose"))
+            .search_placeholder(t!("compare.search"))
             .w_full()
             .menu_width(rems(37.5));
         let filters = h_flex()
@@ -437,24 +450,24 @@ impl Render for CompareView {
             .child(
                 Input::new(&self.search)
                     .id("compare-search")
-                    .aria_label("Filter comparison")
+                    .aria_label(t!("compare.filter"))
                     .small()
                     .cleanable(true)
                     .w_64(),
             )
-            .child(Checkbox::new("only-differences").label("Only differences").checked(self.only_differences).on_click(
-                cx.listener(|this, checked: &bool, _, cx| {
-                    this.only_differences = *checked;
-                    this.apply_filter(cx);
-                }),
-            ))
+            .child(
+                Checkbox::new("only-differences")
+                    .label(t!("compare.only_differences"))
+                    .checked(self.only_differences)
+                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                        this.only_differences = *checked;
+                        this.apply_filter(cx);
+                    })),
+            )
             .child(div().id("compare-count").test_support().aria_label(count.clone()).text_sm().child(count));
-        const NOTE: &str = concat!(
-            "Read-only · Includes unsaved changes. Saving refreshes inherited values. ",
-            "String/array differences are included."
-        );
-        let left_title = self.side_title("Left", self.left, cx);
-        let right_title = self.right.map(|right| self.side_title("Right", right, cx));
+        let note = t!("compare.note");
+        let left_title = self.side_title(t!("compare.left"), self.left, cx);
+        let right_title = self.right.map(|right| self.side_title(t!("compare.right"), right, cx));
         v_flex()
             .size_full()
             .gap_2()
@@ -474,7 +487,7 @@ impl Render for CompareView {
                 )
             })
             .child(filters)
-            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(NOTE))
+            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(note))
             .child(
                 div()
                     .flex_1()
@@ -485,7 +498,7 @@ impl Render for CompareView {
                             div()
                                 .id("compare-empty")
                                 .test_support()
-                                .aria_label(empty_message)
+                                .aria_label(empty_message.clone())
                                 .p_3()
                                 .text_sm()
                                 .child(empty_message),

@@ -29,8 +29,9 @@ pub fn confirm(
                 info.path.display()
             )));
             for change in state.session(preset).unwrap().pending() {
-                let show =
-                    |value: &Option<profile_core::RawValue>| value.as_ref().map_or("(inherited)".into(), format_value);
+                let show = |value: &Option<profile_core::RawValue>| {
+                    value.as_ref().map_or(t!("common.inherited"), format_value)
+                };
                 panel = panel.child(div().pl_3().child(format!(
                     "{}: {} → {}",
                     change.key,
@@ -42,21 +43,25 @@ pub fn confirm(
         let edits = edits.clone();
         let on_saved = on_saved.clone();
         dialog
-            .title("Save changes to disk?")
+            .title(t!("save.title"))
             .width(px(640.))
             .confirm()
-            .description("Only applied edits are included. Existing file formatting is preserved.")
+            .description(t!("save.description"))
             .child(
                 div()
                     .id("save-preview")
                     .test_support()
-                    .aria_label("Changes to save")
+                    .aria_label(t!("save.preview"))
                     .max_h(rems(24.))
                     .overflow_y_scroll()
                     .text_sm()
                     .child(panel),
             )
-            .ok_text(format!("Save {count} file(s)"))
+            .ok_text(if count == 1 {
+                t!("save.confirm.one", count = count)
+            } else {
+                t!("save.confirm.other", count = count)
+            })
             .on_ok(move |_, _, cx| {
                 let catalog = edits.read(cx).catalog().clone();
                 let (paths, error) = edits.update(cx, |edits, cx| {
@@ -68,14 +73,31 @@ pub fn confirm(
                     result
                 });
                 let status = match error {
-                    None => (true, format!("Saved {} file(s).", paths.len())),
+                    None => (
+                        true,
+                        if paths.len() == 1 {
+                            t!("save.saved.one", arg0 = paths.len())
+                        } else {
+                            t!("save.saved.other", arg0 = paths.len())
+                        },
+                    ),
                     Some((preset, err)) => (
                         false,
-                        format!(
-                            "Saved {} file(s). Could not save {}: {err}",
-                            paths.len(),
-                            catalog.repo.presets()[preset].name()
-                        ),
+                        if paths.len() == 1 {
+                            t!(
+                                "save.failed.one",
+                                arg0 = paths.len(),
+                                arg1 = catalog.repo.presets()[preset].name(),
+                                err = err
+                            )
+                        } else {
+                            t!(
+                                "save.failed.other",
+                                arg0 = paths.len(),
+                                arg1 = catalog.repo.presets()[preset].name(),
+                                err = err
+                            )
+                        },
                     ),
                 };
                 on_saved(status, cx);

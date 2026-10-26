@@ -1,0 +1,1168 @@
+_version: 2
+language.system:
+  en: System
+  zh-CN: 跟随系统
+language.english:
+  en: English
+  zh-CN: English
+language.chinese:
+  en: 中文
+  zh-CN: 中文
+language.command:
+  en: "Language: %{language}"
+  zh-CN: "语言：%{language}"
+palette.theme:
+  en: "Theme: %{arg0}"
+  zh-CN: "主题：%{arg0}"
+palette.presets:
+  en: "Presets (%{arg0})"
+  zh-CN: "预设（%{arg0}）"
+palette.options:
+  en: "Options (%{arg0})"
+  zh-CN: "配置项（%{arg0}）"
+palette.values_group:
+  en: "Values set in files (%{arg0})"
+  zh-CN: "文件中的值（%{arg0}）"
+palette.reload:
+  en: "Reload profiles from disk"
+  zh-CN: "从磁盘重新加载预设"
+palette.open:
+  en: "Open profiles directory…"
+  zh-CN: "打开预设目录…"
+palette.overview:
+  en: "Show preset overview"
+  zh-CN: "显示预设概览"
+palette.values:
+  en: "Show preset values"
+  zh-CN: "显示预设参数"
+palette.issues:
+  en: "Show issues"
+  zh-CN: "显示问题"
+common.batch_edit:
+  en: "Batch edit"
+  zh-CN: "批量编辑"
+common.manage_presets:
+  en: "Manage presets"
+  zh-CN: "管理预设"
+palette.new_window:
+  en: "New window…"
+  zh-CN: "新建窗口…"
+palette.commands:
+  en: "Commands"
+  zh-CN: "命令"
+common.dismiss:
+  en: "Dismiss"
+  zh-CN: "关闭通知"
+picker.select_preset:
+  en: "Select %{arg0}"
+  zh-CN: "选择 %{arg0}"
+picker.count:
+  en: "%{arg0} selected · %{arg1} shown%{arg2}"
+  zh-CN: "已选 %{arg0} 项 · 显示 %{arg1} 项%{arg2}"
+common.select:
+  en: "Select"
+  zh-CN: "选择"
+common.vendor:
+  en: "Vendor"
+  zh-CN: "厂商"
+common.preset:
+  en: "Preset"
+  zh-CN: "预设"
+common.inherits:
+  en: "Inherits"
+  zh-CN: "继承自"
+common.file:
+  en: "File"
+  zh-CN: "文件"
+common.all_vendors:
+  en: "All vendors"
+  zh-CN: "所有厂商"
+picker.search:
+  en: "Search presets"
+  zh-CN: "搜索预设"
+picker.model:
+  en: "Filter by printer model"
+  zh-CN: "按打印机型号筛选"
+picker.issue:
+  en: "Filter by issue code"
+  zh-CN: "按问题代码筛选"
+picker.filtering:
+  en: " · filtering models"
+  zh-CN: " · 正在筛选型号"
+picker.kind:
+  en: "Preset kind"
+  zh-CN: "预设类型"
+picker.vendor:
+  en: "Vendor filter"
+  zh-CN: "厂商筛选"
+picker.search_label:
+  en: "Search presets to manage"
+  zh-CN: "搜索要操作的预设"
+picker.model_label:
+  en: "Printer model filter"
+  zh-CN: "打印机型号筛选"
+picker.issue_label:
+  en: "Issue code filter"
+  zh-CN: "问题代码筛选"
+picker.select_shown:
+  en: "Select shown"
+  zh-CN: "全选当前结果"
+picker.clear:
+  en: "Clear selection"
+  zh-CN: "取消选择"
+batch.summary:
+  en: "%{arg0} selected · %{arg1} will change. Review values, sources and new validation issues before applying."
+  zh-CN: "已选 %{arg0} 项 · 将修改 %{arg1} 项。应用前请检查值、来源和新增校验问题。"
+batch.applied.one:
+  en: "Applied a batch change to %{arg0} preset. Save to write these edits to disk."
+  zh-CN: "已批量修改 %{arg0} 个预设。保存后才会写入磁盘。"
+batch.applied.other:
+  en: "Applied a batch change to %{arg0} presets. Save to write these edits to disk."
+  zh-CN: "已批量修改 %{arg0} 个预设。保存后才会写入磁盘。"
+batch.before_source:
+  en: "Before · source"
+  zh-CN: "修改前 · 来源"
+batch.after_source:
+  en: "After · source"
+  zh-CN: "修改后 · 来源"
+batch.change:
+  en: "Change"
+  zh-CN: "变更"
+batch.new_issues:
+  en: "New validation issues"
+  zh-CN: "新增校验问题"
+batch.descendants:
+  en: "Affected descendants"
+  zh-CN: "受影响的子孙预设"
+common.before:
+  en: "Before"
+  zh-CN: "修改前"
+common.after:
+  en: "After"
+  zh-CN: "修改后"
+common.none:
+  en: "None"
+  zh-CN: "无"
+batch.start:
+  en: "Choose presets and an operation, then preview the changes."
+  zh-CN: "选择预设和操作，然后预览变更。"
+batch.stale:
+  en: "The preview is out of date. Preview again to review the current changes."
+  zh-CN: "预览已过期，请重新预览当前变更。"
+batch.preparing:
+  en: "Preparing preview…"
+  zh-CN: "正在生成预览…"
+batch.changed:
+  en: "Edits changed. Preview again."
+  zh-CN: "编辑内容已变化，请重新预览。"
+common.back_browser:
+  en: "Back to browser"
+  zh-CN: "返回浏览"
+common.key:
+  en: "Key"
+  zh-CN: "键名"
+batch.key:
+  en: "Batch key"
+  zh-CN: "批量修改的键"
+batch.operation:
+  en: "Operation"
+  zh-CN: "操作"
+batch.operation_label:
+  en: "Batch operation"
+  zh-CN: "批量操作"
+batch.remove_help:
+  en: "Remove this file's value to restore inheritance."
+  zh-CN: "删除本文件中的值，恢复继承。"
+batch.array_help:
+  en: "Inherited arrays become local overrides when changed. Existing items keep their order."
+  zh-CN: "修改继承的数组时会在本文件中建立覆盖；原有元素顺序保持不变。"
+batch.preview:
+  en: "Preview"
+  zh-CN: "预览"
+batch.apply:
+  en: "Apply batch"
+  zh-CN: "应用批量修改"
+batch.reset:
+  en: "Reset input"
+  zh-CN: "重置输入"
+batch.input_reset:
+  en: "Input reset. Applied edits are kept."
+  zh-CN: "输入已重置，已应用的修改仍保留。"
+batch.undo:
+  en: "Undo batch"
+  zh-CN: "撤销批量修改"
+batch.redo:
+  en: "Redo batch"
+  zh-CN: "重做批量修改"
+common.save:
+  en: "Save…"
+  zh-CN: "保存…"
+values.range:
+  en: " · range %{arg0}–%{arg1}"
+  zh-CN: " · 范围 %{arg0}–%{arg1}"
+values.enum_values:
+  en: " · one of %{arg0}"
+  zh-CN: " · 可选值：%{arg0}"
+values.count:
+  en: "%{shown} of %{total} keys"
+  zh-CN: "显示 %{shown} / %{total} 个键"
+values.save_changes.one:
+  en: "Save %{pending} change…"
+  zh-CN: "保存 %{pending} 项修改…"
+values.save_changes.other:
+  en: "Save %{pending} changes…"
+  zh-CN: "保存 %{pending} 项修改…"
+common.values:
+  en: "Values"
+  zh-CN: "参数"
+common.this_file:
+  en: "this file"
+  zh-CN: "本文件"
+common.default:
+  en: "default"
+  zh-CN: "默认值"
+common.other:
+  en: "Other"
+  zh-CN: "其他"
+values.not_option:
+  en: "not an OrcaSlicer option"
+  zh-CN: "不是 OrcaSlicer 配置项"
+values.no_schema:
+  en: "no schema loaded"
+  zh-CN: "未加载 schema"
+common.not_in_schema:
+  en: "Not in schema"
+  zh-CN: "不在 schema 中"
+common.category:
+  en: "Category"
+  zh-CN: "类别"
+common.option:
+  en: "Option"
+  zh-CN: "配置项"
+common.value:
+  en: "Value"
+  zh-CN: "值"
+common.source:
+  en: "Source"
+  zh-CN: "来源"
+values.filter:
+  en: "Filter by key, option or category"
+  zh-CN: "按键名、配置项或类别筛选"
+values.filter_label:
+  en: "Filter values"
+  zh-CN: "筛选参数"
+values.hide_defaults:
+  en: "Hide defaults"
+  zh-CN: "隐藏默认值"
+values.only_own:
+  en: "Only this file"
+  zh-CN: "仅本文件"
+values.compare:
+  en: "Compare with…"
+  zh-CN: "对比预设…"
+values.undo:
+  en: "Undo edit"
+  zh-CN: "撤销修改"
+values.undo_shortcut:
+  en: "Undo (⌘Z)"
+  zh-CN: "撤销（⌘Z）"
+values.redo:
+  en: "Redo edit"
+  zh-CN: "重做修改"
+values.redo_shortcut:
+  en: "Redo (⇧⌘Z)"
+  zh-CN: "重做（⇧⌘Z）"
+values.edit:
+  en: "Edit"
+  zh-CN: "编辑"
+values.inherited_help:
+  en: "Inherited; override to set it in this file."
+  zh-CN: "当前值来自继承；覆盖后可在本文件中设置。"
+values.override:
+  en: "Override"
+  zh-CN: "覆盖"
+values.reset:
+  en: "Reset to inherited"
+  zh-CN: "恢复继承"
+values.remove:
+  en: "Remove from file"
+  zh-CN: "从文件中删除"
+values.select_hint:
+  en: "Select a row to see every layer of the inheritance chain that sets it, and to edit it."
+  zh-CN: "选择一行查看该键在继承链上的各层取值，并编辑本文件中的值。"
+common.edited:
+  en: "edited"
+  zh-CN: "已修改"
+values.layers:
+  en: "Layers (nearest first)"
+  zh-CN: "继承层级（由近到远）"
+common.issues:
+  en: "Issues"
+  zh-CN: "问题"
+common.back_values:
+  en: "Back to values"
+  zh-CN: "返回参数"
+values.empty:
+  en: "No keys match the filters"
+  zh-CN: "没有符合筛选条件的键"
+values.empty_help:
+  en: "No keys match the filters. Clear the search or turn off a source filter."
+  zh-CN: "没有符合条件的键。请清空搜索或关闭来源筛选。"
+issues.count:
+  en: "%{shown} of %{total}"
+  zh-CN: "显示 %{shown} / %{total} 项"
+issues.severity:
+  en: "Severity"
+  zh-CN: "严重程度"
+issues.code:
+  en: "Code"
+  zh-CN: "代码"
+issues.message:
+  en: "Message"
+  zh-CN: "描述"
+issues.all:
+  en: "All severities"
+  zh-CN: "所有级别"
+issues.warnings:
+  en: "Warnings and errors"
+  zh-CN: "警告和错误"
+issues.errors:
+  en: "Errors only"
+  zh-CN: "仅错误"
+issues.fatal:
+  en: "Fatal only"
+  zh-CN: "仅致命错误"
+issues.filter:
+  en: "Filter by text"
+  zh-CN: "按文本筛选"
+issues.all_codes:
+  en: "All codes"
+  zh-CN: "所有代码"
+issues.minimum:
+  en: "Minimum severity"
+  zh-CN: "最低严重程度"
+issues.code_label:
+  en: "Issue code"
+  zh-CN: "问题代码"
+issues.filter_label:
+  en: "Filter issues"
+  zh-CN: "筛选问题"
+issues.close:
+  en: "Close issues"
+  zh-CN: "关闭问题面板"
+common.no_issues:
+  en: "No issues"
+  zh-CN: "没有问题"
+issues.empty:
+  en: "No issues match the filters"
+  zh-CN: "没有符合筛选条件的问题"
+save.confirm.one:
+  en: "Save %{count} file"
+  zh-CN: "保存 %{count} 个文件"
+save.confirm.other:
+  en: "Save %{count} files"
+  zh-CN: "保存 %{count} 个文件"
+save.saved.one:
+  en: "Saved %{arg0} file."
+  zh-CN: "已保存 %{arg0} 个文件。"
+save.saved.other:
+  en: "Saved %{arg0} files."
+  zh-CN: "已保存 %{arg0} 个文件。"
+save.failed.one:
+  en: "Saved %{arg0} file. Could not save %{arg1}: %{err}"
+  zh-CN: "已保存 %{arg0} 个文件。无法保存 %{arg1}：%{err}"
+save.failed.other:
+  en: "Saved %{arg0} files. Could not save %{arg1}: %{err}"
+  zh-CN: "已保存 %{arg0} 个文件。无法保存 %{arg1}：%{err}"
+common.inherited:
+  en: "(inherited)"
+  zh-CN: "（继承）"
+save.title:
+  en: "Save changes to disk?"
+  zh-CN: "将修改保存到磁盘？"
+save.description:
+  en: "Only applied edits are included. Existing file formatting is preserved."
+  zh-CN: "只保存已应用的修改，保留原有文件格式。"
+save.preview:
+  en: "Changes to save"
+  zh-CN: "将要保存的修改"
+tree.other_printers:
+  en: "Other printers"
+  zh-CN: "其他打印机"
+common.models:
+  en: "Machine models"
+  zh-CN: "打印机型号"
+common.filaments:
+  en: "Filaments"
+  zh-CN: "耗材"
+common.processes:
+  en: "Processes"
+  zh-CN: "工艺"
+common.templates:
+  en: "Templates"
+  zh-CN: "模板"
+compare.count:
+  en: "%{arg0} shown · %{arg1} differences · %{arg2} keys"
+  zh-CN: "显示 %{arg0} 项 · %{arg1} 项差异 · 共 %{arg2} 个键"
+common.missing:
+  en: "(missing)"
+  zh-CN: "（缺失）"
+compare.left_value:
+  en: "Left value"
+  zh-CN: "左侧值"
+compare.right_value:
+  en: "Right value"
+  zh-CN: "右侧值"
+compare.left_source:
+  en: "Left source"
+  zh-CN: "左侧来源"
+compare.right_source:
+  en: "Right source"
+  zh-CN: "右侧来源"
+compare.unsaved:
+  en: " (unsaved changes)"
+  zh-CN: "（有未保存修改）"
+compare.select_hint:
+  en: "Select a key to inspect both inheritance chains."
+  zh-CN: "选择一个键，查看两侧的继承链。"
+compare.different:
+  en: "Different values"
+  zh-CN: "值不同"
+compare.equal:
+  en: "Equal values"
+  zh-CN: "值相同"
+compare.left:
+  en: "Left"
+  zh-CN: "左侧"
+compare.right:
+  en: "Right"
+  zh-CN: "右侧"
+compare.start:
+  en: "Choose a preset above to start comparing."
+  zh-CN: "在上方选择预设以开始对比。"
+compare.no_differences:
+  en: "No differing values. Turn off Only differences to inspect their sources."
+  zh-CN: "没有不同的值。关闭“仅差异”可查看来源。"
+compare.empty:
+  en: "No keys match the current filters."
+  zh-CN: "没有符合当前筛选条件的键。"
+compare.preset:
+  en: "Compare with preset"
+  zh-CN: "对比预设"
+compare.choose:
+  en: "Choose a preset of the same kind…"
+  zh-CN: "选择同类型的预设…"
+compare.search:
+  en: "Search vendor or preset"
+  zh-CN: "搜索厂商或预设"
+compare.filter:
+  en: "Filter comparison"
+  zh-CN: "筛选对比结果"
+compare.only_differences:
+  en: "Only differences"
+  zh-CN: "仅差异"
+compare.note:
+  en: "Read-only · Includes unsaved changes. Saving refreshes inherited values. String/array differences are included."
+  zh-CN: "只读 · 包含未保存的修改，保存后更新继承值。字符串与数组的类型差异也计入对比。"
+editor.value:
+  en: "Value for %{arg0}"
+  zh-CN: "%{arg0} 的值"
+editor.enabled:
+  en: "Enabled"
+  zh-CN: "启用"
+common.apply:
+  en: "Apply"
+  zh-CN: "应用"
+editor.items:
+  en: "One item per line"
+  zh-CN: "每行一个元素"
+editor.unsupported:
+  en: "This value has several multi-line items; edit it in the file."
+  zh-CN: "该值包含多个多行元素，请直接编辑文件。"
+manage.file_count:
+  en: "%{arg0} file changes"
+  zh-CN: "%{arg0} 个文件变更"
+manage.applied.one:
+  en: "Applied changes to %{count} file."
+  zh-CN: "已更新 %{count} 个文件。"
+manage.applied.other:
+  en: "Applied changes to %{count} files."
+  zh-CN: "已更新 %{count} 个文件。"
+manage.failed:
+  en: "Could not apply changes: %{err}"
+  zh-CN: "无法应用变更：%{err}"
+manage.missing_equals:
+  en: "Override line %{arg0} needs key = value"
+  zh-CN: "第 %{arg0} 行覆盖值需要使用 key = value 格式"
+manage.missing_key:
+  en: "Override line %{arg0} has no key"
+  zh-CN: "第 %{arg0} 行覆盖值缺少键名"
+manage.duplicate_key:
+  en: "Override %{key} occurs more than once"
+  zh-CN: "覆盖值中重复出现 %{key}"
+manage.remove_item:
+  en: "%{key}: remove %{item}"
+  zh-CN: "%{key}：移除 %{item}"
+manage.add_item:
+  en: "%{key}: add %{item}"
+  zh-CN: "%{key}：添加 %{item}"
+manage.new:
+  en: "New preset"
+  zh-CN: "新建预设"
+manage.copy:
+  en: "Copy preset"
+  zh-CN: "复制预设"
+manage.copy_group:
+  en: "Copy group"
+  zh-CN: "批量复制"
+manage.rename:
+  en: "Rename preset"
+  zh-CN: "重命名预设"
+manage.delete:
+  en: "Delete presets"
+  zh-CN: "删除预设"
+manage.name_placeholder:
+  en: "New preset name"
+  zh-CN: "新预设名称"
+manage.file_placeholder:
+  en: "Generated from the new name"
+  zh-CN: "根据新名称生成"
+manage.select_one:
+  en: "Select exactly one preset for this operation"
+  zh-CN: "此操作需要选择一个预设"
+manage.choose_vendor:
+  en: "Choose a vendor or select a parent preset"
+  zh-CN: "请选择厂商或父预设"
+manage.stale_input:
+  en: "Inputs changed while preparing the preview. Preview again."
+  zh-CN: "生成预览时输入已变化，请重新预览。"
+manage.blocked:
+  en: "Cannot apply"
+  zh-CN: "无法应用"
+manage.review:
+  en: "Review"
+  zh-CN: "请检查"
+manage.create:
+  en: "Create"
+  zh-CN: "创建"
+manage.delete_file:
+  en: "Delete"
+  zh-CN: "删除"
+manage.update:
+  en: "Update"
+  zh-CN: "更新"
+manage.confirm:
+  en: "Apply these file changes?"
+  zh-CN: "应用这些文件变更？"
+manage.resolve:
+  en: "Resolve the preview issues"
+  zh-CN: "请先处理预览中的问题"
+manage.confirm_help:
+  en: "This writes the listed files and vendor manifests. Files are rechecked before writing."
+  zh-CN: "将写入列出的文件和厂商清单，写入前会再次检查文件。"
+manage.blocked_help:
+  en: "No files have been written. Close this preview and adjust the selection or values."
+  zh-CN: "尚未写入任何文件。请关闭预览，调整选择或参数。"
+manage.apply:
+  en: "Apply changes"
+  zh-CN: "应用变更"
+manage.back:
+  en: "Back"
+  zh-CN: "返回"
+manage.stale:
+  en: "The selection or profiles changed. Create a new preview."
+  zh-CN: "选择或预设已变化，请重新生成预览。"
+manage.overrides:
+  en: "Override values"
+  zh-CN: "覆盖值"
+manage.new_values:
+  en: "Values for new presets"
+  zh-CN: "新预设的参数"
+manage.delete_help:
+  en: "The preview lists references. Include dependent children in the selection; name-list references are removed only when you confirm."
+  zh-CN: "预览会列出引用关系。请一并选择依赖的子预设；确认后才会移除名称列表中的引用。"
+manage.preview:
+  en: "Preview changes…"
+  zh-CN: "预览变更…"
+manage.busy:
+  en: "Preparing or writing changes"
+  zh-CN: "正在准备或写入变更"
+menu.quit:
+  en: "Quit Orca Profile Studio"
+  zh-CN: "退出 Orca Profile Studio"
+menu.new_window:
+  en: "New Window…"
+  zh-CN: "新建窗口…"
+menu.close_window:
+  en: "Close Window"
+  zh-CN: "关闭窗口"
+lifecycle.writing:
+  en: "Preset changes are being written"
+  zh-CN: "正在写入预设变更"
+lifecycle.wait_quit:
+  en: "Wait for file changes in all windows to finish before quitting."
+  zh-CN: "请等待所有窗口的文件写入完成后再退出。"
+lifecycle.quit_title:
+  en: "Discard edits in all windows and quit?"
+  zh-CN: "放弃所有窗口中的修改并退出？"
+lifecycle.unsaved:
+  en: "These files have unsaved edits or unapplied input. Cancel to review and save them."
+  zh-CN: "这些文件有未保存的修改或未应用的输入。取消后可继续检查并保存。"
+lifecycle.quit:
+  en: "Discard edits and quit"
+  zh-CN: "放弃修改并退出"
+app.window_retry:
+  en: "%{err}. Try New window again."
+  zh-CN: "%{err}。请重试“新建窗口”。"
+app.refresh_failed:
+  en: "Could not refresh: %{err}. Your edits are kept. Retry Reload."
+  zh-CN: "无法刷新：%{err}。编辑内容已保留，请重试重新加载。"
+app.refresh_conflict:
+  en: "Refresh paused: %{arg0} edited file(s) changed or could not be loaded. Your edits and history are kept."
+  zh-CN: "刷新已暂停：%{arg0} 个编辑中的文件已变化或无法加载。编辑内容和历史记录已保留。"
+app.open_description:
+  en: "Opening %{arg0} will discard unsaved edits or unapplied input in %{dirty} preset(s)."
+  zh-CN: "打开 %{arg0} 将放弃 %{dirty} 个预设中未保存的修改或未应用的输入。"
+app.loading_path:
+  en: "Loading %{arg0}…"
+  zh-CN: "正在加载 %{arg0}…"
+app.load_failed:
+  en: "Could not load %{arg0}: %{err}"
+  zh-CN: "无法加载 %{arg0}：%{err}"
+app.summary:
+  en: "%{arg0} vendors · %{arg1} machine models · %{arg2} presets · loaded in %{arg3} ms"
+  zh-CN: "%{arg0} 个厂商 · %{arg1} 个型号 · %{arg2} 个预设 · 加载耗时 %{arg3} 毫秒"
+app.window_error:
+  en: "Could not open a window"
+  zh-CN: "无法打开窗口"
+app.wait_close:
+  en: "Wait for the file changes to finish before closing this window."
+  zh-CN: "请等待文件写入完成后再关闭窗口。"
+app.open:
+  en: "Open"
+  zh-CN: "打开"
+app.folder_error:
+  en: "Could not choose a folder"
+  zh-CN: "无法选择目录"
+app.open_title:
+  en: "Discard edits and open another folder?"
+  zh-CN: "放弃修改并打开其他目录？"
+app.open_confirm:
+  en: "Discard edits and open"
+  zh-CN: "放弃修改并打开"
+app.wait_write:
+  en: "Wait for the file changes to finish before closing, reloading or opening a folder."
+  zh-CN: "请等待文件写入完成后再关闭、重新加载或打开目录。"
+app.close_title:
+  en: "Discard edits and close this window?"
+  zh-CN: "放弃修改并关闭窗口？"
+app.close_confirm:
+  en: "Discard edits and close"
+  zh-CN: "放弃修改并关闭"
+settings.invalid_backup:
+  en: "%{arg0}: %{err}. Using default settings; the unreadable file was copied to %{arg1}."
+  zh-CN: "%{arg0}：%{err}。已使用默认设置，无法读取的文件已备份到 %{arg1}。"
+settings.invalid_readonly:
+  en: "%{arg0}: %{err}. Using default settings without saving them, so the file is left as it is."
+  zh-CN: "%{arg0}：%{err}。已使用默认设置，本次运行不保存设置，原文件保持不变。"
+settings.write_failed:
+  en: "%{arg0}: %{err}. Changes apply to this session. Check the folder's permissions and retry the setting."
+  zh-CN: "%{arg0}：%{err}。修改在本次运行中有效，请检查目录权限后重试设置。"
+settings.system:
+  en: "System"
+  zh-CN: "跟随系统"
+settings.light:
+  en: "Light"
+  zh-CN: "浅色"
+settings.dark:
+  en: "Dark"
+  zh-CN: "深色"
+settings.load_error:
+  en: "Could not read settings"
+  zh-CN: "无法读取设置"
+settings.save_error:
+  en: "Could not save settings"
+  zh-CN: "无法保存设置"
+batch.not_array:
+  en: "%{arg0} has a non-array value for %{key}. Set a complete value first."
+  zh-CN: "%{arg0} 的 %{key} 不是数组，请先设置完整值。"
+batch.set:
+  en: "Set value"
+  zh-CN: "设置值"
+batch.remove:
+  en: "Remove key (inherit)"
+  zh-CN: "删除键（恢复继承）"
+batch.add_item:
+  en: "Add item"
+  zh-CN: "追加元素"
+batch.remove_item:
+  en: "Remove item"
+  zh-CN: "移除元素"
+batch.stale_baseline:
+  en: "Edits changed after this preview. Preview again."
+  zh-CN: "生成预览后编辑已变化，请重新预览。"
+batch.schema_required:
+  en: "A schema is required for batch editing."
+  zh-CN: "批量编辑需要加载 schema。"
+batch.select_required:
+  en: "Select at least one preset."
+  zh-CN: "请至少选择一个预设。"
+batch.invalid_key:
+  en: "Choose a key belonging to the selected preset kind."
+  zh-CN: "请选择属于当前预设类型的键。"
+batch.same_kind:
+  en: "Select presets of one kind."
+  zh-CN: "请选择同一类型的预设。"
+batch.string_array:
+  en: "Item operations are available only for string arrays."
+  zh-CN: "元素操作仅适用于字符串数组。"
+batch.value_required:
+  en: "Enter a value first."
+  zh-CN: "请先输入值。"
+batch.one_item:
+  en: "Enter one array item."
+  zh-CN: "请输入一个数组元素。"
+batch.nonempty_item:
+  en: "Enter a nonempty array item."
+  zh-CN: "数组元素不能为空。"
+batch.inherits_skip:
+  en: "Inherits the new value (skipped)"
+  zh-CN: "继承新值（跳过）"
+batch.unchanged:
+  en: "Unchanged (skipped)"
+  zh-CN: "无变化（跳过）"
+batch.new_override:
+  en: "New override"
+  zh-CN: "新建覆盖"
+batch.will_change:
+  en: "Will change"
+  zh-CN: "将修改"
+common.unset:
+  en: "(unset)"
+  zh-CN: "（未设置）"
+edits.missing:
+  en: "File is missing or could not be loaded"
+  zh-CN: "文件缺失或无法加载"
+edits.metadata_changed:
+  en: "Preset metadata changed on disk"
+  zh-CN: "磁盘中的预设元数据已变化"
+edits.values_changed:
+  en: "Values changed on disk"
+  zh-CN: "磁盘中的参数值已变化"
+edits.one_change:
+  en: "A batch must contain one change per preset."
+  zh-CN: "每个批次中每个预设只能包含一项修改。"
+edits.no_history:
+  en: "Batch history is unavailable."
+  zh-CN: "批量历史记录不可用。"
+edits.missing_member:
+  en: "A batch member no longer exists. Reload and review the files."
+  zh-CN: "批次中的某个预设已不存在，请重新加载并检查文件。"
+edits.discarded_history:
+  en: "A batch member's history was discarded."
+  zh-CN: "批次中某个预设的历史记录已被清除。"
+edits.newer_changes:
+  en: "Undo newer edits in every batch member first; this batch cannot be changed partially."
+  zh-CN: "请先撤销批次各成员后续的修改；不能只撤销批次的一部分。"
+details.vendor_path:
+  en: "vendor · %{arg0}"
+  zh-CN: "厂商 · %{arg0}"
+details.model_path:
+  en: "machine model · %{arg0}"
+  zh-CN: "打印机型号 · %{arg0}"
+details.printer_count:
+  en: "Printers (%{arg0})"
+  zh-CN: "打印机（%{arg0}）"
+details.material_count:
+  en: "Default materials (%{arg0})"
+  zh-CN: "默认耗材（%{arg0}）"
+details.compat_summary:
+  en: "%{arg0} processes · %{arg1} filaments"
+  zh-CN: "%{arg0} 个工艺 · %{arg1} 个耗材"
+details.compat_printers:
+  en: "%{arg0} compatible printer%{plural}"
+  zh-CN: "%{arg0} 台兼容打印机%{plural}"
+details.invalid_condition:
+  en: "does not parse (%{err}); OrcaSlicer treats it as compatible with everything"
+  zh-CN: "无法解析（%{err}）；OrcaSlicer 将其视为兼容所有预设"
+details.more:
+  en: "and %{arg0} more"
+  zh-CN: "另有 %{arg0} 项"
+details.parent_missing:
+  en: "[?] %{parent} (not found)"
+  zh-CN: "[?] %{parent}（未找到）"
+details.issue_count:
+  en: "Issues (%{arg0})"
+  zh-CN: "问题（%{arg0}）"
+details.vendor_index:
+  en: "Vendor index"
+  zh-CN: "厂商清单"
+details.version:
+  en: "Version"
+  zh-CN: "版本"
+details.description:
+  en: "Description"
+  zh-CN: "说明"
+details.url:
+  en: "Update URL"
+  zh-CN: "更新地址"
+details.force_update:
+  en: "Force update"
+  zh-CN: "强制更新"
+details.contents:
+  en: "Contents"
+  zh-CN: "内容"
+common.printers:
+  en: "Printers"
+  zh-CN: "打印机"
+details.expand:
+  en: "Expand the group and select an entry to see its details."
+  zh-CN: "展开分组并选择条目以查看详情。"
+details.model:
+  en: "Model"
+  zh-CN: "型号"
+details.name:
+  en: "Name"
+  zh-CN: "名称"
+details.model_id:
+  en: "Model ID"
+  zh-CN: "型号 ID"
+details.family:
+  en: "Family"
+  zh-CN: "系列"
+details.technology:
+  en: "Technology"
+  zh-CN: "技术"
+details.nozzles:
+  en: "Nozzle variants"
+  zh-CN: "喷嘴规格"
+details.bed_model:
+  en: "Bed model"
+  zh-CN: "热床模型"
+details.bed_texture:
+  en: "Bed texture"
+  zh-CN: "热床纹理"
+details.hotend:
+  en: "Hotend model"
+  zh-CN: "热端模型"
+details.other_keys:
+  en: "Other keys"
+  zh-CN: "其他键"
+details.compatibility:
+  en: "Compatibility"
+  zh-CN: "兼容性"
+details.condition:
+  en: "Condition"
+  zh-CN: "条件"
+details.path:
+  en: "Path"
+  zh-CN: "路径"
+details.list_name:
+  en: "Listed as"
+  zh-CN: "清单名称"
+details.from:
+  en: "From"
+  zh-CN: "来源"
+details.instantiation:
+  en: "Instantiation"
+  zh-CN: "实例化"
+details.setting_id:
+  en: "Setting ID"
+  zh-CN: "设置 ID"
+details.alias:
+  en: "Alias"
+  zh-CN: "别名"
+details.filament_id:
+  en: "Filament ID"
+  zh-CN: "耗材 ID"
+details.inheritance:
+  en: "Inheritance (nearest first)"
+  zh-CN: "继承链（由近到远）"
+details.own_count:
+  en: "Set in this file"
+  zh-CN: "本文件设置"
+details.chain_count:
+  en: "Set by the chain"
+  zh-CN: "继承链设置"
+details.default_count:
+  en: "Schema defaults"
+  zh-CN: "Schema 默认值"
+issue.file_unreadable:
+  en: "cannot load file: %{reason}"
+  zh-CN: "无法加载文件：%{reason}"
+issue.vendor_version:
+  en: "vendor version %{version} is not a dotted number"
+  zh-CN: "厂商版本 %{version} 不是点分隔的数字"
+issue.manifest_entry:
+  en: "invalid vendor index entry: %{reason}"
+  zh-CN: "厂商清单条目无效：%{reason}"
+issue.meta_type:
+  en: "`%{key}` must be a string"
+  zh-CN: "`%{key}` 必须是字符串"
+issue.value_type:
+  en: "`%{key}` must be a string or an array of strings; the key is dropped"
+  zh-CN: "`%{key}` 必须是字符串或字符串数组；此键会被丢弃"
+issue.instantiation:
+  en: "`instantiation` must be \"true\" or \"false\", found %{value}"
+  zh-CN: "`instantiation` 必须为 \"true\" 或 \"false\"，当前为 %{value}"
+issue.type:
+  en: "`type` is %{declared} but the file is listed in another section"
+  zh-CN: "`type` 为 %{declared}，但文件列在了其他类型的清单中"
+issue.from:
+  en: "`from` is %{value}, expected \"system\""
+  zh-CN: "`from` 为 %{value}，应为 \"system\""
+issue.list_name:
+  en: "listed as %{list_name} but the file names itself differently"
+  zh-CN: "清单中的名称为 %{list_name}，与文件内的名称不同"
+issue.parent:
+  en: "inherits %{parent}, which does not exist"
+  zh-CN: "继承的 %{parent} 不存在"
+issue.parent_order:
+  en: "inherits %{parent}, which is listed after this preset and cannot be resolved"
+  zh-CN: "父预设 %{parent} 列在此预设之后，无法解析继承"
+issue.cross_vendor:
+  en: "a preset with the same name was already loaded from vendor %{first_vendor}"
+  zh-CN: "已从厂商 %{first_vendor} 加载过同名预设"
+issue.model_unknown:
+  en: "`printer_model` %{model} is not a model of this vendor"
+  zh-CN: "`printer_model` %{model} 不属于此厂商"
+issue.variant_unknown:
+  en: "`printer_variant` %{variant} is not a nozzle variant of %{model}"
+  zh-CN: "`printer_variant` %{variant} 不是 %{model} 的喷嘴规格"
+issue.dangling_printer:
+  en: "`compatible_printers` names %{printer}, which is not a selectable printer"
+  zh-CN: "`compatible_printers` 中的 %{printer} 不是可选打印机"
+issue.obsolete:
+  en: "`%{key}` is obsolete; OrcaSlicer ignores it"
+  zh-CN: "`%{key}` 已废弃，OrcaSlicer 会忽略它"
+issue.renamed:
+  en: "`%{key}` is a legacy name of `%{current}`"
+  zh-CN: "`%{key}` 是 `%{current}` 的旧名称"
+issue.unknown:
+  en: "`%{key}` is not an OrcaSlicer option; it is ignored"
+  zh-CN: "`%{key}` 不是 OrcaSlicer 配置项，会被忽略"
+issue.wrong_kind_removed:
+  en: "`%{key}` does not belong to this preset type; OrcaSlicer removes it"
+  zh-CN: "`%{key}` 不属于此预设类型，OrcaSlicer 会移除它"
+issue.wrong_kind_kept:
+  en: "`%{key}` does not belong to this preset type; OrcaSlicer keeps it without a report"
+  zh-CN: "`%{key}` 不属于此预设类型，OrcaSlicer 会保留它且不报告"
+issue.scalar_equal:
+  en: "`%{key}` is a single value but written as a list of equal items"
+  zh-CN: "`%{key}` 是标量，却写成了各元素相同的列表"
+issue.scalar_list:
+  en: "`%{key}` is a single value but written as a list; the items are joined with commas"
+  zh-CN: "`%{key}` 是标量，却写成了列表；元素会用逗号连接"
+issue.nil:
+  en: "`%{key}` cannot be nil; the nil item is skipped"
+  zh-CN: "`%{key}` 不允许 nil；nil 元素会被跳过"
+issue.unparsable:
+  en: "`%{key}`: %{value} cannot be parsed; OrcaSlicer rejects the file"
+  zh-CN: "`%{key}`：无法解析 %{value}，OrcaSlicer 会拒绝加载此文件"
+issue.item_unparsable:
+  en: "`%{key}`: item %{item} cannot be parsed and is read as 0"
+  zh-CN: "`%{key}`：无法解析元素 %{item}，将按 0 读取"
+issue.substituted:
+  en: "`%{key}`: %{value} is not a valid value; OrcaSlicer uses the default"
+  zh-CN: "`%{key}`：%{value} 不是有效值，OrcaSlicer 会使用默认值"
+issue.trailing:
+  en: "`%{key}`: %{value} has text after the number, which is ignored"
+  zh-CN: "`%{key}`：%{value} 的数字后有多余文本，会被忽略"
+issue.range:
+  en: "`%{key}`: %{value} is outside the GUI range [%{arg0}, %{arg1}]"
+  zh-CN: "`%{key}`：%{value} 超出了界面范围 [%{arg0}, %{arg1}]"
+issue.condition_invalid:
+  en: "`%{key}` cannot be parsed (%{message}); OrcaSlicer treats it as compatible with everything"
+  zh-CN: "无法解析 `%{key}`（%{message}）；OrcaSlicer 将其视为兼容所有预设"
+issue.condition_failed:
+  en: "`%{key}` fails for %{failures} preset(s), e.g. %{message}; OrcaSlicer treats those as compatible"
+  zh-CN: "`%{key}` 在 %{failures} 个预设上求值失败，例如 %{message}；OrcaSlicer 将这些预设视为兼容"
+issue.listed_missing:
+  en: "listed in the vendor index but the file does not exist"
+  zh-CN: "厂商清单中列出了此文件，但文件不存在"
+issue.bom:
+  en: "file starts with a UTF-8 BOM"
+  zh-CN: "文件以 UTF-8 BOM 开头"
+issue.orphan:
+  en: "JSON file is not listed in any vendor index and is never loaded"
+  zh-CN: "JSON 文件未列入任何厂商清单，不会被加载"
+issue.missing_name:
+  en: "preset has no `name`"
+  zh-CN: "预设缺少 `name`"
+issue.duplicate:
+  en: "another preset of this vendor has the same name"
+  zh-CN: "此厂商中存在同名预设"
+issue.filament_id:
+  en: "no `filament_id` (own, inherited or from `setting_id`)"
+  zh-CN: "缺少 `filament_id`（本文件、继承和 `setting_id` 均未提供）"
+issue.variants:
+  en: "`nozzle_diameter` lists no variants; OrcaSlicer ignores the model"
+  zh-CN: "`nozzle_diameter` 未列出喷嘴规格；OrcaSlicer 会忽略此型号"
+issue.model_missing:
+  en: "`printer_model` or `printer_variant` is empty"
+  zh-CN: "`printer_model` 或 `printer_variant` 为空"
+severity.info:
+  en: info
+  zh-CN: 信息
+severity.warning:
+  en: warning
+  zh-CN: 警告
+severity.error:
+  en: error
+  zh-CN: 错误
+severity.fatal:
+  en: fatal
+  zh-CN: 致命错误
+kind.machine:
+  en: machine
+  zh-CN: 打印机
+kind.filament:
+  en: filament
+  zh-CN: 耗材
+kind.process:
+  en: process
+  zh-CN: 工艺
+localization.missing_title:
+  en: Chinese option translations unavailable
+  zh-CN: 无法读取配置项的中文翻译
+localization.missing_help:
+  en: "Option labels will use English. Check the OrcaSlicer checkout or ORCA_LOCALIZATION_DIR, then Reload. %{reason}"
+  zh-CN: "配置项名称将显示英文。请检查 OrcaSlicer 目录或 ORCA_LOCALIZATION_DIR，然后重新加载。%{reason}"
+app.conflict_help:
+  en: "Restore these files and retry Reload to keep their edits and history, or discard their edits and history to use the disk versions. Other edits are kept."
+  zh-CN: "恢复这些文件并重新加载可保留编辑和历史记录；也可以放弃这些文件的编辑与历史，使用磁盘版本。其他编辑会保留。"
+app.files_changed:
+  en: "Files changed on disk"
+  zh-CN: "磁盘文件已变化"
+app.discard_reload:
+  en: "Discard edits and reload"
+  zh-CN: "放弃修改并重新加载"
+app.save_first:
+  en: "Save applied edits first"
+  zh-CN: "请先保存已应用的修改"
+app.save_first_help:
+  en: "Save or undo existing edits, and apply or discard input before managing preset files."
+  zh-CN: "管理预设文件前，请先保存或撤销修改，并应用或清除尚未应用的输入。"
+app.no_directory:
+  en: "No profiles directory"
+  zh-CN: "未打开预设目录"
+app.presets:
+  en: "Presets"
+  zh-CN: "预设管理"
+app.search:
+  en: "Search…"
+  zh-CN: "搜索…"
+app.search_hint:
+  en: "Search presets, options and values; run commands (⌘K)"
+  zh-CN: "搜索预设、配置项和值，或运行命令（⌘K）"
+app.open_folder:
+  en: "Open…"
+  zh-CN: "打开…"
+app.reload:
+  en: "Reload profiles"
+  zh-CN: "重新加载预设"
+app.reload_hint:
+  en: "Reload from disk, keeping edits and history"
+  zh-CN: "从磁盘重新加载，保留编辑和历史记录"
+app.refreshing:
+  en: "Refreshing"
+  zh-CN: "正在刷新"
+app.empty:
+  en: "Open OrcaSlicer's resources/profiles directory to start."
+  zh-CN: "打开 OrcaSlicer 的 resources/profiles 目录以开始。"
+app.select_hint:
+  en: "Select a vendor, model or preset in the tree."
+  zh-CN: "在导航树中选择厂商、型号或预设。"
+common.overview:
+  en: "Overview"
+  zh-CN: "概览"
+app.palette_placeholder:
+  en: "Search presets, options and values, or type a command…"
+  zh-CN: "搜索预设、配置项和值，或输入命令…"
+app.no_issues:
+  en: "no issues"
+  zh-CN: "没有问题"
+app.loading:
+  en: "Loading…"
+  zh-CN: "正在加载…"
+app.review_files:
+  en: "Review files…"
+  zh-CN: "检查文件…"
+manage.operation:
+  en: "Preset operation"
+  zh-CN: "预设操作"
+manage.name:
+  en: "New name"
+  zh-CN: "新名称"
+manage.filename:
+  en: "File name (.json)"
+  zh-CN: "文件名（.json）"
+manage.replace:
+  en: "Replace in names"
+  zh-CN: "替换名称中的文本"
+manage.with:
+  en: "With"
+  zh-CN: "替换为"
+manage.inherit:
+  en: "Inherit the selected preset"
+  zh-CN: "继承所选预设"
+manage.keep_ids:
+  en: "Keep source setting_id and filament_id (review in preview)"
+  zh-CN: "保留原 setting_id 和 filament_id（请在预览中检查）"
+manage.replace_references:
+  en: "Also replace names in compatible_printers and compatible_prints"
+  zh-CN: "同时替换 compatible_printers 和 compatible_prints 中的名称"
+manage.record_name:
+  en: "Record the previous name in renamed_from"
+  zh-CN: "在 renamed_from 中记录原名称"
+manage.values:
+  en: "Set values on the new presets"
+  zh-CN: "设置新预设的参数"
+manage.values_help:
+  en: "One key = value per line. Arrays use [\"value\", \"value\"]. Identifiers can be set here too."
+  zh-CN: "每行一个 key = value。数组使用 [\"value\", \"value\"]，也可在此设置标识符。"
+details.models_count:
+  en: "%{vendor} · %{count} models"
+  zh-CN: "%{vendor} · %{count} 个型号"
+details.presets_count:
+  en: "%{vendor} · %{count} presets"
+  zh-CN: "%{vendor} · %{count} 个预设"
+details.selectable:
+  en: selectable
+  zh-CN: 可选预设
+details.template:
+  en: template
+  zh-CN: 模板
+details.default_suffix:
+  en: "  (default)"
+  zh-CN: "  （默认值）"
+values.edited_source:
+  en: "%{source} (edited)"
+  zh-CN: "%{source}（已修改）"
+values.truncated:
+  en: "%{text}… (%{count} chars)"
+  zh-CN: "%{text}…（%{count} 个字符）"
+values.nullable:
+  en: " · nullable"
+  zh-CN: " · 允许空值"
+history.undo.one:
+  en: "Undid a batch change in %{count} preset."
+  zh-CN: "已撤销 %{count} 个预设的批量修改。"
+history.undo.other:
+  en: "Undid a batch change in %{count} presets."
+  zh-CN: "已撤销 %{count} 个预设的批量修改。"
+history.redo.one:
+  en: "Redid a batch change in %{count} preset."
+  zh-CN: "已重做 %{count} 个预设的批量修改。"
+history.redo.other:
+  en: "Redid a batch change in %{count} presets."
+  zh-CN: "已重做 %{count} 个预设的批量修改。"
+mode.simple:
+  en: simple
+  zh-CN: 基础
+mode.advanced:
+  en: advanced
+  zh-CN: 高级
+mode.develop:
+  en: develop
+  zh-CN: 开发

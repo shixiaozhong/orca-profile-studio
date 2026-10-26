@@ -137,6 +137,20 @@ impl ValueEditor {
         };
         Self { key, kind, source, control, immediate, _subscriptions: subscriptions }
     }
+    pub fn refresh_language(&mut self, catalog: &crate::catalog::Catalog, window: &mut Window, cx: &mut Context<Self>) {
+        let kind = EditorKind::for_option(catalog.repo.schema().and_then(|s| s.option(&self.key))).translated(catalog);
+        if let (Control::Enum(state), EditorKind::Enum(choices)) = (&self.control, &kind) {
+            let current = state.read(cx).selected_value().cloned();
+            state.update(cx, |state, cx| {
+                state.set_items(SearchableVec::new(choices.clone()), window, cx);
+                if let Some(current) = current {
+                    state.set_selected_value(&current, window, cx);
+                }
+            });
+            self.kind = kind;
+        }
+        cx.notify();
+    }
     pub fn key(&self) -> &str {
         &self.key
     }
@@ -179,10 +193,10 @@ impl ValueEditor {
 
 impl Render for ValueEditor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let label = format!("Value for {}", self.key);
+        let label = t!("editor.value", arg0 = self.key);
         match &self.control {
             Control::Bool(checked) => Checkbox::new("value-bool")
-                .label("Enabled")
+                .label(t!("editor.enabled"))
                 .checked(*checked)
                 .on_click(cx.listener(|this, value: &bool, _, cx| {
                     this.control = Control::Bool(*value);
@@ -199,7 +213,7 @@ impl Render for ValueEditor {
                     line.child(
                         Button::new("apply")
                             .small()
-                            .label("Apply")
+                            .label(t!("common.apply"))
                             .on_click(cx.listener(|this, _, _, cx| this.apply(cx))),
                     )
                 })
@@ -214,26 +228,36 @@ impl Render for ValueEditor {
                             line.child(
                                 Button::new("apply")
                                     .small()
-                                    .label("Apply")
+                                    .label(t!("common.apply"))
                                     .on_click(cx.listener(|this, _, _, cx| this.apply(cx))),
                             )
                         })
                         .when(self.kind != EditorKind::Multiline, |line| {
                             line.child(
-                                div().text_xs().text_color(cx.theme().muted_foreground).child("One item per line"),
+                                div().text_xs().text_color(cx.theme().muted_foreground).child(t!("editor.items")),
                             )
                         }),
                 )
                 .into_any_element(),
-            Control::Unsupported => div()
-                .text_color(cx.theme().muted_foreground)
-                .child("This value has several multi-line items; edit it in the file.")
-                .into_any_element(),
+            Control::Unsupported => {
+                div().text_color(cx.theme().muted_foreground).child(t!("editor.unsupported")).into_any_element()
+            }
         }
     }
 }
 
 impl EditorKind {
+    pub fn translated(self, catalog: &crate::catalog::Catalog) -> Self {
+        match self {
+            Self::Enum(choices) => Self::Enum(
+                choices
+                    .into_iter()
+                    .map(|choice| EnumChoice::new(choice.value, catalog.translate(&choice.label)))
+                    .collect(),
+            ),
+            other => other,
+        }
+    }
     pub fn for_option(option: Option<&profile_core::OptionDef>) -> Self {
         match option {
             Some(option) if option.type_ == profile_core::OptionType::Bool => Self::Bool,

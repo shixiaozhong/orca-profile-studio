@@ -38,12 +38,7 @@ fn scope(cx: &mut App) -> QuitScope {
 fn request_quit(cx: &mut App, approved: Option<QuitScope>) {
     let scope = scope(cx);
     if scope.iter().any(|(_, _, writing)| *writing) {
-        crate::feedback::error(
-            "manage-writing",
-            "Preset changes are being written",
-            "Wait for file changes in all windows to finish before quitting.".into(),
-            cx,
-        );
+        crate::feedback::error("manage-writing", t!("lifecycle.writing"), t!("lifecycle.wait_quit"), cx);
         return;
     }
     if scope.iter().all(|(_, files, _)| files.is_empty()) || approved.as_ref() == Some(&scope) {
@@ -69,12 +64,12 @@ fn request_quit(cx: &mut App, approved: Option<QuitScope>) {
                 let files =
                     scope.iter().flat_map(|(_, files, _)| files).map(|path| div().child(path.display().to_string()));
                 dialog
-                    .title("Discard edits in all windows and quit?")
+                    .title(t!("lifecycle.quit_title"))
                     .width(px(640.))
                     .confirm()
-                    .description("These files have unsaved edits or unapplied input. Cancel to review and save them.")
+                    .description(t!("lifecycle.unsaved"))
                     .child(div().id("quit-files").max_h(rems(24.)).overflow_y_scroll().children(files))
-                    .ok_text("Discard edits and quit")
+                    .ok_text(t!("lifecycle.quit"))
                     .ok_variant(ButtonVariant::Danger)
                     .on_ok(move |_, _, cx| {
                         // Other windows remain usable: recheck before discarding edits not shown here.

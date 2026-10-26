@@ -7,16 +7,23 @@ struct OperationError;
 
 /// An error of the whole app, shown in every window. Defer until the caller releases its window;
 /// use a stable ID to replace repeated failures.
-pub fn error(id: &'static str, title: &'static str, message: String, cx: &mut App) {
+pub fn error(id: &'static str, title: impl Into<String>, message: String, cx: &mut App) {
     deliver(None, id, title, message, cx);
 }
 
 /// An error of one window's operation, shown only there.
-pub fn window_error(window: AnyWindowHandle, id: &'static str, title: &'static str, message: String, cx: &mut App) {
+pub fn window_error(
+    window: AnyWindowHandle,
+    id: &'static str,
+    title: impl Into<String>,
+    message: String,
+    cx: &mut App,
+) {
     deliver(Some(window), id, title, message, cx);
 }
 
-fn deliver(target: Option<AnyWindowHandle>, id: &'static str, title: &'static str, message: String, cx: &mut App) {
+fn deliver(target: Option<AnyWindowHandle>, id: &'static str, title: impl Into<String>, message: String, cx: &mut App) {
+    let title = title.into();
     cx.defer(move |cx| {
         let mut delivered = false;
         let windows = target.map_or_else(|| cx.windows(), |window| vec![window]);
@@ -26,11 +33,11 @@ fn deliver(target: Option<AnyWindowHandle>, id: &'static str, title: &'static st
                     window.push_notification(
                         Notification::error(message.clone())
                             .id1::<OperationError>(id)
-                            .title(title)
+                            .title(title.clone())
                             .autohide(false)
                             .action(|_, _, cx| {
                                 Button::new("dismiss-error")
-                                    .label("Dismiss")
+                                    .label(t!("common.dismiss"))
                                     .on_click(cx.listener(|note, _, window, cx| note.dismiss(window, cx)))
                             }),
                         cx,

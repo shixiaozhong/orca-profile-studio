@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use profile_core::{Issue, PresetKind, Repository, SearchIndex, Severity};
@@ -50,6 +51,8 @@ pub struct Catalog {
     pub preset_severity: Vec<Option<Severity>>,
     /// Global search over the loaded data (not over unsaved edits).
     pub search: SearchIndex,
+    translations: Arc<profile_core::Translations>,
+    pub translation_warning: Option<String>,
     /// Indexes are local to one load; file paths keep identity across reloads.
     preset_by_path: HashMap<PathBuf, usize>,
 }
@@ -68,7 +71,19 @@ impl Catalog {
             .iter()
             .map(|issues| issues.iter().map(|&index| repo.issues()[index].severity()).max())
             .collect();
-        let search = SearchIndex::build(&repo);
+        let (translations, translation_warning) = match crate::i18n::load_translations(
+            repo.root(),
+            std::env::var_os("ORCA_LOCALIZATION_DIR").map(PathBuf::from),
+        ) {
+            Ok(translations) => (translations, None),
+            Err(message) => (Arc::default(), Some(message)),
+        };
+        let mut search = SearchIndex::build(&repo);
+        if let Some(schema) = repo.schema() {
+            search.add_option_labels(schema.options.iter().filter_map(|(key, option)| {
+                translations.get(option.display_label()).map(|label| (key.clone(), label.to_owned()))
+            }));
+        }
         let mut preset_by_path = HashMap::new();
         for preset in repo.presets() {
             // A file listed twice resolves to its first preset, like a linear search would.
@@ -82,8 +97,24 @@ impl Catalog {
             preset_issues,
             preset_severity,
             search,
+            translations,
+            translation_warning,
             preset_by_path,
         }
+    }
+
+    pub fn search_labels(&self, option: Option<&profile_core::OptionDef>) -> String {
+        option.map_or(String::new(), |option| {
+            [option.display_label(), &option.category]
+                .into_iter()
+                .map(|text| format!("{text} {}", self.translations.get(text).unwrap_or("")))
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+    }
+
+    pub fn translate(&self, text: &str) -> String {
+        if crate::i18n::is_chinese() { self.translations.get(text).unwrap_or(text).to_owned() } else { text.to_owned() }
     }
 
     pub fn preset_at(&self, path: &Path) -> Option<usize> {
@@ -148,7 +179,7 @@ fn group_presets(repo: &Repository) -> Vec<VendorContents> {
                     None => match contents.models.iter().position(|entry| entry.model.is_none()) {
                         Some(slot) => slot,
                         None => {
-                            let label = "Other printers".to_owned();
+                            let label = t!("tree.other_printers");
                             contents.models.push(ModelEntry { model: None, label, printers: Vec::new() });
                             contents.models.len() - 1
                         }

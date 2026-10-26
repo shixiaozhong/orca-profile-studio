@@ -1,3 +1,9 @@
+rust_i18n::i18n!("locales", fallback = "en");
+
+// GPUI elements accept owned strings; rust-i18n returns a Cow.
+macro_rules! t { ($($args:tt)*) => { rust_i18n::t!($($args)*).into_owned() }; }
+mod i18n;
+
 mod app;
 mod batch;
 mod batch_plan;
@@ -6,6 +12,7 @@ mod compare;
 mod details;
 mod edits;
 mod feedback;
+mod issue_text;
 mod issues;
 mod lifecycle;
 mod manage;
@@ -28,21 +35,7 @@ fn main() {
         values::init(cx);
         app::init(cx);
         // Keys are bound before the menus are built, so the menus show the shortcuts.
-        cx.set_menus([
-            Menu {
-                name: "Orca Profile Studio".into(),
-                items: vec![MenuItem::action("Quit Orca Profile Studio", lifecycle::Quit)],
-                disabled: false,
-            },
-            Menu {
-                name: "File".into(),
-                items: vec![
-                    MenuItem::action("New Window…", app::NewWindow),
-                    MenuItem::action("Close Window", lifecycle::CloseWindow),
-                ],
-                disabled: false,
-            },
-        ]);
+        set_menus(cx);
 
         let profiles_dir = initial_profiles_dir(settings::get(cx).profiles_dir.clone());
         app::open_window(profiles_dir, cx);
@@ -69,4 +62,22 @@ fn initial_profiles_dir(last: Option<PathBuf>) -> Option<PathBuf> {
             let sibling = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../OrcaSlicer/resources/profiles");
             sibling.is_dir().then_some(sibling)
         })
+}
+
+pub fn set_menus(cx: &mut App) {
+    cx.set_menus([
+        Menu {
+            name: "Orca Profile Studio".into(),
+            items: vec![MenuItem::action(t!("menu.quit"), lifecycle::Quit)],
+            disabled: false,
+        },
+        Menu {
+            name: t!("common.file").into(),
+            items: vec![
+                MenuItem::action(t!("menu.new_window"), app::NewWindow),
+                MenuItem::action(t!("menu.close_window"), lifecycle::CloseWindow),
+            ],
+            disabled: false,
+        },
+    ]);
 }

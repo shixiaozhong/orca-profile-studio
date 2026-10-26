@@ -44,9 +44,9 @@ pub enum Source {
 impl Source {
     pub fn label(&self) -> String {
         match self {
-            Source::Chain(0, _) => "this file".to_owned(),
+            Source::Chain(0, _) => t!("common.this_file"),
             Source::Chain(depth, name) => format!("[{depth}] {name}"),
-            Source::Default => "default".to_owned(),
+            Source::Default => t!("common.default"),
         }
     }
 }
@@ -63,7 +63,11 @@ pub struct ValueRow {
     pub key: String,
     pub label: String,
     pub category: String,
+    /// Whether the schema defines the key; rows outside it sort last.
+    pub in_schema: bool,
     pub tooltip: String,
+    /// Original labels remain searchable when the display language changes.
+    pub search_labels: String,
     /// Type, default and limits from the schema, or a note that the key is not an option.
     pub definition: String,
     /// Nearest first; the first layer is the effective value.
@@ -98,7 +102,7 @@ impl ValueRow {
 
     fn source_text(&self) -> String {
         let source = self.source().label();
-        if self.modified { format!("{source} (edited)") } else { source }
+        if self.modified { t!("values.edited_source", source = source) } else { source }
     }
 }
 
@@ -120,7 +124,7 @@ pub fn build_rows(catalog: &Catalog, edits: &Edits, preset: usize) -> Vec<ValueR
         .into_iter()
         .map(|trace| {
             let option = schema.and_then(|schema| schema.option(trace.key));
-            let unit = option.map_or("", |option| option.sidetext.as_str());
+            let unit = catalog.translate(option.map_or("", |option| option.sidetext.as_str()));
             let layers = trace
                 .layers
                 .iter()
@@ -132,43 +136,54 @@ pub fn build_rows(catalog: &Catalog, edits: &Edits, preset: usize) -> Vec<ValueR
                         }
                         Origin::Default => Source::Default,
                     };
-                    let value = with_unit(format_value(layer.value), layer.value, unit);
+                    let value = with_unit(format_value(layer.value), layer.value, &unit);
                     Layer { source, value }
                 })
                 .collect();
             let (label, category, tooltip, definition) = match option {
                 Some(option) => {
-                    let mut definition = format!("{} · {:?}", option.type_, option.mode).to_lowercase();
+                    let mut definition = format!("{} · {}", option.type_, crate::i18n::mode(option.mode));
                     if option.nullable {
-                        definition.push_str(" · nullable");
+                        definition.push_str(&t!("values.nullable"));
                     }
                     if option.min.is_some() || option.max.is_some() {
                         let bound =
                             |bound: Option<i64>| bound.map_or_else(|| "…".to_owned(), |bound| bound.to_string());
-                        definition.push_str(&format!(" · range {}–{}", bound(option.min), bound(option.max)));
+                        definition.push_str(&t!("values.range", arg0 = bound(option.min), arg1 = bound(option.max)));
                     }
                     if !option.enum_keys.is_empty() {
-                        definition.push_str(&format!(" · one of {}", option.enum_keys.join(", ")));
+                        definition.push_str(&t!("values.enum_values", arg0 = option.enum_keys.join(", ")));
                     }
-                    let category = if option.category.is_empty() { "Other" } else { &option.category };
-                    (option.display_label().to_owned(), category.to_owned(), option.tooltip.clone(), definition)
+                    let category = if option.category.is_empty() {
+                        t!("common.other")
+                    } else {
+                        catalog.translate(&option.category)
+                    };
+                    (
+                        catalog.translate(option.display_label()),
+                        category,
+                        catalog.translate(&option.tooltip),
+                        definition,
+                    )
                 }
                 None => {
-                    let note = if schema.is_some() { "not an OrcaSlicer option" } else { "no schema loaded" };
-                    (trace.key.to_owned(), "Not in schema".to_owned(), String::new(), note.to_owned())
+                    let note = if schema.is_some() { t!("values.not_option") } else { t!("values.no_schema") };
+                    (trace.key.to_owned(), t!("common.not_in_schema"), String::new(), note.to_owned())
                 }
             };
-            let editor = EditorKind::for_option(option);
+            let editor = EditorKind::for_option(option).translated(catalog);
             let key_issues = issues
                 .iter()
                 .filter(|issue| issue.key() == Some(trace.key))
-                .map(|issue| (issue.severity(), issue.to_string()))
+                .map(|issue| (issue.severity(), crate::issue_text::issue(issue)))
                 .collect();
             ValueRow {
                 key: trace.key.to_owned(),
                 label,
                 category,
+                in_schema: option.is_some(),
                 tooltip,
+                search_labels: catalog.search_labels(option),
                 definition,
                 layers,
                 issues: key_issues,
@@ -185,9 +200,8 @@ pub fn build_rows(catalog: &Catalog, edits: &Edits, preset: usize) -> Vec<ValueR
 
 fn default_order(a: &ValueRow, b: &ValueRow) -> Ordering {
     // Keys outside the schema go last.
-    let unknown = |row: &ValueRow| row.category == "Not in schema";
-    (unknown(a), &a.category, a.label.to_lowercase(), &a.key).cmp(&(
-        unknown(b),
+    (!a.in_schema, &a.category, a.label.to_lowercase(), &a.key).cmp(&(
+        !b.in_schema,
         &b.category,
         b.label.to_lowercase(),
         &b.key,
@@ -212,17 +226,21 @@ impl Filter {
         }
         let query = self.query.trim().to_lowercase();
         query.is_empty()
-            || [&row.key, &row.label, &row.category].iter().any(|text| text.to_lowercase().contains(&query))
+            || [&row.key, &row.label, &row.category, &row.search_labels]
+                .iter()
+                .any(|text| text.to_lowercase().contains(&query))
     }
 }
 
-const COLUMNS: [(&str, &str, f32); 5] = [
-    ("category", "Category", 150.),
-    ("label", "Option", 220.),
-    ("key", "Key", 240.),
-    ("value", "Value", 260.),
-    ("source", "Source", 200.),
-];
+fn columns() -> [(&'static str, String, f32); 5] {
+    [
+        ("category", t!("common.category"), 150.),
+        ("label", t!("common.option"), 220.),
+        ("key", t!("common.key"), 240.),
+        ("value", t!("common.value"), 260.),
+        ("source", t!("common.source"), 200.),
+    ]
+}
 
 pub struct ValuesDelegate {
     rows: Vec<ValueRow>,
@@ -287,7 +305,7 @@ fn cell_text(row: &ValueRow, col_ix: usize) -> String {
 
 impl TableDelegate for ValuesDelegate {
     fn columns_count(&self, _: &App) -> usize {
-        COLUMNS.len()
+        columns().len()
     }
 
     fn rows_count(&self, _: &App) -> usize {
@@ -295,7 +313,7 @@ impl TableDelegate for ValuesDelegate {
     }
 
     fn column(&self, col_ix: usize, _: &App) -> Column {
-        let (key, name, width) = COLUMNS[col_ix];
+        let (key, name, width) = columns()[col_ix].clone();
         Column::new(key, name).width(px(width)).sortable()
     }
 
@@ -367,7 +385,7 @@ impl ValuesView {
     ) -> Self {
         let rows = build_rows(catalog, edits.read(cx), preset);
         let table = cx.new(|cx| TableState::new(ValuesDelegate::new(rows), window, cx).row_selectable(true));
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Filter by key, option or category"));
+        let search = cx.new(|cx| InputState::new(window, cx).placeholder(t!("values.filter")));
         let subscriptions = vec![
             cx.subscribe_in(&search, window, |this, search, event: &InputEvent, _, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -421,8 +439,12 @@ impl ValuesView {
         }
         self.catalog = catalog.clone();
         self.preset = preset;
+        self.search.update(cx, |state, cx| state.set_placeholder(t!("values.filter"), window, cx));
         self.rebuild(cx);
         self.sync_editor(window, cx);
+        if let Some(editor) = &self.editor {
+            editor.update(cx, |editor, cx| editor.refresh_language(catalog, window, cx));
+        }
     }
 
     /// Filters the table to `key` and selects its row, e.g. after a global search.
@@ -505,9 +527,7 @@ impl ValuesView {
         match result {
             Ok((key, count)) => {
                 self.select(key, cx);
-                self.status = (count > 0).then(|| {
-                    (true, format!("{} a batch change in {count} presets.", if redo { "Redid" } else { "Undid" }))
-                });
+                self.status = (count > 0).then(|| (true, crate::i18n::history_message(redo, count)));
             }
             Err(message) => self.status = Some((false, message)),
         }
@@ -553,7 +573,7 @@ impl ValuesView {
         let table = self.table.read(cx);
         let shown = table.delegate().visible.len();
         let total = table.delegate().rows.len();
-        let count = SharedString::from(format!("{shown} of {total} keys"));
+        let count = SharedString::from(t!("values.count", shown = shown, total = total));
         let edits = self.edits.read(cx);
         let session = edits.session(self.preset);
         let can_undo = session.is_some_and(|session| session.can_undo());
@@ -568,23 +588,27 @@ impl ValuesView {
             .child(
                 Input::new(&self.search)
                     .id("values-search")
-                    .aria_label("Filter values")
+                    .aria_label(t!("values.filter_label"))
                     .small()
                     .prefix(Icon::new(IconName::Search).small())
                     .cleanable(true)
                     .w(rems(15.)),
             )
-            .child(Checkbox::new("hide-defaults").label("Hide defaults").checked(self.filter.hide_defaults).on_click(
-                cx.listener(|this, checked: &bool, _, cx| {
-                    this.toggle(|filter, checked| filter.hide_defaults = checked, *checked, cx)
-                }),
-            ))
             .child(
-                Checkbox::new("only-this-file").label("Only this file").checked(self.filter.only_this_file).on_click(
-                    cx.listener(|this, checked: &bool, _, cx| {
+                Checkbox::new("hide-defaults")
+                    .label(t!("values.hide_defaults"))
+                    .checked(self.filter.hide_defaults)
+                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                        this.toggle(|filter, checked| filter.hide_defaults = checked, *checked, cx)
+                    })),
+            )
+            .child(
+                Checkbox::new("only-this-file")
+                    .label(t!("values.only_own"))
+                    .checked(self.filter.only_this_file)
+                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
                         this.toggle(|filter, checked| filter.only_this_file = checked, *checked, cx)
-                    }),
-                ),
+                    })),
             )
             .child(
                 div()
@@ -596,7 +620,7 @@ impl ValuesView {
                     .child(count),
             )
             .child(div().flex_1())
-            .child(Button::new("compare-with").small().label("Compare with…").on_click(cx.listener(
+            .child(Button::new("compare-with").small().label(t!("values.compare")).on_click(cx.listener(
                 |this, _, window, cx| {
                     if this.comparison.is_none() {
                         this.comparison =
@@ -609,18 +633,18 @@ impl ValuesView {
             .child(
                 Button::new("undo")
                     .small()
-                    .accessibility_label("Undo edit")
+                    .accessibility_label(t!("values.undo"))
                     .icon(IconName::Undo2)
-                    .tooltip("Undo (⌘Z)")
+                    .tooltip(t!("values.undo_shortcut"))
                     .disabled(!can_undo)
                     .on_click(cx.listener(|this, _, _, cx| this.undo(cx))),
             )
             .child(
                 Button::new("redo")
                     .small()
-                    .accessibility_label("Redo edit")
+                    .accessibility_label(t!("values.redo"))
                     .icon(IconName::Redo2)
-                    .tooltip("Redo (⇧⌘Z)")
+                    .tooltip(t!("values.redo_shortcut"))
                     .disabled(!can_redo)
                     .on_click(cx.listener(|this, _, _, cx| this.redo(cx))),
             )
@@ -628,7 +652,15 @@ impl ValuesView {
                 Button::new("save")
                     .small()
                     .icon(IconName::Save)
-                    .label(if pending == 0 { "Save…".to_owned() } else { format!("Save {pending} change(s)…") })
+                    .label(if pending == 0 {
+                        t!("common.save")
+                    } else {
+                        if pending == 1 {
+                            t!("values.save_changes.one", pending = pending)
+                        } else {
+                            t!("values.save_changes.other", pending = pending)
+                        }
+                    })
                     .disabled(pending == 0)
                     .on_click(cx.listener(|this, _, window, cx| this.confirm_save(window, cx))),
             )
@@ -668,21 +700,21 @@ impl ValuesView {
         let muted = cx.theme().muted_foreground;
         let key = row.key.clone();
         let mut section =
-            v_flex().gap_1().pt_1().child(div().text_xs().font_semibold().text_color(muted).child("Edit"));
+            v_flex().gap_1().pt_1().child(div().text_xs().font_semibold().text_color(muted).child(t!("values.edit")));
         let Some(_) = &row.own else {
             let effective = row.effective.clone();
             return section.child(
                 h_flex()
                     .gap_2()
                     .items_center()
-                    .child(div().text_color(muted).child("Inherited; override to set it in this file."))
-                    .child(Button::new("override").small().label("Override").on_click(
+                    .child(div().text_color(muted).child(t!("values.inherited_help")))
+                    .child(Button::new("override").small().label(t!("values.override")).on_click(
                         cx.listener(move |this, _, _, cx| this.set_value(&key, Some(effective.clone()), cx)),
                     )),
             );
         };
         section = section.children(self.editor.clone());
-        let reset_label = if row.inherits() { "Reset to inherited" } else { "Remove from file" };
+        let reset_label = if row.inherits() { t!("values.reset") } else { t!("values.remove") };
         section.child(
             h_flex().child(
                 Button::new("reset")
@@ -698,7 +730,7 @@ impl ValuesView {
     fn render_detail(&self, cx: &mut Context<Self>) -> (SharedString, Div) {
         let muted = cx.theme().muted_foreground;
         let Some(row) = self.selected_row(cx) else {
-            let hint = "Select a row to see every layer of the inheritance chain that sets it, and to edit it.";
+            let hint = t!("values.select_hint");
             return (SharedString::default(), div().text_color(muted).child(hint));
         };
         let content = v_flex()
@@ -708,12 +740,14 @@ impl ValuesView {
                     .gap_2()
                     .child(div().font_semibold().child(row.label.clone()))
                     .child(div().text_color(muted).child(row.key.clone()))
-                    .when(row.modified, |line| line.child(div().text_color(cx.theme().primary).child("edited"))),
+                    .when(row.modified, |line| {
+                        line.child(div().text_color(cx.theme().primary).child(t!("common.edited")))
+                    }),
             )
             .when(!row.tooltip.is_empty(), |panel| panel.child(div().text_color(muted).child(row.tooltip.clone())))
             .child(div().text_xs().text_color(muted).child(row.definition.clone()))
             .child(self.render_editor(&row, cx))
-            .child(div().pt_1().text_xs().font_semibold().text_color(muted).child("Layers (nearest first)"))
+            .child(div().pt_1().text_xs().font_semibold().text_color(muted).child(t!("values.layers")))
             .children(row.layers.iter().enumerate().map(|(ix, layer)| {
                 let source = layer.source.label();
                 h_flex()
@@ -727,15 +761,15 @@ impl ValuesView {
                     .child(div().flex_1().min_w_0().child(truncate_chars(&layer.value, 2000)))
             }))
             .when(!row.issues.is_empty(), |panel| {
-                panel.child(div().pt_1().text_xs().font_semibold().text_color(muted).child("Issues")).children(
-                    row.issues.iter().map(|(severity, message)| {
+                panel
+                    .child(div().pt_1().text_xs().font_semibold().text_color(muted).child(t!("common.issues")))
+                    .children(row.issues.iter().map(|(severity, message)| {
                         let color = severity_color(*severity, cx).unwrap_or(muted);
                         h_flex()
                             .gap_2()
                             .child(Icon::new(IconName::TriangleAlert).small().text_color(color))
-                            .child(format!("{severity}: {message}"))
-                    }),
-                )
+                            .child(format!("{}: {message}", crate::i18n::severity(*severity)))
+                    }))
             });
         (row.key.clone().into(), content)
     }
@@ -743,7 +777,7 @@ impl ValuesView {
 
 fn truncate_chars(text: &str, max: usize) -> String {
     match text.char_indices().nth(max) {
-        Some((cut, _)) => format!("{}… ({} chars)", &text[..cut], text.chars().count()),
+        Some((cut, _)) => t!("values.truncated", text = &text[..cut], count = text.chars().count()),
         None => text.to_owned(),
     }
 }
@@ -754,7 +788,7 @@ impl Render for ValuesView {
             return v_flex()
                 .size_full()
                 .gap_2()
-                .child(Button::new("close-comparison").small().label("Back to values").on_click(cx.listener(
+                .child(Button::new("close-comparison").small().label(t!("common.back_values")).on_click(cx.listener(
                     |this, _, _, cx| {
                         this.comparing = false;
                         cx.notify();
@@ -798,11 +832,11 @@ impl Render for ValuesView {
                             div()
                                 .id("values-empty")
                                 .test_support()
-                                .aria_label("No keys match the filters")
+                                .aria_label(t!("values.empty"))
                                 .p_3()
                                 .text_sm()
                                 .text_color(cx.theme().muted_foreground)
-                                .child("No keys match the filters. Clear the search or turn off a source filter."),
+                                .child(t!("values.empty_help")),
                         )
                     }),
             )
@@ -822,7 +856,9 @@ mod tests {
             key: key.to_owned(),
             label: key.replace('_', " "),
             category: category.to_owned(),
+            in_schema: true,
             tooltip: String::new(),
+            search_labels: String::new(),
             definition: String::new(),
             layers: vec![Layer { source, value: "1".to_owned() }],
             issues: Vec::new(),
@@ -835,6 +871,7 @@ mod tests {
 
     #[test]
     fn filter_by_text_and_source() {
+        let _locale = crate::i18n::test_locale();
         let own = row("nozzle_temperature", "Temperature", Source::Chain(0, "self".into()));
         let inherited = row("filament_type", "Basic", Source::Chain(2, "base".into()));
         let default = row("filament_tower_interface_print_temp", "Other", Source::Default);
@@ -855,6 +892,7 @@ mod tests {
 
     #[test]
     fn sources_order_from_the_preset_down() {
+        let _locale = crate::i18n::test_locale();
         assert!(Source::Chain(0, "z".into()) < Source::Chain(1, "a".into()));
         assert!(Source::Chain(5, "a".into()) < Source::Default);
         assert_eq!(Source::Chain(0, "x".into()).label(), "this file");
@@ -863,6 +901,7 @@ mod tests {
 
     #[test]
     fn edits_keep_the_shape_of_the_value() {
+        let _locale = crate::i18n::test_locale();
         let one = RawValue::List(vec!["220".into()]);
         assert_eq!(shaped(&one, vec!["230".into()]), RawValue::List(vec!["230".into()]));
         assert_eq!(shaped(&RawValue::Str("0.2".into()), vec!["0.3".into()]), RawValue::Str("0.3".into()));
@@ -872,6 +911,7 @@ mod tests {
 
     #[test]
     fn inherits_when_another_layer_sets_the_key() {
+        let _locale = crate::i18n::test_locale();
         let mut own_only = row("x", "Other", Source::Chain(0, "self".into()));
         assert!(!own_only.inherits());
         own_only.layers.push(Layer { source: Source::Default, value: "0".into() });

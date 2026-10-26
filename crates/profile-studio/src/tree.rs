@@ -31,13 +31,13 @@ pub enum Group {
 impl Group {
     const ALL: [Group; 5] = [Group::Models, Group::OtherPrinters, Group::Filaments, Group::Processes, Group::Templates];
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Group::Models => "Machine models",
-            Group::OtherPrinters => "Other printers",
-            Group::Filaments => "Filaments",
-            Group::Processes => "Processes",
-            Group::Templates => "Templates",
+            Group::Models => t!("common.models"),
+            Group::OtherPrinters => t!("tree.other_printers"),
+            Group::Filaments => t!("common.filaments"),
+            Group::Processes => t!("common.processes"),
+            Group::Templates => t!("common.templates"),
         }
     }
 
@@ -190,6 +190,7 @@ mod tests {
 
     #[test]
     fn node_ids_round_trip() {
+        let _locale = crate::i18n::test_locale();
         let nodes = [
             Node::Vendor(3),
             Node::Group(3, Group::Models),

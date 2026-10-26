@@ -31,7 +31,7 @@ impl EventEmitter<EditsEvent> for Edits {}
 #[non_exhaustive]
 pub struct RefreshConflict {
     pub path: PathBuf,
-    pub reason: &'static str,
+    pub reason: String,
 }
 
 impl Edits {
@@ -56,14 +56,14 @@ impl Edits {
             let dirty = session.is_dirty();
             let mut session = session.clone();
             let reason = match catalog.preset_at(&old.path).map(|index| &catalog.repo.presets()[index]) {
-                None => Some("File is missing or could not be loaded"),
-                Some(new) if old.kind != new.kind || old.meta != new.meta => Some("Preset metadata changed on disk"),
+                None => Some(t!("edits.missing")),
+                Some(new) if old.kind != new.kind || old.meta != new.meta => Some(t!("edits.metadata_changed")),
                 Some(new) => match session.rebase(&catalog.repo, new.id) {
                     Ok(()) => {
                         sessions.insert(new.id.index(), session);
                         None
                     }
-                    Err(_) => Some("Values changed on disk"),
+                    Err(_) => Some(t!("edits.values_changed")),
                 },
             };
             if let Some(reason) = reason
@@ -98,7 +98,7 @@ impl Edits {
     pub fn apply_batch(&mut self, changes: &[(usize, String, Option<RawValue>)]) -> Result<Option<u64>, String> {
         let mut seen = std::collections::BTreeSet::new();
         if changes.iter().any(|(ix, _, _)| *ix >= self.catalog.repo.presets().len() || !seen.insert(*ix)) {
-            return Err("A batch must contain one change per preset.".into());
+            return Err(t!("edits.one_change"));
         }
         self.next_group += 1;
         let group = self.next_group;
@@ -117,20 +117,15 @@ impl Edits {
 
     /// Includes saved histories: a batch stays atomic across saves and repository reindexing.
     fn group_members(&self, group: u64, redo: bool) -> Result<Vec<usize>, String> {
-        let paths = self.groups.get(&group).ok_or("Batch history is unavailable.")?;
+        let paths = self.groups.get(&group).ok_or(t!("edits.no_history"))?;
         paths
             .iter()
             .map(|path| {
-                let ix = self
-                    .catalog
-                    .preset_at(path)
-                    .ok_or("A batch member no longer exists. Reload and review the files.")?;
-                let session = self.session(ix).ok_or("A batch member's history was discarded.")?;
+                let ix = self.catalog.preset_at(path).ok_or(t!("edits.missing_member"))?;
+                let session = self.session(ix).ok_or(t!("edits.discarded_history"))?;
                 let top = if redo { session.redo_group() } else { session.undo_group() };
                 if top != Some(group) {
-                    return Err(
-                        "Undo newer edits in every batch member first; this batch cannot be changed partially.".into(),
-                    );
+                    return Err(t!("edits.newer_changes"));
                 }
                 Ok(ix)
             })
@@ -184,11 +179,11 @@ impl Edits {
         for id in repo.chain(info.id) {
             let params = self.session(id.index()).map_or(&repo.preset(id).params, EditSession::params);
             if let Some(value) = params.get(key) {
-                let source = if id == info.id { "this file".into() } else { repo.preset(id).name().to_owned() };
+                let source = if id == info.id { t!("common.this_file") } else { repo.preset(id).name().to_owned() };
                 return Some((value.clone(), source));
             }
         }
-        repo.schema()?.default_preset(info.kind).values.get(key).map(|v| (v.clone(), "default".into()))
+        repo.schema()?.default_preset(info.kind).values.get(key).map(|v| (v.clone(), t!("common.default")))
     }
 
     pub fn is_dirty(&self, preset: usize) -> bool {

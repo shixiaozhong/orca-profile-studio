@@ -13,12 +13,12 @@ pub enum Operation {
 }
 impl Operation {
     pub const ALL: [Self; 4] = [Self::Set, Self::Remove, Self::AddItem, Self::RemoveItem];
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Set => "Set value",
-            Self::Remove => "Remove key (inherit)",
-            Self::AddItem => "Add item",
-            Self::RemoveItem => "Remove item",
+            Self::Set => t!("batch.set"),
+            Self::Remove => t!("batch.remove"),
+            Self::AddItem => t!("batch.add_item"),
+            Self::RemoveItem => t!("batch.remove_item"),
         }
     }
 }
@@ -50,7 +50,7 @@ impl BatchPlan {
     }
     pub fn apply(&self, edits: &mut Edits) -> Result<Option<u64>, String> {
         if !self.is_current(edits) {
-            return Err("Edits changed after this preview. Preview again.".into());
+            return Err(t!("batch.stale_baseline"));
         }
         edits.apply_batch(&self.changes)
     }
@@ -64,25 +64,25 @@ impl BatchPlan {
         value: Option<RawValue>,
     ) -> Result<Self, String> {
         let repo = &catalog.repo;
-        let schema = repo.schema().ok_or("A schema is required for batch editing.")?;
-        let kind = selected.first().map(|id| repo.preset(*id).kind).ok_or("Select at least one preset.")?;
+        let schema = repo.schema().ok_or(t!("batch.schema_required"))?;
+        let kind = selected.first().map(|id| repo.preset(*id).kind).ok_or(t!("batch.select_required"))?;
         if !schema.belongs_to(kind, &key) {
-            return Err("Choose a key belonging to the selected preset kind.".into());
+            return Err(t!("batch.invalid_key"));
         }
         if selected.iter().any(|id| repo.preset(*id).kind != kind) {
-            return Err("Select presets of one kind.".into());
+            return Err(t!("batch.same_kind"));
         }
         let array = matches!(operation, Operation::AddItem | Operation::RemoveItem);
         if array && schema.option(&key).is_none_or(|o| o.type_ != OptionType::Strings) {
-            return Err("Item operations are available only for string arrays.".into());
+            return Err(t!("batch.string_array"));
         }
         if operation != Operation::Remove && value.is_none() {
-            return Err("Enter a value first.".into());
+            return Err(t!("batch.value_required"));
         }
         let item = if array {
-            let item = value.as_ref().and_then(RawValue::as_scalar).ok_or("Enter one array item.")?;
+            let item = value.as_ref().and_then(RawValue::as_scalar).ok_or(t!("batch.one_item"))?;
             if item.is_empty() {
-                return Err("Enter a nonempty array item.".into());
+                return Err(t!("batch.nonempty_item"));
             }
             Some(item.to_owned())
         } else {
@@ -115,10 +115,7 @@ impl BatchPlan {
                     // A preset without its own list follows its (possibly edited) ancestors.
                     let base = if own.is_some() { effective.clone() } else { inherited.clone() };
                     let Some((RawValue::List(mut items), _)) = base else {
-                        return Err(format!(
-                            "{} has a non-array value for {key}. Set a complete value first.",
-                            repo.preset(id).name()
-                        ));
+                        return Err(t!("batch.not_array", arg0 = repo.preset(id).name(), key = key));
                     };
                     let item = item.as_ref().unwrap();
                     let changed = if operation == Operation::AddItem {
@@ -143,13 +140,13 @@ impl BatchPlan {
             };
             let changed = own != next;
             let state = if inherits_result {
-                "Inherits the new value (skipped)"
+                t!("batch.inherits_skip")
             } else if !changed {
-                "Unchanged (skipped)"
+                t!("batch.unchanged")
             } else if own.is_none() && next.is_some() {
-                "New override"
+                t!("batch.new_override")
             } else {
-                "Will change"
+                t!("batch.will_change")
             };
             let before_issues = repo.check_values(id, params);
             candidate.session_mut(ix).set(&key, next.clone());
@@ -157,7 +154,9 @@ impl BatchPlan {
                 .check_values(id, candidate.session(ix).unwrap().params())
                 .into_iter()
                 .filter(|issue| !before_issues.contains(issue))
-                .map(|issue| format!("{}: {issue}", issue.severity()))
+                .map(|issue| {
+                    format!("{}: {}", crate::i18n::severity(issue.severity()), crate::issue_text::issue(&issue))
+                })
                 .collect::<Vec<_>>()
                 .join("\n");
             if changed {
@@ -169,7 +168,7 @@ impl BatchPlan {
                     format!("{} / {}", repo.vendor(repo.preset(id).vendor).name, repo.preset(id).name()),
                     describe(effective),
                     String::new(),
-                    state.into(),
+                    state,
                     new_issues,
                     String::new(),
                     repo.preset(id).path.display().to_string(),
@@ -204,7 +203,7 @@ impl BatchPlan {
     }
 }
 fn describe(value: Option<(RawValue, String)>) -> String {
-    value.map_or("(unset)".into(), |(value, source)| format!("{} — {source}", format_value(&value)))
+    value.map_or(t!("common.unset"), |(value, source)| format!("{} — {source}", format_value(&value)))
 }
 
 #[cfg(test)]
@@ -259,6 +258,7 @@ mod tests {
 
     #[test]
     fn array_preview_uses_edited_ancestors_skips_existing_items_and_preserves_files() {
+        let _locale = crate::i18n::test_locale();
         let (dir, catalog) = fixture();
         let mut edits = Edits::new(catalog.clone());
         edits
@@ -288,6 +288,7 @@ mod tests {
 
     #[test]
     fn preview_resolves_the_complete_batch_and_only_reports_new_issues() {
+        let _locale = crate::i18n::test_locale();
         let (_dir, catalog) = fixture();
         let mut edits = Edits::new(catalog.clone());
         let a = id(&catalog, "a").index();
@@ -305,6 +306,7 @@ mod tests {
 
     #[test]
     fn children_inheriting_from_a_selected_parent_are_not_overridden() {
+        let _locale = crate::i18n::test_locale();
         let (_dir, catalog) = fixture();
         let edits = Edits::new(catalog.clone());
         // `a`, `b` and `c` inherit wall_loops from `base`; the selection order does not matter.
@@ -325,6 +327,7 @@ mod tests {
 
     #[test]
     fn stale_preview_and_unsupported_item_operations_leave_sessions_unchanged() {
+        let _locale = crate::i18n::test_locale();
         let (_dir, catalog) = fixture();
         let mut edits = Edits::new(catalog.clone());
         let a = id(&catalog, "a");
@@ -341,6 +344,7 @@ mod tests {
 
     #[test]
     fn grouped_history_is_atomic_across_interleaved_edits_save_reload_and_discard() {
+        let _locale = crate::i18n::test_locale();
         let (dir, catalog) = fixture();
         let mut edits = Edits::new(catalog.clone());
         let a = id(&catalog, "a").index();
@@ -367,6 +371,7 @@ mod tests {
 
     #[test]
     fn new_edits_after_undo_invalidate_a_whole_batch_redo() {
+        let _locale = crate::i18n::test_locale();
         let (_dir, catalog) = fixture();
         let mut edits = Edits::new(catalog.clone());
         let a = id(&catalog, "a").index();

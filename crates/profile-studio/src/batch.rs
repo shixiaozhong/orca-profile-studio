@@ -28,14 +28,15 @@ impl TableDelegate for PreviewTable {
     }
     fn column(&self, col: usize, _: &App) -> Column {
         let (key, title, width) = [
-            ("preset", "Preset", 240.),
-            ("before", "Before · source", 280.),
-            ("after", "After · source", 280.),
-            ("status", "Change", 160.),
-            ("issues", "New validation issues", 340.),
-            ("descendants", "Affected descendants", 150.),
-            ("path", "File", 320.),
-        ][col];
+            ("preset", t!("common.preset"), 240.),
+            ("before", t!("batch.before_source"), 280.),
+            ("after", t!("batch.after_source"), 280.),
+            ("status", t!("batch.change"), 160.),
+            ("issues", t!("batch.new_issues"), 340.),
+            ("descendants", t!("batch.descendants"), 150.),
+            ("path", t!("common.file"), 320.),
+        ][col]
+            .clone();
         Column::new(key, title).width(px(width))
     }
     fn cell_text(&self, row: usize, col: usize, _: &App) -> String {
@@ -59,23 +60,22 @@ impl TableDelegate for PreviewTable {
                     let plan = plan.clone();
                     window.open_dialog(cx, move |dialog, _, _| {
                         let row = &plan.rows()[row];
-                        let content =
-                            v_flex().gap_3().children(
-                                [
-                                    ("File", 6),
-                                    ("Before", 1),
-                                    ("After", 2),
-                                    ("Change", 3),
-                                    ("New validation issues", 4),
-                                    ("Affected descendants", 5),
-                                ]
-                                .into_iter()
-                                .map(|(title, col)| {
-                                    v_flex().gap_1().child(div().font_semibold().child(title)).child(div().child(
-                                        if row.cell(col).is_empty() { "None" } else { row.cell(col) }.to_owned(),
-                                    ))
-                                }),
-                            );
+                        let content = v_flex().gap_3().children(
+                            [
+                                (t!("common.file"), 6),
+                                (t!("common.before"), 1),
+                                (t!("common.after"), 2),
+                                (t!("batch.change"), 3),
+                                (t!("batch.new_issues"), 4),
+                                (t!("batch.descendants"), 5),
+                            ]
+                            .into_iter()
+                            .map(|(title, col)| {
+                                v_flex().gap_1().child(div().font_semibold().child(title)).child(div().child(
+                                    if row.cell(col).is_empty() { t!("common.none") } else { row.cell(col).to_owned() },
+                                ))
+                            }),
+                        );
                         dialog.title(row.cell(0).to_owned()).w(px(680.)).child(
                             div()
                                 .id("batch-row-detail")
@@ -199,7 +199,7 @@ impl BatchView {
             preview,
             generation: 0,
             task: None,
-            status: "Choose presets and an operation, then preview the changes.".into(),
+            status: t!("batch.start"),
             draft_dirty: false,
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -218,6 +218,16 @@ impl BatchView {
         }
         self.picker.read(cx).selected(cx).into_iter().map(PresetId::index).collect()
     }
+    pub fn refresh_language(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.picker.update(cx, |picker, cx| picker.refresh_language(window, cx));
+        self.update_key_choices(window, cx);
+        self.update_operation_choices(window, cx);
+        if let Some(editor) = &self.editor {
+            editor.update(cx, |editor, cx| editor.refresh_language(&self.catalog, window, cx));
+        }
+        self.invalidate(cx);
+    }
+
     pub fn refresh(&mut self, catalog: &Arc<Catalog>, window: &mut Window, cx: &mut Context<Self>) {
         self.catalog = catalog.clone();
         self.picker.update(cx, |picker, cx| picker.refresh(catalog, window, cx));
@@ -226,7 +236,7 @@ impl BatchView {
     }
     fn invalidate(&mut self, cx: &mut Context<Self>) {
         if self.task.is_some() || self.preview.read(cx).delegate().plan.is_some() {
-            self.status = "The preview is out of date. Preview again to review the current changes.".into();
+            self.status = t!("batch.stale");
         }
         self.generation += 1;
         self.task = None;
@@ -236,7 +246,7 @@ impl BatchView {
         });
         cx.notify();
     }
-    fn reset_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn update_key_choices(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(schema) = self.catalog.repo.schema() else { return };
         let mut keys = schema.default_preset(self.kind).values.keys().cloned().collect::<Vec<_>>();
         keys.sort();
@@ -246,7 +256,7 @@ impl BatchView {
         let choices: Vec<_> = keys
             .into_iter()
             .map(|key| {
-                let label = schema.option(&key).map_or(key.as_str(), |o| o.display_label());
+                let label = self.catalog.translate(schema.option(&key).map_or(key.as_str(), |o| o.display_label()));
                 EnumChoice::new(key.clone(), format!("{label} — {key}"))
             })
             .collect();
@@ -254,10 +264,13 @@ impl BatchView {
             state.set_items(SearchableVec::new(choices), window, cx);
             state.set_selected_value(&self.key, window, cx);
         });
+    }
+    fn reset_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_key_choices(window, cx);
         self.operation = Operation::Set;
         self.reset_operation(window, cx);
     }
-    fn reset_operation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn update_operation_choices(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let strings = self
             .catalog
             .repo
@@ -274,6 +287,9 @@ impl BatchView {
             state.set_items(SearchableVec::new(choices), window, cx);
             state.set_selected_value(&(self.operation as usize), window, cx);
         });
+    }
+    fn reset_operation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_operation_choices(window, cx);
         self.reset_editor(window, cx);
     }
     fn reset_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -292,7 +308,10 @@ impl BatchView {
             // Start from the first selected preset's current value, not the schema default: an
             // untouched Preview then shows what would change instead of a mass reset to defaults.
             let current = self.selected.first().and_then(|id| self.edits.read(cx).effective(id.index(), &self.key));
-            (EditorKind::for_option(schema.option(&self.key)), current.map_or_else(|| default.clone(), |(v, _)| v))
+            (
+                EditorKind::for_option(schema.option(&self.key)).translated(&self.catalog),
+                current.map_or_else(|| default.clone(), |(v, _)| v),
+            )
         };
         let editor = cx.new(|cx| ValueEditor::new(self.key.clone(), kind, source, false, window, cx));
         self.editor_subscription = Some(cx.subscribe(&editor, |this, _, event: &ValueEditorEvent, cx| {
@@ -312,25 +331,31 @@ impl BatchView {
         let key = self.key.clone();
         let operation = self.operation;
         let value = self.editor.as_ref().and_then(|e| e.read(cx).value(cx));
-        self.status = "Preparing preview…".into();
+        self.status = t!("batch.preparing");
         let job = cx
             .background_executor()
             .spawn(async move { BatchPlan::build(&catalog, baseline, selected, key, operation, value) });
         self.task = Some(cx.spawn(async move |this, cx| {
             let result = job.await;
             this.update(cx, |this, cx| {
-                if this.generation != generation { return; }
+                if this.generation != generation {
+                    return;
+                }
                 this.task = None;
                 match result {
                     Ok(plan) if plan.is_current(this.edits.read(cx)) => {
-                        this.status = format!("{} selected · {} will change. Review values, sources and new validation issues before applying.", plan.rows().len(), plan.changed_count());
-                        this.preview.update(cx, |table, cx| { table.delegate_mut().plan = Some(Arc::new(plan)); table.refresh(cx); });
+                        this.status = t!("batch.summary", arg0 = plan.rows().len(), arg1 = plan.changed_count());
+                        this.preview.update(cx, |table, cx| {
+                            table.delegate_mut().plan = Some(Arc::new(plan));
+                            table.refresh(cx);
+                        });
                     }
-                    Ok(_) => this.status = "Edits changed. Preview again.".into(),
+                    Ok(_) => this.status = t!("batch.changed"),
                     Err(message) => this.status = message,
                 }
                 cx.notify();
-            }).ok();
+            })
+            .ok();
         }));
     }
     fn apply(&mut self, cx: &mut Context<Self>) {
@@ -346,10 +371,11 @@ impl BatchView {
         match result {
             Ok(_) => {
                 self.draft_dirty = false;
-                self.status = format!(
-                    "Applied a batch change to {} presets. Save to write these edits to disk.",
-                    plan.changed_count()
-                );
+                self.status = if plan.changed_count() == 1 {
+                    t!("batch.applied.one", arg0 = plan.changed_count())
+                } else {
+                    t!("batch.applied.other", arg0 = plan.changed_count())
+                };
             }
             Err(message) => self.status = message,
         }
@@ -363,7 +389,7 @@ impl BatchView {
             result
         });
         self.status = match result {
-            Ok(n) => format!("{} a batch change in {n} presets.", if redo { "Redid" } else { "Undid" }),
+            Ok(n) => crate::i18n::history_message(redo, n),
             Err(message) => message,
         };
         cx.notify();
@@ -408,10 +434,10 @@ impl Render for BatchView {
                     .child(
                         Button::new("batch-close")
                             .small()
-                            .label("Back to browser")
+                            .label(t!("common.back_browser"))
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(BatchEvent::Close))),
                     )
-                    .child(div().font_semibold().child("Batch edit")),
+                    .child(div().font_semibold().child(t!("common.batch_edit"))),
             )
             .child(div().flex_1().min_h_32().child(self.picker.clone()))
             .child(
@@ -422,21 +448,21 @@ impl Render for BatchView {
                             h_flex()
                                 .gap_2()
                                 .flex_wrap()
-                                .child(div().child("Key"))
+                                .child(div().child(t!("common.key")))
                                 .child(
                                     div().w_96().h_8().child(
                                         Select::new(&self.key_select)
                                             .id("batch-key")
-                                            .accessibility_label("Batch key")
+                                            .accessibility_label(t!("batch.key"))
                                             .small(),
                                     ),
                                 )
-                                .child(div().child("Operation"))
+                                .child(div().child(t!("batch.operation")))
                                 .child(
                                     div().w_56().h_8().child(
                                         Select::new(&self.operation_select)
                                             .id("batch-operation")
-                                            .accessibility_label("Batch operation")
+                                            .accessibility_label(t!("batch.operation_label"))
                                             .small(),
                                     ),
                                 ),
@@ -444,9 +470,9 @@ impl Render for BatchView {
                         .children(self.editor.clone())
                         .child(div().text_xs().text_color(cx.theme().muted_foreground).child(
                             if self.operation == Operation::Remove {
-                                "Remove this file's value to restore inheritance."
+                                t!("batch.remove_help")
                             } else {
-                                "Inherited arrays become local overrides when changed. Existing items keep their order."
+                                t!("batch.array_help")
                             },
                         )),
                 ),
@@ -459,47 +485,47 @@ impl Render for BatchView {
                     .child(
                         Button::new("batch-preview-button")
                             .small()
-                            .label("Preview")
+                            .label(t!("batch.preview"))
                             .disabled(self.task.is_some() || self.selected.is_empty())
                             .on_click(cx.listener(|this, _, _, cx| this.prepare(cx))),
                     )
                     .child(
                         Button::new("batch-apply")
                             .small()
-                            .label("Apply batch")
+                            .label(t!("batch.apply"))
                             .disabled(!apply)
                             .on_click(cx.listener(|this, _, _, cx| this.apply(cx))),
                     )
                     .child(
                         Button::new("batch-discard-input")
                             .small()
-                            .label("Reset input")
+                            .label(t!("batch.reset"))
                             .disabled(!self.draft_dirty)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.reset_editor(window, cx);
                                 this.draft_dirty = false;
-                                this.status = "Input reset. Applied edits are kept.".into();
+                                this.status = t!("batch.input_reset");
                                 cx.notify();
                             })),
                     )
                     .child(
                         Button::new("batch-undo")
                             .small()
-                            .label("Undo batch")
+                            .label(t!("batch.undo"))
                             .disabled(!undo)
                             .on_click(cx.listener(|this, _, _, cx| this.history(false, cx))),
                     )
                     .child(
                         Button::new("batch-redo")
                             .small()
-                            .label("Redo batch")
+                            .label(t!("batch.redo"))
                             .disabled(!redo)
                             .on_click(cx.listener(|this, _, _, cx| this.history(true, cx))),
                     )
                     .child(
                         Button::new("batch-save")
                             .small()
-                            .label("Save…")
+                            .label(t!("common.save"))
                             .disabled(!dirty)
                             .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
                     ),

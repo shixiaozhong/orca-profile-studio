@@ -33,21 +33,21 @@ fn render_vendor(catalog: &Catalog, vendor: usize, cx: &App) -> AnyElement {
     let contents = &catalog.vendors[vendor];
     let title = info.display_name.clone().unwrap_or_else(|| info.name.clone());
     v_flex()
-        .child(header(IconName::Building2, title, format!("vendor · {}", info.index_path.display()), cx))
+        .child(header(IconName::Building2, title, t!("details.vendor_path", arg0 = info.index_path.display()), cx))
         .child(
-            section("Vendor index", cx)
-                .child(field("Version", or_dash(&info.version), cx))
-                .child(field("Description", or_dash(&info.description), cx))
-                .child(field("Update URL", or_dash(&info.url), cx))
-                .child(field("Force update", or_dash(&info.force_update), cx)),
+            section(t!("details.vendor_index"), cx)
+                .child(field(t!("details.version"), or_dash(&info.version), cx))
+                .child(field(t!("details.description"), or_dash(&info.description), cx))
+                .child(field(t!("details.url"), or_dash(&info.url), cx))
+                .child(field(t!("details.force_update"), or_dash(&info.force_update), cx)),
         )
         .child(
-            section("Contents", cx)
-                .child(field("Machine models", contents.model_count().to_string(), cx))
-                .child(field("Printers", contents.printer_count().to_string(), cx))
-                .child(field("Filaments", contents.filaments.len().to_string(), cx))
-                .child(field("Processes", contents.processes.len().to_string(), cx))
-                .child(field("Templates", contents.templates.len().to_string(), cx)),
+            section(t!("details.contents"), cx)
+                .child(field(t!("common.models"), contents.model_count().to_string(), cx))
+                .child(field(t!("common.printers"), contents.printer_count().to_string(), cx))
+                .child(field(t!("common.filaments"), contents.filaments.len().to_string(), cx))
+                .child(field(t!("common.processes"), contents.processes.len().to_string(), cx))
+                .child(field(t!("common.templates"), contents.templates.len().to_string(), cx)),
         )
         .child(issue_totals(&contents.issues, cx))
         .into_any_element()
@@ -56,16 +56,14 @@ fn render_vendor(catalog: &Catalog, vendor: usize, cx: &App) -> AnyElement {
 fn render_group(catalog: &Catalog, vendor: usize, group: Group, cx: &App) -> AnyElement {
     let info = &catalog.repo.vendors()[vendor];
     let count = group.len(catalog, vendor);
-    let noun = if group == Group::Models { "models" } else { "presets" };
+    let summary = if group == Group::Models {
+        t!("details.models_count", vendor = info.name, count = count)
+    } else {
+        t!("details.presets_count", vendor = info.name, count = count)
+    };
     v_flex()
-        .child(header(IconName::FolderOpen, group.label(), format!("{} · {count} {noun}", info.name), cx))
-        .child(
-            div()
-                .pt_4()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child("Expand the group and select an entry to see its details."),
-        )
+        .child(header(IconName::FolderOpen, group.label(), summary, cx))
+        .child(div().pt_4().text_sm().text_color(cx.theme().muted_foreground).child(t!("details.expand")))
         .into_any_element()
 }
 
@@ -80,30 +78,30 @@ fn render_model(catalog: &Catalog, model: usize, cx: &App) -> AnyElement {
         .unwrap_or_default();
 
     let mut details = v_flex()
-        .child(header(IconName::Printer, info.id.clone(), format!("machine model · {}", info.path.display()), cx))
+        .child(header(IconName::Printer, info.id.clone(), t!("details.model_path", arg0 = info.path.display()), cx))
         .child(
-            section("Model", cx)
-                .child(field("Name", or_dash(&info.name), cx))
-                .child(field("Model ID", or_dash(&info.model_id), cx))
-                .child(field("Family", or_dash(&info.family), cx))
-                .child(field("Technology", or_dash(&info.technology), cx))
-                .child(field("Nozzle variants", join_or_dash(&info.variants), cx))
-                .child(field("Bed model", or_dash(&info.bed_model), cx))
-                .child(field("Bed texture", or_dash(&info.bed_texture), cx))
-                .child(field("Hotend model", or_dash(&info.hotend_model), cx)),
+            section(t!("details.model"), cx)
+                .child(field(t!("details.name"), or_dash(&info.name), cx))
+                .child(field(t!("details.model_id"), or_dash(&info.model_id), cx))
+                .child(field(t!("details.family"), or_dash(&info.family), cx))
+                .child(field(t!("details.technology"), or_dash(&info.technology), cx))
+                .child(field(t!("details.nozzles"), join_or_dash(&info.variants), cx))
+                .child(field(t!("details.bed_model"), or_dash(&info.bed_model), cx))
+                .child(field(t!("details.bed_texture"), or_dash(&info.bed_texture), cx))
+                .child(field(t!("details.hotend"), or_dash(&info.hotend_model), cx)),
         )
         .child(
-            section(&format!("Printers ({})", printers.len()), cx)
+            section(t!("details.printer_count", arg0 = printers.len()), cx)
                 .children(printers.iter().map(|&index| list_line(repo.presets()[index].name().to_owned()))),
         )
         .child(
-            section(&format!("Default materials ({})", info.default_materials.len()), cx)
+            section(t!("details.material_count", arg0 = info.default_materials.len()), cx)
                 .children(info.default_materials.iter().map(|material| list_line(material.clone()))),
         );
     if !info.extra.is_empty() {
         let keys: Vec<&str> = info.extra.keys().map(String::as_str).collect();
         details =
-            details.child(section("Other keys", cx).child(
+            details.child(section(t!("details.other_keys"), cx).child(
                 div().text_sm().text_color(cx.theme().muted_foreground).child(SharedString::from(keys.join(", "))),
             ));
     }
@@ -156,30 +154,30 @@ fn compatibility_section(
     compatibility: &Compatibility,
     cx: &App,
 ) -> Div {
-    let section = section("Compatibility", cx);
+    let section = section(t!("details.compatibility"), cx);
     if repo.presets()[preset].kind == PresetKind::Machine {
-        let summary = format!("{} processes · {} filaments", compatibility.processes, compatibility.filaments);
+        let summary = t!("details.compat_summary", arg0 = compatibility.processes, arg1 = compatibility.filaments);
         return section
-            .child(field("Processes", compatibility.processes.to_string(), cx))
-            .child(field("Filaments", compatibility.filaments.to_string(), cx))
+            .child(field(t!("common.processes"), compatibility.processes.to_string(), cx))
+            .child(field(t!("common.filaments"), compatibility.filaments.to_string(), cx))
             .child(div().id("compat-summary").test_support().aria_label(summary));
     }
     const SHOWN: usize = 12;
     let printers = &compatibility.printers;
-    let plural = if printers.len() == 1 { "" } else { "s" };
-    let summary = format!("{} compatible printer{plural}", printers.len());
+    let plural = if printers.len() == 1 || crate::i18n::is_chinese() { "" } else { "s" };
+    let summary = t!("details.compat_printers", arg0 = printers.len(), plural = plural);
     let mut section = section.child(div().id("compat-summary").test_support().aria_label(summary.clone()));
     if let Some(condition) = &compatibility.condition {
         let text = match condition {
             Ok(source) => source.clone(),
-            Err(err) => format!("does not parse ({err}); OrcaSlicer treats it as compatible with everything"),
+            Err(err) => t!("details.invalid_condition", err = err),
         };
-        section = section.child(field("Condition", text, cx));
+        section = section.child(field(t!("details.condition"), text, cx));
     }
-    section = section.child(field("Printers", printers.len().to_string(), cx));
+    section = section.child(field(t!("common.printers"), printers.len().to_string(), cx));
     section = section.children(printers.iter().take(SHOWN).map(|name| list_line(name.clone())));
     if printers.len() > SHOWN {
-        let more = format!("and {} more", printers.len() - SHOWN);
+        let more = t!("details.more", arg0 = printers.len() - SHOWN);
         section = section.child(div().text_sm().text_color(cx.theme().muted_foreground).child(more));
     }
     section
@@ -190,25 +188,26 @@ pub fn render_preset(catalog: &Catalog, index: usize, compatibility: Option<&Com
     let preset = &repo.presets()[index];
     let id = preset.id;
     let vendor = &repo.vendors()[preset.vendor.index()];
-    let selectable = if repo.is_selectable(id) { "selectable" } else { "template" };
+    let selectable = if repo.is_selectable(id) { t!("details.selectable") } else { t!("details.template") };
     let muted = cx.theme().muted_foreground;
 
-    let mut file = section("File", cx).child(field("Path", preset.path.display().to_string(), cx));
+    let mut file =
+        section(t!("common.file"), cx).child(field(t!("details.path"), preset.path.display().to_string(), cx));
     if preset.list_name != preset.name() {
-        file = file.child(field("Listed as", preset.list_name.clone(), cx));
+        file = file.child(field(t!("details.list_name"), preset.list_name.clone(), cx));
     }
     file = file
-        .child(field("From", or_dash(&preset.meta.from), cx))
-        .child(field("Instantiation", or_dash(&preset.meta.instantiation), cx))
-        .child(field("Setting ID", or_dash(&preset.meta.setting_id), cx))
-        .child(field("Alias", repo.alias(id).to_owned(), cx));
+        .child(field(t!("details.from"), or_dash(&preset.meta.from), cx))
+        .child(field(t!("details.instantiation"), or_dash(&preset.meta.instantiation), cx))
+        .child(field(t!("details.setting_id"), or_dash(&preset.meta.setting_id), cx))
+        .child(field(t!("details.alias"), repo.alias(id).to_owned(), cx));
     if preset.kind == PresetKind::Filament {
-        file = file.child(field("Filament ID", repo.filament_id(id).unwrap_or("—").to_owned(), cx));
+        file = file.child(field(t!("details.filament_id"), repo.filament_id(id).unwrap_or("—").to_owned(), cx));
     }
 
     let chain = repo.chain(id);
     let mut inheritance =
-        section("Inheritance (nearest first)", cx).children(chain.iter().enumerate().map(|(depth, &link)| {
+        section(t!("details.inheritance"), cx).children(chain.iter().enumerate().map(|(depth, &link)| {
             let ancestor = repo.preset(link);
             h_flex()
                 .gap_2()
@@ -225,7 +224,7 @@ pub fn render_preset(catalog: &Catalog, index: usize, compatibility: Option<&Com
             div()
                 .text_sm()
                 .text_color(cx.theme().danger)
-                .child(SharedString::from(format!("[?] {parent} (not found)"))),
+                .child(SharedString::from(t!("details.parent_missing", parent = parent))),
         );
     }
 
@@ -236,37 +235,37 @@ pub fn render_preset(catalog: &Catalog, index: usize, compatibility: Option<&Com
     };
     let resolved = repo.resolve(id);
     let from_defaults = resolved.values().filter(|resolved| resolved.origin == Origin::Default).count();
-    let mut values = section("Values", cx)
-        .child(field("Set in this file", preset.params.len().to_string(), cx))
-        .child(field("Set by the chain", (resolved.len() - from_defaults).to_string(), cx));
+    let mut values = section(t!("common.values"), cx)
+        .child(field(t!("details.own_count"), preset.params.len().to_string(), cx))
+        .child(field(t!("details.chain_count"), (resolved.len() - from_defaults).to_string(), cx));
     if repo.schema().is_some() {
-        values = values.child(field("Schema defaults", from_defaults.to_string(), cx));
+        values = values.child(field(t!("details.default_count"), from_defaults.to_string(), cx));
     }
     let values = values.children(highlights.iter().map(|&key| {
         let option = repo.schema().and_then(|schema| schema.option(key));
-        let label = option.map_or(key, |option| option.display_label());
+        let label = catalog.translate(option.map_or(key, |option| option.display_label()));
         let value = resolved.get(key).map_or_else(
             || "—".to_owned(),
             |resolved| {
                 let mut text = with_unit(
                     format_value(resolved.value),
                     resolved.value,
-                    option.map_or("", |option| option.sidetext.as_str()),
+                    &catalog.translate(option.map_or("", |option| option.sidetext.as_str())),
                 );
                 if resolved.origin == Origin::Default {
-                    text.push_str("  (default)");
+                    text.push_str(&t!("details.default_suffix"));
                 }
                 text
             },
         );
-        field(label, value, cx)
+        field(label.clone(), value, cx)
             .id(SharedString::from(format!("value-{key}")))
             .test_support()
             .aria_label(label.to_owned())
     }));
 
     let issues: Vec<_> = catalog.issues_of(index).collect();
-    let issue_list = section(&format!("Issues ({})", issues.len()), cx).children(issues.iter().map(|issue| {
+    let issue_list = section(t!("details.issue_count", arg0 = issues.len()), cx).children(issues.iter().map(|issue| {
         let color = severity_color(issue.severity(), cx).unwrap_or(muted);
         h_flex()
             .gap_2()
@@ -275,17 +274,17 @@ pub fn render_preset(catalog: &Catalog, index: usize, compatibility: Option<&Com
             .child(Icon::new(IconName::TriangleAlert).small().text_color(color))
             .child(div().w_48().flex_shrink_0().text_color(muted).child(format!(
                 "{} · {}",
-                issue.severity(),
+                crate::i18n::severity(issue.severity()),
                 issue.kind.code()
             )))
-            .child(div().flex_1().min_w_0().child(issue.kind.to_string()))
+            .child(div().flex_1().min_w_0().child(crate::issue_text::issue(&issue.kind)))
     }));
 
     v_flex()
         .child(header(
             kind_icon(preset.kind),
             preset.name().to_owned(),
-            format!("{} · {} · {selectable}", preset.kind, vendor.name),
+            format!("{} · {} · {selectable}", crate::i18n::kind(preset.kind), vendor.name),
             cx,
         ))
         .child(file)
@@ -326,19 +325,19 @@ fn header(icon: IconName, title: impl Into<SharedString>, subtitle: impl Into<Sh
         )
 }
 
-fn section(title: &str, cx: &App) -> Div {
+fn section(title: impl Into<SharedString>, cx: &App) -> Div {
     v_flex()
         .gap_1()
         .pt_4()
-        .child(div().pb_1().text_xs().font_semibold().text_color(cx.theme().muted_foreground).child(title.to_owned()))
+        .child(div().pb_1().text_xs().font_semibold().text_color(cx.theme().muted_foreground).child(title.into()))
 }
 
-fn field(label: &str, value: impl Into<SharedString>, cx: &App) -> Div {
+fn field(label: impl Into<SharedString>, value: impl Into<SharedString>, cx: &App) -> Div {
     h_flex()
         .gap_3()
         .items_start()
         .text_sm()
-        .child(div().w_40().flex_shrink_0().text_color(cx.theme().muted_foreground).child(label.to_owned()))
+        .child(div().w_40().flex_shrink_0().text_color(cx.theme().muted_foreground).child(label.into()))
         .child(div().flex_1().min_w_0().child(value.into()))
 }
 
@@ -347,11 +346,13 @@ fn list_line(text: String) -> Div {
 }
 
 fn issue_totals(totals: &BTreeMap<Severity, usize>, cx: &App) -> Div {
-    let section = section("Issues", cx);
+    let section = section(t!("common.issues"), cx);
     if totals.is_empty() {
-        return section.child(div().text_sm().child("No issues"));
+        return section.child(div().text_sm().child(t!("common.no_issues")));
     }
-    section.children(totals.iter().rev().map(|(severity, count)| field(severity.as_str(), count.to_string(), cx)))
+    section.children(
+        totals.iter().rev().map(|(severity, count)| field(crate::i18n::severity(*severity), count.to_string(), cx)),
+    )
 }
 
 fn or_dash(value: &Option<String>) -> String {
@@ -387,6 +388,7 @@ mod tests {
 
     #[test]
     fn units_preserve_encoded_percentages_and_array_shape() {
+        let _locale = crate::i18n::test_locale();
         let percent = RawValue::Str("15%".into());
         assert_eq!(with_unit(format_value(&percent), &percent, "%"), "15%");
         let list = RawValue::List(vec!["10%".into(), "20%".into()]);

@@ -70,19 +70,27 @@ impl IssueFilter {
         let query = self.query.trim().to_lowercase();
         query.is_empty() || {
             let vendor = &catalog.repo.vendors()[issue.vendor.index()].name;
-            let text = format!("{}\n{vendor}\n{}\n{}", issue.kind.code(), issue.path.display(), issue.kind);
+            let text = format!(
+                "{}\n{vendor}\n{}\n{}\n{}",
+                issue.kind.code(),
+                issue.path.display(),
+                issue.kind,
+                crate::issue_text::issue(&issue.kind)
+            );
             query.split_whitespace().all(|term| text.to_lowercase().contains(term))
         }
     }
 }
 
-const COLUMNS: [(&str, &str, f32); 5] = [
-    ("severity", "Severity", 96.),
-    ("code", "Code", 200.),
-    ("vendor", "Vendor", 140.),
-    ("file", "File", 320.),
-    ("message", "Message", 560.),
-];
+fn columns() -> [(&'static str, String, f32); 5] {
+    [
+        ("severity", t!("issues.severity"), 96.),
+        ("code", t!("issues.code"), 200.),
+        ("vendor", t!("common.vendor"), 140.),
+        ("file", t!("common.file"), 320.),
+        ("message", t!("issues.message"), 560.),
+    ]
+}
 
 pub struct IssuesDelegate {
     catalog: Arc<Catalog>,
@@ -98,11 +106,11 @@ impl IssuesDelegate {
 
     fn cell_text(&self, issue: &Issue, col_ix: usize) -> String {
         match col_ix {
-            0 => issue.severity().to_string(),
+            0 => crate::i18n::severity(issue.severity()),
             1 => issue.kind.code().to_owned(),
             2 => self.catalog.repo.vendors()[issue.vendor.index()].name.clone(),
             3 => issue.path.display().to_string(),
-            _ => issue.kind.to_string(),
+            _ => crate::issue_text::issue(&issue.kind),
         }
     }
 
@@ -139,7 +147,7 @@ impl IssuesDelegate {
 
 impl TableDelegate for IssuesDelegate {
     fn columns_count(&self, _: &App) -> usize {
-        COLUMNS.len()
+        columns().len()
     }
 
     fn rows_count(&self, _: &App) -> usize {
@@ -147,7 +155,7 @@ impl TableDelegate for IssuesDelegate {
     }
 
     fn column(&self, col_ix: usize, _: &App) -> Column {
-        let (key, name, width) = COLUMNS[col_ix];
+        let (key, name, width) = columns()[col_ix].clone();
         Column::new(key, name).width(px(width)).sortable()
     }
 
@@ -221,18 +229,46 @@ impl IssuesView {
         self.apply_filter(cx);
     }
 
+    pub fn refresh_language(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let selected =
+            self.table.read(cx).selected_row().and_then(|ix| self.table.read(cx).delegate().visible.get(ix).copied());
+        self.refresh(&self.catalog.clone(), window, cx);
+        let choices = [
+            (Severity::Info, t!("issues.all")),
+            (Severity::Warning, t!("issues.warnings")),
+            (Severity::Error, t!("issues.errors")),
+            (Severity::Fatal, t!("issues.fatal")),
+        ]
+        .into_iter()
+        .map(|(value, label)| Choice { value, label: label.into() })
+        .collect::<Vec<_>>();
+        self.severity.update(cx, |state, cx| {
+            state.set_items(SearchableVec::new(choices), window, cx);
+            state.set_selected_value(&self.filter.min_severity, window, cx);
+        });
+        self.search.update(cx, |state, cx| state.set_placeholder(t!("issues.filter"), window, cx));
+        if let Some(issue) = selected {
+            self.table.update(cx, |table, cx| {
+                if let Some(row) = table.delegate().visible.iter().position(|&ix| ix == issue) {
+                    table.set_selected_row(row, cx);
+                }
+            });
+        }
+        cx.notify();
+    }
+
     pub fn new(catalog: &Arc<Catalog>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let filter = IssueFilter::default();
         let (code_choices, vendor_choices) = filter_choices(catalog);
 
         let severities = [
-            (Severity::Info, "All severities"),
-            (Severity::Warning, "Warnings and errors"),
-            (Severity::Error, "Errors only"),
-            (Severity::Fatal, "Fatal only"),
+            (Severity::Info, t!("issues.all")),
+            (Severity::Warning, t!("issues.warnings")),
+            (Severity::Error, t!("issues.errors")),
+            (Severity::Fatal, t!("issues.fatal")),
         ];
         let severity_choices: Vec<_> =
-            severities.iter().map(|&(value, label)| Choice { value, label: label.into() }).collect();
+            severities.iter().map(|(value, label)| Choice { value: *value, label: label.clone().into() }).collect();
         let selected = severities.iter().position(|&(value, _)| value == filter.min_severity).map(IndexPath::new);
         let severity = cx.new(|cx| SelectState::new(SearchableVec::new(severity_choices), selected, window, cx));
 
@@ -244,7 +280,7 @@ impl IssuesView {
             SelectState::new(SearchableVec::new(vendor_choices), Some(IndexPath::new(0)), window, cx).searchable(true)
         });
 
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Filter by text"));
+        let search = cx.new(|cx| InputState::new(window, cx).placeholder(t!("issues.filter")));
         let mut delegate = IssuesDelegate { catalog: catalog.clone(), visible: Vec::new(), sort: None };
         delegate.apply(&filter);
         let table = cx.new(|cx| TableState::new(delegate, window, cx).row_selectable(true));
@@ -322,11 +358,11 @@ fn filter_choices(catalog: &Catalog) -> (Vec<CodeChoice>, Vec<VendorChoice>) {
         *codes.entry(issue.kind.code()).or_default() += 1;
         *vendors.entry(issue.vendor.index()).or_default() += 1;
     }
-    let mut code_choices = vec![Choice { value: None, label: "All codes".into() }];
+    let mut code_choices = vec![Choice { value: None, label: t!("issues.all_codes").into() }];
     code_choices.extend(
         codes.iter().map(|(&code, count)| Choice { value: Some(code), label: format!("{code} ({count})").into() }),
     );
-    let mut vendor_choices = vec![Choice { value: None, label: "All vendors".into() }];
+    let mut vendor_choices = vec![Choice { value: None, label: t!("common.all_vendors").into() }];
     let mut by_name: Vec<_> =
         vendors.iter().map(|(&vendor, &count)| (&repo.vendors()[vendor].name, vendor, count)).collect();
     by_name.sort();
@@ -343,13 +379,13 @@ impl Render for IssuesView {
         let muted = cx.theme().muted_foreground;
         let shown = self.table.read(cx).delegate().visible.len();
         let total = self.catalog.repo.issues().len();
-        let count = SharedString::from(format!("{shown} of {total}"));
+        let count = SharedString::from(t!("issues.count", shown = shown, total = total));
         let toolbar = h_flex()
             .gap_2()
             .flex_wrap()
             .flex_shrink_0()
             .items_center()
-            .child(div().text_sm().font_semibold().child("Issues"))
+            .child(div().text_sm().font_semibold().child(t!("common.issues")))
             .child(
                 div()
                     .id("issues-count")
@@ -363,7 +399,7 @@ impl Render for IssuesView {
                 div().w_48().h_8().flex_shrink_0().child(
                     Select::new(&self.severity)
                         .id("issues-severity")
-                        .accessibility_label("Minimum severity")
+                        .accessibility_label(t!("issues.minimum"))
                         .small()
                         .w_full(),
                 ),
@@ -372,7 +408,7 @@ impl Render for IssuesView {
                 div().w_64().h_8().flex_shrink_0().child(
                     Select::new(&self.code)
                         .id("issues-code")
-                        .accessibility_label("Issue code")
+                        .accessibility_label(t!("issues.code_label"))
                         .small()
                         .w_full()
                         .menu_width(rems(24.)),
@@ -382,7 +418,7 @@ impl Render for IssuesView {
                 div().w_48().h_8().flex_shrink_0().child(
                     Select::new(&self.vendor)
                         .id("issues-vendor")
-                        .accessibility_label("Vendor")
+                        .accessibility_label(t!("common.vendor"))
                         .small()
                         .w_full()
                         .menu_width(rems(18.)),
@@ -391,7 +427,7 @@ impl Render for IssuesView {
             .child(
                 Input::new(&self.search)
                     .id("issues-search")
-                    .aria_label("Filter issues")
+                    .aria_label(t!("issues.filter_label"))
                     .small()
                     .prefix(Icon::new(IconName::Search).small())
                     .cleanable(true)
@@ -401,18 +437,18 @@ impl Render for IssuesView {
             .child(
                 Button::new("close-issues")
                     .small()
-                    .accessibility_label("Close issues")
+                    .accessibility_label(t!("issues.close"))
                     .ghost()
                     .icon(IconName::X)
-                    .tooltip("Close issues")
+                    .tooltip(t!("issues.close"))
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(IssuesEvent::Close))),
             );
         let body = if shown == 0 {
-            let message = if total == 0 { "No issues" } else { "No issues match the filters" };
+            let message = if total == 0 { t!("common.no_issues") } else { t!("issues.empty") };
             div()
                 .id("issues-empty")
                 .test_support()
-                .aria_label(message)
+                .aria_label(message.clone())
                 .flex_1()
                 .p_4()
                 .text_sm()

@@ -109,6 +109,16 @@ impl SearchIndex {
         SearchIndex { presets, options, values }
     }
 
+    /// Adds translated labels without replacing English labels or changing stored profile values.
+    pub fn add_option_labels(&mut self, labels: impl IntoIterator<Item = (String, String)>) {
+        for (key, label) in labels {
+            if let Some(entry) = self.options.iter_mut().find(|entry| entry.key == key) {
+                entry.haystack.push('\n');
+                entry.haystack.push_str(&label.to_lowercase());
+            }
+        }
+    }
+
     /// Every whitespace-separated term of `query` must occur. Each list keeps at most `limit`
     /// hits; an empty query matches nothing.
     pub fn search(&self, query: &str, limit: usize) -> SearchResults {
@@ -215,6 +225,17 @@ mod tests {
         );
         let repo = Repository::load_with_schema(dir.path(), Schema::bundled()).unwrap();
         (dir, repo)
+    }
+
+    #[test]
+    fn translated_labels_add_search_terms_without_replacing_english_or_keys() {
+        let (_dir, repo) = fixture();
+        let mut index = SearchIndex::build(&repo);
+        index.add_option_labels([("wall_loops".into(), "墙层数".into())]);
+        for query in ["墙层数", "Wall loops", "wall_loops"] {
+            let result = index.search(query, 10);
+            assert!(result.options.iter().any(|hit| hit.key == "wall_loops"), "{query}");
+        }
     }
 
     #[test]

@@ -173,6 +173,20 @@ from the package directory).
   `ValueEditor` is shared by Values and Batch; `save::confirm` is the common save preview/commit.
   Batch Apply only changes sessions; Save keeps M3's per-file/partial-success semantics. Include
   unapplied batch input in window/open/quit protection, even while the batch view is hidden.
+- Localization (M12): `i18n::set_language` switches the process-wide locale and defers an in-place
+  refresh of all windows. Never reload profiles or rebase Edits just to translate a view. Preserve
+  retained input entities, enum values, selection and undo history; update labels/placeholders and
+  table headers in handlers, not render. Batch previews invalidate without clearing typed input.
+  `Catalog` reads one `*_zh_CN.po` from `<profiles>/../../localization/i18n/zh_CN`, or from
+  `$ORCA_LOCALIZATION_DIR/zh_CN`; no translation files are copied from OrcaSlicer. Missing entries
+  fall back to English. `issue_text` exhaustively translates IssueKind for UI only; core/CLI stay
+  English. The locale is process-wide: UI tests that only read English text hold
+  `i18n::test_locale()` (shared, runs in parallel); tests that switch language hold
+  `i18n::test_locale_switching()` (exclusive, restores English). The System preference uses the same
+  startup path in tests; `i18n::TEST_SYSTEM_LOCALE` pins the detected OS locale (English unless a
+  test sets it). Keep temporary PO files inside test fixtures. The parsed catalog is cached by path,
+  size and mtime; the missing-catalog notice is shown once per reason per window. Translation completeness and
+  placeholder parity are checked against literal `t!` keys in the app sources.
 - Saving writes into the profiles directory, i.e. the OrcaSlicer checkout. UI tests that save use a
   temporary fixture (`editable_fixture` in `app.rs`), never the real profiles.
 - App preferences live in the `SettingsStore` global (`settings.rs`), saved on every change to
@@ -195,7 +209,8 @@ from the package directory).
 
 - `rustfmt.toml`: `max_width = 120`, `use_small_heuristics = "Max"`. Run `cargo fmt` and keep
   clippy clean.
-- Identifiers, comments, CLI and UI strings in English; README is in Chinese.
+- Identifiers, comments and CLI strings in English; README is in Chinese. App UI strings live in
+  `crates/profile-studio/locales/app.yml` (en / zh-CN), accessed through `t!`; keep element IDs in English.
 - Commit messages: conventional style (`feat: …`, `fix: …`, `docs: …`) with a short bullet body,
   ending with a blank line and the trailer `Co-Authored-By: Codex (<model>) <noreply@openai.com>`,
   where `<model>` is the model this session runs on (e.g. `Codex (gpt-5-codex)`); if you are not
@@ -213,7 +228,7 @@ from the package directory).
 
 [docs/roadmap.md](docs/roadmap.md) (Chinese) is the roadmap: stages and status, key design decisions
 of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
-M1–M11. Next: M12–M13 (Chinese UI, Git diff).
+M1–M12. Next: M13 (Git diff).
 Promoting shared values to a parent, the G-code viewer and OrcaSlicer sync automation are deferred.
 When a stage is finished, move it to "已完成" there with its design decisions, mark it ✅, and update
 the status line in README, all in the stage's own commit (see the commit rule above for the 提交 column).

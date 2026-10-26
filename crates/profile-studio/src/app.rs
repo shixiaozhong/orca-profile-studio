@@ -82,7 +82,7 @@ pub fn open_window(profiles_dir: Option<PathBuf>, cx: &mut App) {
     if let Err(err) =
         gpui_kit::open_window(options, cx, |window, cx| cx.new(|cx| StudioApp::new(profiles_dir, window, cx)))
     {
-        crate::feedback::error("open-window", "Could not open a window", format!("{err}. Try New window again."), cx);
+        crate::feedback::error("open-window", t!("app.window_error"), t!("app.window_retry", err = err), cx);
     }
 }
 
@@ -98,6 +98,8 @@ pub struct StudioApp {
     managing: bool,
     batch: Option<Entity<BatchView>>,
     batching: bool,
+    /// The missing-translation reason last shown, so refreshes after saving do not repeat it.
+    translation_notice: Option<String>,
     _batch_events: Option<Subscription>,
     _management_events: Option<Subscription>,
     /// Unsaved edits of the loaded profiles.
@@ -181,8 +183,8 @@ impl StudioApp {
                 crate::feedback::window_error(
                     window.window_handle(),
                     "manage-writing",
-                    "Preset changes are being written",
-                    "Wait for the file changes to finish before closing this window.".into(),
+                    t!("lifecycle.writing"),
+                    t!("app.wait_close"),
                     cx,
                 );
                 return false;
@@ -206,6 +208,7 @@ impl StudioApp {
             managing: false,
             batch: None,
             batching: false,
+            translation_notice: None,
             _batch_events: None,
             _management_events: None,
             edits: None,
@@ -301,9 +304,7 @@ impl StudioApp {
             let old = old.clone();
             match result {
                 Ok(catalog) => self.finish_refresh(&old, Arc::new(catalog), window, cx),
-                Err(err) => {
-                    self.refresh_error = Some(format!("Could not refresh: {err}. Your edits are kept. Retry Reload."))
-                }
+                Err(err) => self.refresh_error = Some(t!("app.refresh_failed", err = err)),
             }
             cx.notify();
             return;
@@ -324,6 +325,7 @@ impl StudioApp {
             }
             Err(err) => LoadState::Failed(dir, err),
         };
+        self.report_translation_warning(window, cx);
         if matches!(self.state, LoadState::Ready(_)) && settings::get(cx).issues_open {
             self.open_issues(window, cx);
         }
@@ -339,10 +341,7 @@ impl StudioApp {
     ) {
         let Some(edits) = self.edits.clone() else { return };
         if let Err(conflicts) = edits.update(cx, |edits, _| edits.rebase(&catalog)) {
-            self.refresh_error = Some(format!(
-                "Refresh paused: {} edited file(s) changed or could not be loaded. Your edits and history are kept.",
-                conflicts.len()
-            ));
+            self.refresh_error = Some(t!("app.refresh_conflict", arg0 = conflicts.len()));
             self.refresh_conflicts = conflicts;
             return;
         }
@@ -382,10 +381,61 @@ impl StudioApp {
                 tree.reveal_item(&id, ScrollStrategy::Center, cx);
             }
         });
+        self.report_translation_warning(window, cx);
         self.sync_values(window, cx);
         let query = self.palette.as_ref().map(|palette| palette.read(cx).query(cx)).unwrap_or_default();
         self.refresh_palette(&query, cx);
         edits.update(cx, |_, cx| cx.notify());
+    }
+
+    pub fn refresh_language(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let LoadState::Ready(catalog) = &self.state {
+            let catalog = catalog.clone();
+            if let Some(values) = &self.values {
+                values.update(cx, |values, cx| values.refresh(&catalog, values.preset(), window, cx));
+            }
+            if let Some(issues) = &self.issues {
+                issues.update(cx, |issues, cx| issues.refresh_language(window, cx));
+            }
+            if let Some(management) = &self.management {
+                management.update(cx, |view, cx| view.refresh_language(window, cx));
+            }
+            if let Some(batch) = &self.batch {
+                batch.update(cx, |view, cx| view.refresh_language(window, cx));
+            }
+            self.tree.update(cx, |tree, cx| {
+                let expanded = nav::expanded_nodes(tree);
+                let items = nav::build(&catalog);
+                nav::expand(&items, &expanded);
+                tree.set_items(items, cx);
+                if let Some(node) = self.selected {
+                    tree.set_selected_item(Some(&TreeItem::new(node.id(), "")), cx);
+                }
+            });
+            let query = self.palette.as_ref().map(|p| p.read(cx).query(cx)).unwrap_or_default();
+            self.refresh_palette(&query, cx);
+            // An explicit switch to Chinese shows the notice again, even if it was dismissed before.
+            self.translation_notice = None;
+            self.report_translation_warning(window, cx);
+        }
+        cx.notify();
+    }
+
+    fn report_translation_warning(&mut self, window: &Window, cx: &mut App) {
+        if crate::i18n::is_chinese()
+            && let LoadState::Ready(catalog) = &self.state
+            && let Some(reason) = &catalog.translation_warning
+            && self.translation_notice.as_ref() != Some(reason)
+        {
+            self.translation_notice = Some(reason.clone());
+            crate::feedback::window_error(
+                window.window_handle(),
+                "translations-missing",
+                t!("localization.missing_title"),
+                t!("localization.missing_help", reason = reason),
+                cx,
+            );
+        }
     }
 
     fn choose_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -399,7 +449,7 @@ impl StudioApp {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("Open".into()),
+            prompt: Some(t!("app.open").into()),
         });
         cx.spawn_in(window, async move |this, cx| match picked.await {
             Ok(Ok(Some(mut paths))) => {
@@ -410,13 +460,7 @@ impl StudioApp {
             Ok(Err(err)) => {
                 cx.update(|window, cx| {
                     let window = window.window_handle();
-                    crate::feedback::window_error(
-                        window,
-                        "open-folder",
-                        "Could not choose a folder",
-                        err.to_string(),
-                        cx,
-                    )
+                    crate::feedback::window_error(window, "open-folder", t!("app.folder_error"), err.to_string(), cx)
                 })
                 .ok();
             }
@@ -440,13 +484,10 @@ impl StudioApp {
             let app = app.clone();
             let dir = dir.clone();
             dialog
-                .title("Discard edits and open another folder?")
+                .title(t!("app.open_title"))
                 .confirm()
-                .description(format!(
-                    "Opening {} will discard unsaved edits or unapplied input in {dirty} preset(s).",
-                    dir.display()
-                ))
-                .ok_text("Discard edits and open")
+                .description(t!("app.open_description", arg0 = dir.display(), dirty = dirty))
+                .ok_text(t!("app.open_confirm"))
                 .ok_variant(ButtonVariant::Danger)
                 .on_ok(move |_, window, cx| {
                     app.update(cx, |this, cx| this.load(dir.clone(), window, cx));
@@ -481,8 +522,8 @@ impl StudioApp {
             crate::feedback::window_error(
                 window.window_handle(),
                 "manage-writing",
-                "Preset changes are being written",
-                "Wait for the file changes to finish before closing, reloading or opening a folder.".into(),
+                t!("lifecycle.writing"),
+                t!("app.wait_write"),
                 cx,
             );
             false
@@ -506,10 +547,10 @@ impl StudioApp {
         }
         window.open_alert_dialog(cx, move |dialog, _, _| {
             dialog
-                .title("Discard edits and close this window?")
+                .title(t!("app.close_title"))
                 .width(px(640.))
                 .confirm()
-                .description("These files have unsaved edits or unapplied input. Cancel to review and save them.")
+                .description(t!("lifecycle.unsaved"))
                 .child(
                     div()
                         .id("close-files")
@@ -517,7 +558,7 @@ impl StudioApp {
                         .overflow_y_scroll()
                         .children(files.iter().map(|path| div().child(path.display().to_string()))),
                 )
-                .ok_text("Discard edits and close")
+                .ok_text(t!("app.close_confirm"))
                 .ok_variant(ButtonVariant::Danger)
                 .on_ok(|_, window, cx| {
                     remember_window_size(window, cx);
@@ -546,20 +587,19 @@ impl StudioApp {
         window.open_alert_dialog(cx, move |dialog, _, _| {
             let paths: Vec<_> = conflicts.iter().map(|conflict| conflict.path.clone()).collect();
             let app = app.clone();
-            let description = "Restore these files and retry Reload to keep their edits and history, \
-                or discard their edits and history to use the disk versions. Other edits are kept.";
+            let description = t!("app.conflict_help");
             let files = div().id("refresh-conflict-files").max_h_64().overflow_y_scroll().children(
                 conflicts.iter().map(|conflict| {
                     div().py_1().text_sm().child(format!("{} — {}", conflict.path.display(), conflict.reason))
                 }),
             );
             dialog
-                .title("Files changed on disk")
+                .title(t!("app.files_changed"))
                 .width(px(640.))
                 .confirm()
                 .description(description)
                 .child(files)
-                .ok_text("Discard edits and reload")
+                .ok_text(t!("app.discard_reload"))
                 .ok_variant(ButtonVariant::Danger)
                 .on_ok(move |_, window, cx| {
                     app.update(cx, |this, cx| {
@@ -608,8 +648,8 @@ impl StudioApp {
             crate::feedback::window_error(
                 window.window_handle(),
                 "manage-unsaved",
-                "Save applied edits first",
-                "Save or undo existing edits, and apply or discard input before managing preset files.".into(),
+                t!("app.save_first"),
+                t!("app.save_first_help"),
                 cx,
             );
             return;
@@ -641,7 +681,7 @@ impl StudioApp {
         let location = self
             .profiles_dir
             .as_ref()
-            .map_or_else(|| "No profiles directory".to_owned(), |dir| dir.display().to_string());
+            .map_or_else(|| t!("app.no_directory").to_owned(), |dir| dir.display().to_string());
         h_flex()
             .gap_2()
             .px_3()
@@ -654,7 +694,7 @@ impl StudioApp {
             .child(
                 Button::new("batch-edit")
                     .small()
-                    .label("Batch edit")
+                    .label(t!("common.batch_edit"))
                     .selected(self.batching)
                     .disabled(!matches!(self.state, LoadState::Ready(_)) || self.is_writing_files(cx))
                     .on_click(cx.listener(|this, _, window, cx| this.open_batch(window, cx))),
@@ -662,7 +702,7 @@ impl StudioApp {
             .child(
                 Button::new("manage-presets")
                     .small()
-                    .label("Presets")
+                    .label(t!("app.presets"))
                     .selected(self.managing)
                     .disabled(!matches!(self.state, LoadState::Ready(_)))
                     .on_click(cx.listener(|this, _, window, cx| this.open_management(window, cx))),
@@ -671,8 +711,8 @@ impl StudioApp {
                 Button::new("open-palette")
                     .small()
                     .icon(IconName::Search)
-                    .label("Search…")
-                    .tooltip("Search presets, options and values; run commands (⌘K)")
+                    .label(t!("app.search"))
+                    .tooltip(t!("app.search_hint"))
                     .disabled(!matches!(self.state, LoadState::Ready(_)))
                     .on_click(cx.listener(|this, _, window, cx| this.open_palette(window, cx))),
             )
@@ -680,7 +720,7 @@ impl StudioApp {
                 Button::new("toggle-issues")
                     .small()
                     .icon(IconName::TriangleAlert)
-                    .label("Issues")
+                    .label(t!("common.issues"))
                     .selected(self.issues_open)
                     .disabled(!matches!(self.state, LoadState::Ready(_)))
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_issues(window, cx))),
@@ -689,20 +729,20 @@ impl StudioApp {
                 Button::new("open")
                     .small()
                     .icon(IconName::FolderOpen)
-                    .label("Open…")
+                    .label(t!("app.open_folder"))
                     .on_click(cx.listener(|this, _, window, cx| this.choose_folder(window, cx))),
             )
             .child(
                 Button::new("reload")
                     .small()
-                    .accessibility_label("Reload profiles")
+                    .accessibility_label(t!("app.reload"))
                     .icon(IconName::RefreshCw)
-                    .tooltip("Reload from disk, keeping edits and history")
+                    .tooltip(t!("app.reload_hint"))
                     .disabled(self.profiles_dir.is_none() || self.load_task.is_some())
                     .on_click(cx.listener(|this, _, window, cx| this.reload(window, cx))),
             )
             .when(self.load_task.is_some() && matches!(self.state, LoadState::Ready(_)), |bar| {
-                bar.child(Spinner::new().small()).child(div().text_sm().child("Refreshing"))
+                bar.child(Spinner::new().small()).child(div().text_sm().child(t!("app.refreshing")))
             })
     }
 
@@ -718,11 +758,7 @@ impl StudioApp {
             return management.clone().into_any_element();
         }
         match &self.state {
-            LoadState::Empty => placeholder(
-                IconName::FolderOpen,
-                "Open OrcaSlicer's resources/profiles directory to start.".to_owned(),
-                cx,
-            ),
+            LoadState::Empty => placeholder(IconName::FolderOpen, t!("app.empty").to_owned(), cx),
             LoadState::Loading(dir) => v_flex()
                 .size_full()
                 .items_center()
@@ -733,11 +769,11 @@ impl StudioApp {
                     div()
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
-                        .child(SharedString::from(format!("Loading {}…", dir.display()))),
+                        .child(SharedString::from(t!("app.loading_path", arg0 = dir.display()))),
                 )
                 .into_any_element(),
             LoadState::Failed(dir, err) => {
-                placeholder(IconName::TriangleAlert, format!("Could not load {}: {err}", dir.display()), cx)
+                placeholder(IconName::TriangleAlert, t!("app.load_failed", arg0 = dir.display(), err = err), cx)
             }
             LoadState::Ready(catalog) => {
                 let catalog = catalog.clone();
@@ -759,11 +795,7 @@ impl StudioApp {
             Some(Node::Preset(index)) => self.render_preset(catalog, index, cx),
             Some(node) => scrolling(details::render(catalog, node, cx)).into_any_element(),
             None => scrolling(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child("Select a vendor, model or preset in the tree.")
-                    .into_any_element(),
+                div().text_sm().text_color(cx.theme().muted_foreground).child(t!("app.select_hint")).into_any_element(),
             )
             .into_any_element(),
         };
@@ -799,8 +831,8 @@ impl StudioApp {
             .underline()
             .small()
             .selected_index(self.preset_tab as usize)
-            .child(Tab::new().label("Overview"))
-            .child(Tab::new().label("Values"))
+            .child(Tab::new().label(t!("common.overview")))
+            .child(Tab::new().label(t!("common.values")))
             .on_click(cx.listener(|this, ix: &usize, window, cx| {
                 let tab = if *ix == 1 { PresetTab::Values } else { PresetTab::Overview };
                 this.set_preset_tab(tab, window, cx);
@@ -857,7 +889,8 @@ impl StudioApp {
     fn refresh_palette(&mut self, query: &str, cx: &mut Context<Self>) {
         let LoadState::Ready(catalog) = &self.state else { return };
         let preset_selected = matches!(self.selected, Some(Node::Preset(_)));
-        let (groups, targets) = palette::build(catalog, query, preset_selected, settings::get(cx).theme);
+        let (groups, targets) =
+            palette::build(catalog, query, preset_selected, settings::get(cx).theme, settings::get(cx).language);
         self.palette_entries = PaletteEntries { groups, targets };
         cx.notify();
     }
@@ -882,7 +915,7 @@ impl StudioApp {
             let command = groups
                 .into_iter()
                 .fold(Command::new(&palette).filterable(false), |command, group| command.group(group))
-                .placeholder("Search presets, options and values, or type a command…")
+                .placeholder(t!("app.palette_placeholder"))
                 .max_h(rems(27.5))
                 .on_query({
                     let app = app.clone();
@@ -914,6 +947,7 @@ impl StudioApp {
             }
         };
         match target {
+            Target::Command(AppCommand::Language(language)) => crate::i18n::set_language(language, cx),
             Target::Command(AppCommand::Reload) => self.reload(window, cx),
             Target::Command(AppCommand::Open) => self.choose_folder(window, cx),
             Target::Command(AppCommand::Theme(theme)) => settings::set_theme(theme, window, cx),
@@ -1020,22 +1054,22 @@ impl StudioApp {
         let (summary, issues) = match &self.state {
             LoadState::Ready(catalog) => {
                 let repo = &catalog.repo;
-                let summary = format!(
-                    "{} vendors · {} machine models · {} presets · loaded in {} ms",
-                    repo.vendors().len(),
-                    repo.models().len(),
-                    repo.presets().len(),
-                    catalog.load_time.as_millis()
+                let summary = t!(
+                    "app.summary",
+                    arg0 = repo.vendors().len(),
+                    arg1 = repo.models().len(),
+                    arg2 = repo.presets().len(),
+                    arg3 = catalog.load_time.as_millis()
                 );
                 let issues: Vec<String> = catalog
                     .issue_totals()
                     .iter()
                     .rev()
-                    .map(|(severity, count)| format!("{count} {severity}"))
+                    .map(|(severity, count)| format!("{count} {}", crate::i18n::severity(*severity)))
                     .collect();
-                (summary, if issues.is_empty() { "no issues".to_owned() } else { issues.join(" · ") })
+                (summary, if issues.is_empty() { t!("app.no_issues").to_owned() } else { issues.join(" · ") })
             }
-            LoadState::Loading(_) => ("Loading…".to_owned(), String::new()),
+            LoadState::Loading(_) => (t!("app.loading").to_owned(), String::new()),
             LoadState::Empty | LoadState::Failed(..) => (String::new(), String::new()),
         };
         h_flex()
@@ -1086,7 +1120,7 @@ impl Render for StudioApp {
                         )
                         .when(!self.refresh_conflicts.is_empty(), |bar| {
                             bar.child(
-                                Button::new("review-refresh-conflicts").small().label("Review files…").on_click(
+                                Button::new("review-refresh-conflicts").small().label(t!("app.review_files")).on_click(
                                     cx.listener(|this, _, window, cx| this.review_refresh_conflicts(window, cx)),
                                 ),
                             )
@@ -1239,6 +1273,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn loads_in_background_and_drills_down_to_a_printer(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let Some(dir) = profiles_dir() else { return };
         let (window, app) = open(cx, dir);
         assert!(app.read_with(cx, |app, _| matches!(app.state, LoadState::Loading(_))));
@@ -1288,6 +1323,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn values_tab_traces_each_key_to_its_layer(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let Some(dir) = profiles_dir() else { return };
         let (window, app) = open(cx, dir);
         cx.run_until_parked();
@@ -1406,6 +1442,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn edits_undoes_and_saves_values(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = editable_fixture();
         let file = dir.path().join("Acme/process/Acme 0.2.json");
         let (window, app) = open(cx, dir.path().to_path_buf());
@@ -1470,7 +1507,7 @@ mod tests {
         assert!(!dirty(&app, cx));
         cx.update_window(window.into(), |_, window, _| {
             let status = window.find("save-status").label().unwrap_or_default().to_owned();
-            assert!(status.starts_with("Saved 1 file(s)"), "{status}");
+            assert!(status.starts_with("Saved 1 file."), "{status}");
         })
         .unwrap();
 
@@ -1530,6 +1567,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn saving_refreshes_children_and_keeps_edits_made_while_loading(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = editable_fixture();
         let (window, app) = open(cx, dir.path().to_path_buf());
         cx.run_until_parked();
@@ -1593,6 +1631,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn reload_remaps_sessions_and_selection_after_preset_ids_shift(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = editable_fixture();
         let (window, app) = open(cx, dir.path().to_path_buf());
         cx.run_until_parked();
@@ -1641,6 +1680,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn refresh_conflicts_keep_history_until_explicitly_discarded(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = editable_fixture();
         let file = dir.path().join("Acme/process/Acme 0.2.json");
         let (window, app) = open(cx, dir.path().to_path_buf());
@@ -1686,6 +1726,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn library_save_refreshes_cross_vendor_values_issues_and_compatibility(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = editable_fixture();
         let write = |path: &str, text: &str| {
             let path = dir.path().join(path);
@@ -1778,6 +1819,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn missing_edited_file_and_failed_reload_keep_the_previous_snapshot(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = editable_fixture();
         let (window, app) = open(cx, dir.path().to_path_buf());
         cx.run_until_parked();
@@ -1813,6 +1855,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn partial_save_reports_the_failure_and_refreshes_after_conflict_resolution(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = editable_fixture();
         let (window, app) = open(cx, dir.path().to_path_buf());
         cx.run_until_parked();
@@ -1845,7 +1888,7 @@ mod tests {
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
             let status = window.find("save-status").label().unwrap().to_owned();
-            assert!(status.contains("Saved 1 file(s). Could not save Acme 0.2"), "{status}");
+            assert!(status.contains("Saved 1 file. Could not save Acme 0.2"), "{status}");
         })
         .unwrap();
         // A separate edit made while resolving the conflict must also survive.
@@ -1873,6 +1916,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn palette_searches_and_navigates(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = editable_fixture();
         let (window, app) = open(cx, dir.path().to_path_buf());
         cx.run_until_parked();
@@ -1927,6 +1971,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn issues_panel_filters_and_reveals_issues(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let Some(dir) = profiles_dir() else { return };
         let (window, app) = open(cx, dir);
         cx.run_until_parked();
@@ -1984,6 +2029,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn overview_shows_compatibility(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let Some(dir) = profiles_dir() else { return };
         let (window, app) = open(cx, dir);
         cx.run_until_parked();
@@ -2000,6 +2046,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn theme_commands_switch_colors(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = editable_fixture();
         let (window, _) = open(cx, dir.path().to_path_buf());
         cx.run_until_parked();
@@ -2025,6 +2072,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn layout_is_restored_and_saved(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = editable_fixture();
         let settings_dir = tempfile::tempdir().unwrap();
         let path = settings_dir.path().join("settings.json");
@@ -2066,11 +2114,276 @@ mod tests {
 
     #[gpui_kit::test]
     fn new_window_opens_another_window(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = editable_fixture();
         let (window, _) = open(cx, dir.path().to_path_buf());
         cx.run_until_parked();
         run_palette(window, "new window", cx);
         assert_eq!(cx.update(|cx| cx.windows().len()), 2);
+    }
+
+    fn localized_fixture() -> (tempfile::TempDir, PathBuf) {
+        let source = batch_fixture();
+        let dir = tempfile::tempdir().unwrap();
+        let profiles = dir.path().join("resources/profiles");
+        std::fs::create_dir_all(profiles.parent().unwrap()).unwrap();
+        std::fs::rename(source.path(), &profiles).unwrap();
+        let translations = dir.path().join("localization/i18n/zh_CN");
+        std::fs::create_dir_all(&translations).unwrap();
+        std::fs::write(
+            translations.join("Fixture_zh_CN.po"),
+            r#"
+msgid "Wall loops"
+msgstr "墙层数"
+
+msgid "Walls"
+msgstr "墙"
+
+msgid "Classic"
+msgstr "经典"
+
+msgid "Select printers"
+msgstr "选择打印机"
+"#,
+        )
+        .unwrap();
+        (dir, profiles)
+    }
+
+    #[gpui_kit::test]
+    fn language_switch_preserves_unapplied_values_and_persists_preference(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale_switching();
+        let (dir, profiles) = localized_fixture();
+        let settings_path = dir.path().join("settings.json");
+        crate::settings::Settings { language: crate::i18n::LanguagePreference::English, ..Default::default() }
+            .save(&settings_path)
+            .unwrap();
+        let (window, app) = open_with_settings(cx, profiles, Some(settings_path.clone()));
+        cx.run_until_parked();
+        run_palette(window, "Acme 0.2", cx);
+        run_palette(window, "show preset values", cx);
+        find_key(window, "wall_loops", cx);
+        management_input(window, "value-input", "7", cx);
+        let generation = app.read_with(cx, |app, _| app.load_generation);
+        run_palette(window, "Language: 中文", cx);
+        assert_eq!(
+            app.read_with(cx, |app, _| app.load_generation),
+            generation,
+            "locale switching does not reload profiles"
+        );
+        assert_eq!(
+            crate::settings::Settings::load(&settings_path).unwrap().language,
+            crate::i18n::LanguagePreference::Chinese
+        );
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("batch-edit").label(), Some("批量编辑"));
+            assert_eq!(window.find("value-input").value(), Some("7"));
+            assert!(!app.read(cx).unsaved_files(cx).is_empty());
+        })
+        .unwrap();
+        let values = app.read_with(cx, |app, _| app.values.clone().unwrap());
+        let (headers, rows) = values.read_with(cx, |view, cx| view.table().read(cx).dump(cx));
+        assert_eq!(headers[1], "配置项");
+        assert_eq!(rows[0][1], "墙层数");
+        assert_eq!(rows[0][3], "2");
+        assert_eq!(rows[0][4], "本文件");
+        click(window, "apply", cx);
+        click(window, "save", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("save-preview").label(), Some("将要保存的修改"));
+            assert_eq!(window.find("cancel").label(), Some("取消"));
+            window.press("escape", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let results = catalog(&app, cx).search.search("墙层数", 10);
+        assert!(results.options.iter().any(|hit| hit.key == "wall_loops"));
+        run_palette(window, "墙层数", cx);
+        assert_eq!(first_row(&app, cx).0, "wall_loops");
+        assert!(
+            crate::issue_text::issue(&profile_core::IssueKind::UnknownKey { key: "custom_key".into() })
+                .contains("不是 OrcaSlicer 配置项")
+        );
+        run_palette(window, "语言 English", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("batch-edit").label(), Some("Batch edit"));
+            assert_eq!(window.find("value-input").value(), Some("7"));
+        })
+        .unwrap();
+        assert_eq!(first_row(&app, cx).1, "7");
+        click(window, "undo", cx);
+        assert_eq!(first_row(&app, cx).1, "2");
+        run_palette(window, "Language: 中文", cx);
+        cx.simulate_window_resize(window.into(), size(px(960.), px(720.)));
+        cx.update(|cx| gpui_kit::component::Theme::update(cx, |theme| theme.font_size = px(20.)));
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            for id in ["batch-edit", "manage-presets", "save", "value-input"] {
+                let bounds = window.find(id).bounds();
+                assert!(bounds.right() <= px(960.) && bounds.bottom() <= px(720.), "{id}: {bounds:?}");
+            }
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn language_switch_keeps_batch_selection_and_input_in_every_window(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale_switching();
+        let (_dir, profiles) = localized_fixture();
+        let (window, app) = open(cx, profiles);
+        cx.run_until_parked();
+        run_palette(window, "new window", cx);
+        let other = cx.windows().into_iter().find(|w| w.window_id() != window.window_id()).unwrap();
+        click(window, "batch-edit", cx);
+        click(window, "manage-select-shown", cx);
+        management_input(window, "value-input", "6", cx);
+        click(window, "batch-preview-button", cx);
+        assert_eq!(batch_rows(&app, cx).len(), 3);
+        run_palette(window, "Language: 中文", cx);
+        assert!(batch_rows(&app, cx).is_empty(), "preview language is refreshed by generating a new preview");
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("value-input").value(), Some("6"));
+            assert_eq!(window.find("manage-count").label(), Some("已选 3 项 · 显示 3 项"));
+        })
+        .unwrap();
+        cx.update_window(other, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("batch-edit").label(), Some("批量编辑"));
+        })
+        .unwrap();
+        click(window, "batch-preview-button", cx);
+        assert!(batch_rows(&app, cx).iter().any(|row| row[2].starts_with("6 — 本文件")));
+        run_palette(window, "语言 English", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("value-input").value(), Some("6"));
+            assert_eq!(window.find("manage-count").label(), Some("3 selected · 3 shown"));
+        })
+        .unwrap();
+        click(window, "batch-discard-input", cx);
+        click(window, "manage-presets", cx);
+        management_input(window, "manage-name", "Unsaved copy name", cx);
+        run_palette(window, "Language: 中文", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("manage-name").value(), Some("Unsaved copy name"));
+            assert_eq!(window.find("manage-preview-button").label(), Some("预览变更…"));
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn saved_language_localizes_startup_and_preserves_comparison_selection(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale_switching();
+        let (dir, profiles) = localized_fixture();
+        let path = dir.path().join("settings.json");
+        crate::settings::Settings { language: crate::i18n::LanguagePreference::Chinese, ..Default::default() }
+            .save(&path)
+            .unwrap();
+        let (window, app) = open_with_settings(cx, profiles, Some(path));
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("batch-edit").label(), Some("批量编辑"));
+        })
+        .unwrap();
+        let loaded = catalog(&app, cx);
+        let kind = crate::value_editor::EditorKind::for_option(loaded.repo.schema().unwrap().option("wall_generator"))
+            .translated(&loaded);
+        if let crate::value_editor::EditorKind::Enum(choices) = kind {
+            use gpui_kit::component::select::SelectItem as _;
+            assert!(choices.iter().any(|choice| choice.value() == "classic" && choice.title().as_ref() == "经典"));
+        } else {
+            panic!("wall_generator is an enum");
+        }
+        run_palette(window, "Acme 0.2", cx);
+        run_palette(window, "显示预设参数", cx);
+        find_key(window, "wall_loops", cx);
+        management_input(window, "value-input", "4", cx);
+        click(window, "apply", cx);
+        click(window, "compare-with", cx);
+        choose_comparison(window, "fdm_process_common", cx);
+        management_input(window, "compare-search", "墙层数", cx);
+        cx.update_window(window.into(), |_, window, cx| window.click(("row", 0usize), cx)).unwrap();
+        cx.run_until_parked();
+        run_palette(window, "语言 English", cx);
+        let values = app.read_with(cx, |app, _| app.values.clone().unwrap());
+        let comparison = values.read_with(cx, |v, _| v.comparison().clone());
+        let rows = comparison.read_with(cx, |v, cx| v.table().read(cx).dump(cx).1);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0][1], "Wall loops");
+        assert_eq!((rows[0][3].as_str(), rows[0][4].as_str()), ("4", "2"));
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("compare-search").value(), Some("墙层数"));
+            assert_eq!(window.find("compare-detail").label(), Some("wall_loops"));
+        })
+        .unwrap();
+        run_palette(window, "Language: 中文", cx);
+        assert_eq!(comparison.read_with(cx, |v, cx| v.table().read(cx).dump(cx).1[0][1].clone()), "墙层数");
+    }
+
+    #[gpui_kit::test]
+    fn system_language_follows_the_operating_system_at_startup(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale_switching();
+        *crate::i18n::TEST_SYSTEM_LOCALE.lock().unwrap() = "zh-Hans-CN".into();
+        let dir = editable_fixture();
+        // No settings file: the preference is System, applied by the same startup path as the app.
+        let (window, _app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("batch-edit").label(), Some("批量编辑"));
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn chinese_falls_back_without_a_catalog_and_localizes_issue_rows(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale_switching();
+        let dir = editable_fixture();
+        let file = dir.path().join("Acme/process/Acme 0.2.json");
+        let mut doc = profile_core::Document::parse(std::fs::read_to_string(&file).unwrap()).unwrap();
+        doc.set("unknown_fixture_key", &profile_core::RawValue::Str("1".into()));
+        std::fs::write(file, doc.text()).unwrap();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "Acme 0.2", cx);
+        run_palette(window, "show preset values", cx);
+        find_key(window, "wall_loops", cx);
+        run_palette(window, "show issues", cx);
+        run_palette(window, "Language: 中文", cx);
+        let values = app.read_with(cx, |app, _| app.values.clone().unwrap());
+        assert_eq!(values.read_with(cx, |v, cx| v.table().read(cx).dump(cx).1[0][1].clone()), "Wall loops");
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find("dismiss-error").visible());
+        })
+        .unwrap();
+        click(window, "dismiss-error", cx);
+        // Once dismissed, a refresh (here: Reload; saving takes the same path) does not bring it back.
+        cx.run_until_parked();
+        cx.executor().advance_clock(std::time::Duration::from_secs(3));
+        cx.run_until_parked();
+        let shown = |cx: &mut TestAppContext| {
+            cx.update_window(window.into(), |_, window, cx| window.notifications(cx).len()).unwrap()
+        };
+        assert_eq!(shown(cx), 0);
+        click(window, "reload", cx);
+        cx.run_until_parked();
+        assert_eq!(shown(cx), 0, "the missing-translation notice is not repeated after a refresh");
+
+        let issues = app.read_with(cx, |app, _| app.issues.clone().unwrap());
+        let rows = issues.read_with(cx, |v, cx| v.table().read(cx).dump(cx).1);
+        assert!(rows.iter().any(|row| row[4].contains("不是 OrcaSlicer 配置项")));
+        assert!(rows.iter().all(|row| ["警告", "错误", "致命错误"].contains(&row[0].as_str())));
+        run_palette(window, "语言 English", cx);
+        let rows = issues.read_with(cx, |v, cx| v.table().read(cx).dump(cx).1);
+        assert!(rows.iter().all(|row| ["warning", "error", "fatal"].contains(&row[0].as_str())));
     }
 
     fn batch_fixture() -> tempfile::TempDir {
@@ -2123,6 +2436,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn batch_edit_previews_three_files_and_undoes_from_values_after_save(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = batch_fixture();
         let files = ["fdm_process_common.json", "Acme 0.2.json", "Acme 0.3.json"]
             .map(|f| dir.path().join("Acme/process").join(f));
@@ -2182,6 +2496,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn batch_input_starts_from_current_values_and_choosing_a_key_is_not_unsaved(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = batch_fixture();
         let common = dir.path().join("Acme/process/fdm_process_common.json");
         std::fs::write(
@@ -2209,6 +2524,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn batch_array_items_keep_each_list_and_filters_invalidate_previews(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = batch_fixture();
         let files = ["fdm_process_common.json", "Acme 0.2.json", "Acme 0.3.json"]
             .map(|f| dir.path().join("Acme/process").join(f));
@@ -2258,6 +2574,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn batch_preview_validation_input_protection_and_small_window_layout(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = batch_fixture();
         let (window, app) = open(cx, dir.path().to_path_buf());
         cx.run_until_parked();
@@ -2360,6 +2677,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn manages_new_copy_rename_and_delete_with_explicit_previews(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = management_fixture();
         let (window, app) = open(cx, dir.path().to_path_buf());
         cx.run_until_parked();
@@ -2413,6 +2731,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn batch_copy_keeps_inheritance_and_applies_multiple_values(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = management_fixture();
         let (window, app) = open(cx, dir.path().to_path_buf());
         cx.run_until_parked();
@@ -2443,6 +2762,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn management_rejects_collisions_and_stale_previews_without_writing(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = management_fixture();
         let (window, app) = open(cx, dir.path().to_path_buf());
         cx.run_until_parked();
@@ -2469,6 +2789,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn management_preserves_existing_edits_and_filters_selection_by_model(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = management_fixture();
         let path = dir.path().join("Acme.json");
         let mut manifest: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
@@ -2524,6 +2845,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn management_write_finishes_before_close_quit_or_folder_switch(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = management_fixture();
         let (window, app) = open(cx, dir.path().to_path_buf());
         cx.run_until_parked();
@@ -2556,6 +2878,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn long_management_preview_keeps_confirmation_visible_in_a_small_window(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = management_fixture();
         let (window, _) = open(cx, dir.path().to_path_buf());
         cx.run_until_parked();
@@ -2586,6 +2909,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn enum_editor_and_keyboard_save_follow_focus_and_confirmation(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = editable_fixture();
         let (window, app) = open(cx, dir.path().to_path_buf());
         cx.run_until_parked();
@@ -2640,6 +2964,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn opening_a_folder_requires_explicit_discard_and_cancellation_keeps_edits(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = editable_fixture();
         let other = editable_fixture();
         let (window, app) = open(cx, dir.path().to_path_buf());
@@ -2674,6 +2999,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn settings_save_errors_are_visible_deduplicated_and_retryable(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = editable_fixture();
         let storage = tempfile::tempdir().unwrap();
         let folder = storage.path().join("nested");
@@ -2699,6 +3025,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn invalid_settings_and_window_errors_have_user_visible_feedback(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = editable_fixture();
         let storage = tempfile::tempdir().unwrap();
         let path = storage.path().join("settings.json");
@@ -2717,6 +3044,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn window_errors_only_reach_their_window(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = editable_fixture();
         let (first, _) = open(cx, dir.path().to_path_buf());
         let (second, _) = open(cx, dir.path().to_path_buf());
@@ -2731,6 +3059,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn startup_error_can_be_reported_without_a_window(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         cx.update(super::init);
         cx.update(|cx| crate::feedback::error("open-window", "Could not open a window", "Platform error".into(), cx));
         cx.run_until_parked();
@@ -2741,6 +3070,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn native_close_and_close_shortcut_protect_edits_and_unapplied_text(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = editable_fixture();
         let (window, app) = open(cx, dir.path().to_path_buf());
         cx.run_until_parked();
@@ -2785,6 +3115,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn quit_checks_all_windows_and_rechecks_new_edits_before_discarding(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = editable_fixture();
         let (first, app) = open(cx, dir.path().to_path_buf());
         cx.run_until_parked();
@@ -2825,6 +3156,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn small_window_and_larger_type_keep_controls_inside_their_regions(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = editable_fixture();
         let (window, app) = open(cx, dir.path().to_path_buf());
         cx.run_until_parked();
@@ -2856,6 +3188,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn saving_keeps_the_folders_the_user_expanded(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = editable_fixture();
         let (window, app) = open(cx, dir.path().to_path_buf());
         cx.run_until_parked();
@@ -2889,6 +3222,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn a_saved_file_changed_elsewhere_does_not_pause_the_refresh(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = editable_fixture();
         let file = dir.path().join("Acme/process/Acme 0.2.json");
         let (window, app) = open(cx, dir.path().to_path_buf());
@@ -2917,6 +3251,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn reports_a_directory_that_cannot_be_loaded(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let missing = std::env::temp_dir().join("profile-studio-missing-profiles");
         let (_, app) = open(cx, missing);
         cx.run_until_parked();
@@ -2946,6 +3281,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn compares_presets_with_edits_filters_and_sources(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let dir = editable_fixture();
         let (window, app) = open(cx, dir.path().to_path_buf());
         cx.run_until_parked();
@@ -3028,6 +3364,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn compares_real_abs_nozzle_variants(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
         let Some(dir) = profiles_dir() else { return };
         let (window, app) = open(cx, dir);
         cx.run_until_parked();

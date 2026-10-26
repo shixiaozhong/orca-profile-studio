@@ -4,6 +4,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::command::{CommandGroup, CommandItem};
 
 use crate::catalog::Catalog;
+use crate::i18n::LanguagePreference;
 use crate::settings::ThemePreference;
 
 /// Hits shown per result group.
@@ -20,10 +21,14 @@ pub enum AppCommand {
     BatchEdit,
     NewWindow,
     Theme(ThemePreference),
+    Language(LanguagePreference),
 }
 
 impl AppCommand {
-    const ALL: [AppCommand; 11] = [
+    const ALL: [AppCommand; 14] = [
+        AppCommand::Language(LanguagePreference::System),
+        AppCommand::Language(LanguagePreference::English),
+        AppCommand::Language(LanguagePreference::Chinese),
         AppCommand::Reload,
         AppCommand::Open,
         AppCommand::ShowOverview,
@@ -39,15 +44,16 @@ impl AppCommand {
 
     fn label(self) -> String {
         match self {
-            AppCommand::Reload => "Reload profiles from disk".to_owned(),
-            AppCommand::Open => "Open profiles directory…".to_owned(),
-            AppCommand::ShowOverview => "Show preset overview".to_owned(),
-            AppCommand::ShowValues => "Show preset values".to_owned(),
-            AppCommand::ShowIssues => "Show issues".to_owned(),
-            AppCommand::BatchEdit => "Batch edit".to_owned(),
-            AppCommand::ManagePresets => "Manage presets".to_owned(),
-            AppCommand::NewWindow => "New window…".to_owned(),
-            AppCommand::Theme(theme) => format!("Theme: {}", theme.label()),
+            AppCommand::Language(language) => t!("language.command", language = language.label()),
+            AppCommand::Reload => t!("palette.reload"),
+            AppCommand::Open => t!("palette.open"),
+            AppCommand::ShowOverview => t!("palette.overview"),
+            AppCommand::ShowValues => t!("palette.values"),
+            AppCommand::ShowIssues => t!("palette.issues"),
+            AppCommand::BatchEdit => t!("common.batch_edit"),
+            AppCommand::ManagePresets => t!("common.manage_presets"),
+            AppCommand::NewWindow => t!("palette.new_window"),
+            AppCommand::Theme(theme) => t!("palette.theme", arg0 = theme.label()),
         }
     }
 
@@ -62,6 +68,7 @@ impl AppCommand {
             AppCommand::BatchEdit => IconName::SlidersHorizontal,
             AppCommand::NewWindow => IconName::AppWindow,
             AppCommand::Theme(_) => IconName::Palette,
+            AppCommand::Language(_) => IconName::Languages,
         }
     }
 
@@ -75,7 +82,8 @@ impl AppCommand {
             | AppCommand::BatchEdit
             | AppCommand::ManagePresets
             | AppCommand::NewWindow
-            | AppCommand::Theme(_) => true,
+            | AppCommand::Theme(_)
+            | AppCommand::Language(_) => true,
         }
     }
 }
@@ -99,6 +107,7 @@ pub fn build(
     query: &str,
     preset_selected: bool,
     theme: ThemePreference,
+    language: LanguagePreference,
 ) -> (Vec<CommandGroup>, Vec<Vec<Target>>) {
     let repo = &catalog.repo;
     let lower = query.trim().to_lowercase();
@@ -111,11 +120,11 @@ pub fn build(
         .map(|command| {
             let item = CommandItem::new().label(command.label()).icon(command.icon());
             // The current theme carries a check mark.
-            let item = item.checked(command == AppCommand::Theme(theme));
+            let item = item.checked(command == AppCommand::Theme(theme) || command == AppCommand::Language(language));
             (item, Target::Command(command))
         })
         .collect();
-    groups.push(("Commands".to_owned(), commands));
+    groups.push((t!("palette.commands"), commands));
 
     if !lower.is_empty() {
         let results = catalog.search.search(query, LIMIT);
@@ -127,21 +136,21 @@ pub fn build(
             .presets
             .iter()
             .map(|id| {
-                let label = format!("{} ({})", describe(id.index()), repo.preset(*id).kind);
+                let label = format!("{} ({})", describe(id.index()), crate::i18n::kind(repo.preset(*id).kind));
                 (CommandItem::new().label(label).icon(IconName::File), Target::Preset(id.index()))
             })
             .collect();
-        groups.push((format!("Presets ({})", results.total_presets), presets));
+        groups.push((t!("palette.presets", arg0 = results.total_presets), presets));
         if preset_selected {
             let options = results
                 .options
                 .iter()
                 .map(|hit| {
-                    let label = format!("{} — {}", hit.label, hit.key);
+                    let label = format!("{} — {}", catalog.translate(&hit.label), hit.key);
                     (CommandItem::new().label(label).icon(IconName::SlidersHorizontal), Target::Option(hit.key.clone()))
                 })
                 .collect();
-            groups.push((format!("Options ({})", results.total_options), options));
+            groups.push((t!("palette.options", arg0 = results.total_options), options));
         }
         let values = results
             .values
@@ -154,7 +163,7 @@ pub fn build(
                 )
             })
             .collect();
-        groups.push((format!("Values set in files ({})", results.total_values), values));
+        groups.push((t!("palette.values_group", arg0 = results.total_values), values));
     }
 
     groups

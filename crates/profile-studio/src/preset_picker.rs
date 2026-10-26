@@ -54,12 +54,13 @@ impl TableDelegate for PresetSelection {
     }
     fn column(&self, col: usize, _: &App) -> Column {
         let (key, label, width) = [
-            ("selected", "Select", 70.),
-            ("vendor", "Vendor", 140.),
-            ("name", "Preset", 280.),
-            ("parent", "Inherits", 240.),
-            ("path", "File", 320.),
-        ][col];
+            ("selected", t!("common.select"), 70.),
+            ("vendor", t!("common.vendor"), 140.),
+            ("name", t!("common.preset"), 280.),
+            ("parent", t!("common.inherits"), 240.),
+            ("path", t!("common.file"), 320.),
+        ][col]
+            .clone();
         Column::new(key, label).width(px(width))
     }
     fn cell_text(&self, row: usize, col: usize, _: &App) -> String {
@@ -85,8 +86,8 @@ impl TableDelegate for PresetSelection {
         if col == 0 {
             let path = preset.path.clone();
             Checkbox::new(SharedString::from(format!("choose-{}", path.display())))
-                .label("Select")
-                .accessibility_label(format!("Select {}", preset.name()))
+                .label(t!("common.select"))
+                .accessibility_label(t!("picker.select_preset", arg0 = preset.name()))
                 .checked(self.selected.contains(&path))
                 .on_click(cx.listener(move |table, checked: &bool, _, cx| {
                     if *checked {
@@ -127,9 +128,9 @@ impl PresetPicker {
         let kinds = PresetKind::ALL
             .iter()
             .enumerate()
-            .map(|(value, kind)| Choice { value, title: kind.as_str().into() })
+            .map(|(value, kind)| Choice { value, title: crate::i18n::kind(*kind).into() })
             .collect::<Vec<_>>();
-        let mut vendors = vec![Choice { value: 0, title: "All vendors".into() }];
+        let mut vendors = vec![Choice { value: 0, title: t!("common.all_vendors").into() }];
         vendors.extend(
             catalog
                 .repo
@@ -149,9 +150,9 @@ impl PresetPicker {
             )
             .searchable(true)
         });
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search presets"));
-        let model = cx.new(|cx| InputState::new(window, cx).placeholder("Filter by printer model"));
-        let issue = cx.new(|cx| InputState::new(window, cx).placeholder("Filter by issue code"));
+        let search = cx.new(|cx| InputState::new(window, cx).placeholder(t!("picker.search")));
+        let model = cx.new(|cx| InputState::new(window, cx).placeholder(t!("picker.model")));
+        let issue = cx.new(|cx| InputState::new(window, cx).placeholder(t!("picker.issue")));
         let selected = initial.map(|ix| catalog.repo.presets()[ix].path.clone()).into_iter().collect();
         let table = cx.new(|cx| {
             TableState::new(PresetSelection { catalog: catalog.clone(), visible: Vec::new(), selected }, window, cx)
@@ -225,6 +226,36 @@ impl PresetPicker {
         self.vendor
     }
 
+    pub fn refresh_language(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let kinds = PresetKind::ALL
+            .iter()
+            .enumerate()
+            .map(|(value, kind)| Choice { value, title: crate::i18n::kind(*kind).into() })
+            .collect::<Vec<_>>();
+        self.kind_select.update(cx, |state, cx| {
+            state.set_items(SearchableVec::new(kinds), window, cx);
+            state.set_selected_value(&(self.kind as usize), window, cx);
+        });
+        let mut vendors = vec![Choice { value: 0, title: t!("common.all_vendors").into() }];
+        vendors.extend(
+            self.catalog
+                .repo
+                .vendors()
+                .iter()
+                .enumerate()
+                .map(|(ix, v)| Choice { value: ix + 1, title: v.name.clone().into() }),
+        );
+        self.vendor_select.update(cx, |state, cx| {
+            state.set_items(SearchableVec::new(vendors), window, cx);
+            state.set_selected_value(&self.vendor.map_or(0, |ix| ix + 1), window, cx);
+        });
+        self.search.update(cx, |state, cx| state.set_placeholder(t!("picker.search"), window, cx));
+        self.model.update(cx, |state, cx| state.set_placeholder(t!("picker.model"), window, cx));
+        self.issue.update(cx, |state, cx| state.set_placeholder(t!("picker.issue"), window, cx));
+        self.table.update(cx, |table, cx| table.refresh(cx));
+        cx.notify();
+    }
+
     pub fn refresh(&mut self, catalog: &Arc<Catalog>, window: &mut Window, cx: &mut Context<Self>) {
         let vendor = self.vendor.and_then(|ix| catalog.remap_vendor(&self.catalog, ix));
         self.vendor = vendor;
@@ -236,7 +267,7 @@ impl PresetPicker {
                 .selected
                 .retain(|path| catalog.preset_at(path).is_some_and(|ix| catalog.repo.presets()[ix].kind == self.kind));
         });
-        let mut choices = vec![Choice { value: 0, title: "All vendors".into() }];
+        let mut choices = vec![Choice { value: 0, title: t!("common.all_vendors").into() }];
         choices.extend(
             catalog
                 .repo
@@ -338,11 +369,11 @@ impl PresetPicker {
 impl Render for PresetPicker {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let delegate = self.table.read(cx).delegate();
-        let count = format!(
-            "{} selected · {} shown{}",
-            delegate.selected.len(),
-            delegate.visible.len(),
-            if self.model_task.is_some() { " · filtering models" } else { "" }
+        let count = t!(
+            "picker.count",
+            arg0 = delegate.selected.len(),
+            arg1 = delegate.visible.len(),
+            arg2 = if self.model_task.is_some() { t!("picker.filtering") } else { String::new() }
         );
         v_flex()
             .size_full()
@@ -353,30 +384,34 @@ impl Render for PresetPicker {
                     .flex_wrap()
                     .flex_shrink_0()
                     .child(div().w_40().h_8().child(
-                        Select::new(&self.kind_select).id("manage-kind").accessibility_label("Preset kind").small(),
+                        Select::new(&self.kind_select).id("manage-kind").accessibility_label(t!("picker.kind")).small(),
                     ))
                     .child(
                         div().w_48().h_8().child(
                             Select::new(&self.vendor_select)
                                 .id("manage-vendor")
-                                .accessibility_label("Vendor filter")
+                                .accessibility_label(t!("picker.vendor"))
                                 .small(),
                         ),
                     )
                     .child(
                         Input::new(&self.search)
                             .id("manage-search")
-                            .aria_label("Search presets to manage")
+                            .aria_label(t!("picker.search_label"))
                             .small()
                             .w_56(),
                     )
                     .child(
-                        Input::new(&self.model).id("manage-model").aria_label("Printer model filter").small().w_56(),
+                        Input::new(&self.model).id("manage-model").aria_label(t!("picker.model_label")).small().w_56(),
                     ),
             )
             .when(self.issue_filter, |panel| {
                 panel.child(
-                    Input::new(&self.issue).id("batch-issue-filter").aria_label("Issue code filter").small().w_64(),
+                    Input::new(&self.issue)
+                        .id("batch-issue-filter")
+                        .aria_label(t!("picker.issue_label"))
+                        .small()
+                        .w_64(),
                 )
             })
             .child(
@@ -388,7 +423,7 @@ impl Render for PresetPicker {
                         Button::new("manage-select-shown")
                             .small()
                             .disabled(self.model_task.is_some())
-                            .label("Select shown")
+                            .label(t!("picker.select_shown"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.table.update(cx, |table, cx| {
                                     let paths: Vec<_> = table
@@ -402,7 +437,7 @@ impl Render for PresetPicker {
                                 });
                             })),
                     )
-                    .child(Button::new("manage-clear-selection").small().label("Clear selection").on_click(
+                    .child(Button::new("manage-clear-selection").small().label(t!("picker.clear")).on_click(
                         cx.listener(|this, _, _, cx| {
                             this.table.update(cx, |table, cx| {
                                 table.delegate_mut().selected.clear();
