@@ -188,8 +188,8 @@ from the package directory).
 
 [docs/roadmap.md](docs/roadmap.md) (Chinese) is the roadmap: stages and status, key design decisions
 of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
-M1–M8; M9 review/fixes are implemented and awaiting user validation in a real window. Next: M10–M13 (batch edit, new/copy/rename
-presets, Chinese UI, Git diff); the G-code viewer and OrcaSlicer sync automation are deferred. When a stage is finished, move it to "已完成" there with its design
+M1–M8; M9 review/fixes are implemented and awaiting user validation in a real window. Next: M10–M13 (new/copy/batch-copy/rename
+presets, batch edit incl. array elements, Chinese UI, Git diff); the G-code viewer and OrcaSlicer sync automation are deferred. When a stage is finished, move it to "已完成" there with its design
 decisions, and update the status line in README, all in the stage's own commit (see the
 commit rule above for the 提交 column).
 
