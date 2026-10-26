@@ -176,6 +176,11 @@ from the package directory).
 - Commit messages: conventional style (`feat: …`, `fix: …`, `docs: …`) with a short bullet body,
   ending with the Co-Authored-By line from the session's attribution reminder. Commit only when
   asked. No remote is configured yet.
+- One task, one commit: code, tests and docs (roadmap, README, AGENTS.md/CLAUDE.md) go together.
+  A commit cannot contain its own hash (amending changes it), so never make a follow-up commit
+  just to record a hash. Put the stage in the subject instead (`feat: … (M10)`), leave the
+  roadmap's 提交 cell as `待补`, and fill it with the short hash (`git log --grep '(M10)'`) in
+  the next commit that edits the roadmap anyway.
 - `Cargo.toml` deliberately has no `license` field; the user has not chosen one.
 - `rust-version = "1.88"` makes Cargo pick older dependency versions; the local toolchain is 1.97.
 
@@ -185,7 +190,8 @@ from the package directory).
 of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
 M1–M8; M9 review/fixes are implemented and awaiting user validation in a real window. Next: M10–M13 (batch edit, new/copy/rename
 presets, Chinese UI, Git diff); the G-code viewer and OrcaSlicer sync automation are deferred. When a stage is finished, move it to "已完成" there with its design
-decisions and commit, and update the status line in README.
+decisions, and update the status line in README, all in the stage's own commit (see the
+commit rule above for the 提交 column).
 
 Changing the exporter is work in another repository (`../OrcaSlicer`); confirm with the user first.
 
