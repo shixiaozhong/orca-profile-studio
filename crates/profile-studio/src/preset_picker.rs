@@ -112,6 +112,8 @@ pub struct PresetPicker {
     vendor_select: Entity<SelectState<SearchableVec<Choice>>>,
     search: Entity<InputState>,
     model: Entity<InputState>,
+    issue: Entity<InputState>,
+    issue_filter: bool,
     model_matches: BTreeSet<usize>,
     model_generation: u64,
     model_task: Option<Task<()>>,
@@ -149,6 +151,7 @@ impl PresetPicker {
         });
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search presets"));
         let model = cx.new(|cx| InputState::new(window, cx).placeholder("Filter by printer model"));
+        let issue = cx.new(|cx| InputState::new(window, cx).placeholder("Filter by issue code"));
         let selected = initial.map(|ix| catalog.repo.presets()[ix].path.clone()).into_iter().collect();
         let table = cx.new(|cx| {
             TableState::new(PresetSelection { catalog: catalog.clone(), visible: Vec::new(), selected }, window, cx)
@@ -178,6 +181,11 @@ impl PresetPicker {
                     this.apply_filter(cx);
                 }
             }),
+            cx.subscribe(&issue, |this, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.apply_filter(cx);
+                }
+            }),
             cx.observe(&table, |_, _, cx| cx.notify()),
         ];
         let mut picker = Self {
@@ -189,6 +197,8 @@ impl PresetPicker {
             vendor_select,
             search,
             model,
+            issue,
+            issue_filter: false,
             model_matches: BTreeSet::new(),
             model_generation: 0,
             model_task: None,
@@ -199,8 +209,15 @@ impl PresetPicker {
     }
 
     pub fn selected(&self, cx: &App) -> Vec<PresetId> {
+        if self.model_task.is_some() {
+            return Vec::new();
+        }
         self.table.read(cx).delegate().selected()
     }
+    pub fn enable_issue_filter(&mut self) {
+        self.issue_filter = true;
+    }
+
     pub fn kind(&self) -> PresetKind {
         self.kind
     }
@@ -281,12 +298,17 @@ impl PresetPicker {
     fn apply_filter(&mut self, cx: &mut Context<Self>) {
         let query = self.search.read(cx).value().to_lowercase();
         let model = !self.model.read(cx).value().trim().is_empty();
+        let issue = self.issue.read(cx).value().trim().to_lowercase();
         let repo = &self.catalog.repo;
         let visible = repo
             .presets()
             .iter()
             .filter(|p| {
-                p.kind == self.kind
+                (issue.is_empty()
+                    || self.catalog.preset_issues[p.id.index()]
+                        .iter()
+                        .any(|&ix| repo.issues()[ix].kind.code().contains(&issue)))
+                    && p.kind == self.kind
                     && self.vendor.is_none_or(|v| p.vendor.index() == v)
                     && (!model || self.model_matches.contains(&p.id.index()))
                     && query.split_whitespace().all(|word| {
@@ -352,6 +374,11 @@ impl Render for PresetPicker {
                         Input::new(&self.model).id("manage-model").aria_label("Printer model filter").small().w_56(),
                     ),
             )
+            .when(self.issue_filter, |panel| {
+                panel.child(
+                    Input::new(&self.issue).id("batch-issue-filter").aria_label("Issue code filter").small().w_64(),
+                )
+            })
             .child(
                 h_flex()
                     .gap_2()

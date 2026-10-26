@@ -1,4 +1,6 @@
 mod app;
+mod batch;
+mod batch_plan;
 mod catalog;
 mod compare;
 mod details;
@@ -9,8 +11,10 @@ mod lifecycle;
 mod manage;
 mod palette;
 mod preset_picker;
+mod save;
 mod settings;
 mod tree;
+mod value_editor;
 mod values;
 
 use std::path::{Path, PathBuf};

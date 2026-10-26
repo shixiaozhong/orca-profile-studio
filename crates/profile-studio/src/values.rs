@@ -7,20 +7,19 @@ use std::sync::Arc;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
-use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectState};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::table::{Column, ColumnSort, DataTable, TableDelegate, TableEvent, TableState};
-use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, IndexPath, Sizable as _, StyledExt as _, WindowExt as _, h_flex, v_flex,
-};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use profile_core::{OptionType, Origin, RawValue, Severity};
+use profile_core::{Origin, RawValue, Severity};
 
 use crate::catalog::Catalog;
 use crate::compare::CompareView;
 use crate::details::{format_value, severity_color, with_unit};
-use crate::edits::{Edits, EditsEvent};
+use crate::edits::Edits;
+pub use crate::value_editor::EditorKind;
+use crate::value_editor::{ValueEditor, ValueEditorEvent};
 
 actions!(values, [UndoEdit, RedoEdit, SaveEdits]);
 
@@ -56,36 +55,6 @@ impl Source {
 pub struct Layer {
     pub source: Source,
     pub value: String,
-}
-
-/// An enum value offered in the editor: what is stored, and what the GUI calls it.
-#[derive(Debug, Clone, PartialEq)]
-pub struct EnumChoice {
-    value: String,
-    label: SharedString,
-}
-
-impl gpui_kit::component::select::SelectItem for EnumChoice {
-    type Value = String;
-
-    fn title(&self) -> SharedString {
-        self.label.clone()
-    }
-
-    fn value(&self) -> &String {
-        &self.value
-    }
-}
-
-/// How a value is edited.
-#[derive(Debug, Clone, PartialEq)]
-pub enum EditorKind {
-    Bool,
-    Enum(Vec<EnumChoice>),
-    /// Text; lists are edited one item per line.
-    Text,
-    /// G-code and other multi-line strings, edited as raw text.
-    Multiline,
 }
 
 /// One key of a preset, flattened to display strings.
@@ -189,24 +158,7 @@ pub fn build_rows(catalog: &Catalog, edits: &Edits, preset: usize) -> Vec<ValueR
                     (trace.key.to_owned(), "Not in schema".to_owned(), String::new(), note.to_owned())
                 }
             };
-            let editor = match option {
-                Some(option) if option.type_ == OptionType::Bool => EditorKind::Bool,
-                Some(option) if option.type_ == OptionType::Enum && !option.enum_keys.is_empty() => {
-                    // Loading accepts `enum_keys`; the GUI names them through `enum_values` / `enum_labels`.
-                    let label_of = |key: &str| {
-                        let position = option.enum_values.iter().position(|value| value == key);
-                        position.and_then(|ix| option.enum_labels.get(ix)).cloned().unwrap_or_else(|| key.to_owned())
-                    };
-                    let choices = option
-                        .enum_keys
-                        .iter()
-                        .map(|key| EnumChoice { value: key.clone(), label: label_of(key).into() })
-                        .collect();
-                    EditorKind::Enum(choices)
-                }
-                Some(option) if option.multiline => EditorKind::Multiline,
-                _ => EditorKind::Text,
-            };
+            let editor = EditorKind::for_option(option);
             let key_issues = issues
                 .iter()
                 .filter(|issue| issue.key() == Some(trace.key))
@@ -240,22 +192,6 @@ fn default_order(a: &ValueRow, b: &ValueRow) -> Ordering {
         b.label.to_lowercase(),
         &b.key,
     ))
-}
-
-/// Builds a value in the shape of `template`: a string stays a string, an array stays an array.
-fn shaped(template: &RawValue, items: Vec<String>) -> RawValue {
-    match (template, items.as_slice()) {
-        (RawValue::Str(_), [single]) => RawValue::Str(single.clone()),
-        _ => RawValue::List(items),
-    }
-}
-
-/// The text an editor starts with: list items one per line.
-fn editor_text(value: &RawValue) -> String {
-    match value {
-        RawValue::Str(text) => text.clone(),
-        RawValue::List(items) => items.join("\n"),
-    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -403,25 +339,6 @@ impl TableDelegate for ValuesDelegate {
     }
 }
 
-/// The control editing the selected key.
-enum Control {
-    Bool,
-    Enum(Entity<SelectState<SearchableVec<EnumChoice>>>),
-    Line(Entity<InputState>),
-    /// List items one per line, or a multi-line string as is.
-    Text(Entity<TextareaState>),
-    /// An array of multi-line strings, which one text box cannot represent.
-    Unsupported,
-}
-
-struct Editor {
-    key: String,
-    /// The value the control was filled from; a different value (undo, redo) rebuilds it.
-    source: RawValue,
-    control: Control,
-    _subscription: Option<Subscription>,
-}
-
 pub struct ValuesView {
     catalog: Arc<Catalog>,
     edits: Entity<Edits>,
@@ -431,7 +348,8 @@ pub struct ValuesView {
     filter: Filter,
     /// Key of the selected row; survives filtering.
     selected: Option<String>,
-    editor: Option<Editor>,
+    editor: Option<Entity<ValueEditor>>,
+    editor_subscription: Option<Subscription>,
     status: Option<(bool, String)>,
     focus: FocusHandle,
     comparison: Option<Entity<CompareView>>,
@@ -479,6 +397,7 @@ impl ValuesView {
             filter: Filter::default(),
             selected: None,
             editor: None,
+            editor_subscription: None,
             status: None,
             focus: cx.focus_handle(),
             comparison: None,
@@ -492,13 +411,7 @@ impl ValuesView {
     }
 
     pub fn has_unapplied_input(&self, cx: &App) -> bool {
-        let Some(editor) = &self.editor else { return false };
-        let text = match &editor.control {
-            Control::Line(input) => input.read(cx).value(),
-            Control::Text(input) => input.read(cx).value(),
-            _ => return false,
-        };
-        text.as_ref() != editor_text(&editor.source)
+        self.editor.as_ref().is_some_and(|editor| editor.read(cx).has_unapplied_input(cx))
     }
 
     /// Keep the retained controls (including unapplied text), filter, sort and selected key.
@@ -577,23 +490,28 @@ impl ValuesView {
     }
 
     fn undo(&mut self, cx: &mut Context<Self>) {
-        let preset = self.preset;
-        let key = self.edits.update(cx, |edits, cx| {
-            let key = edits.session_mut(preset).undo();
-            cx.notify();
-            key
-        });
-        self.select(key, cx);
+        self.history(false, cx);
+    }
+    fn redo(&mut self, cx: &mut Context<Self>) {
+        self.history(true, cx);
     }
 
-    fn redo(&mut self, cx: &mut Context<Self>) {
-        let preset = self.preset;
-        let key = self.edits.update(cx, |edits, cx| {
-            let key = edits.session_mut(preset).redo();
+    fn history(&mut self, redo: bool, cx: &mut Context<Self>) {
+        let result = self.edits.update(cx, |edits, cx| {
+            let result = edits.history(self.preset, redo);
             cx.notify();
-            key
+            result
         });
-        self.select(key, cx);
+        match result {
+            Ok((key, count)) => {
+                self.select(key, cx);
+                self.status = (count > 0).then(|| {
+                    (true, format!("{} a batch change in {count} presets.", if redo { "Redid" } else { "Undid" }))
+                });
+            }
+            Err(message) => self.status = Some((false, message)),
+        }
+        cx.notify();
     }
 
     /// Selects the key an undo or redo changed, so the change is visible.
@@ -605,51 +523,7 @@ impl ValuesView {
         }
     }
 
-    fn save(&mut self, cx: &mut Context<Self>) {
-        let (paths, error) = self.edits.update(cx, |edits, cx| {
-            let result = edits.save_all();
-            // A partial save still changes the repository and must refresh its dependents.
-            if !result.0.is_empty() {
-                cx.emit(EditsEvent::Saved);
-            }
-            cx.notify();
-            result
-        });
-        self.status = Some(match error {
-            None => (true, format!("Saved {} file(s).", paths.len())),
-            Some((preset, err)) => (
-                false,
-                format!(
-                    "Saved {} file(s). Could not save {}: {err}",
-                    paths.len(),
-                    self.catalog.repo.presets()[preset].name()
-                ),
-            ),
-        });
-        cx.notify();
-    }
-
-    /// Applies the text control of the selected key.
-    fn apply_text(&mut self, cx: &mut Context<Self>) {
-        let (Some(row), Some(editor)) = (self.selected_row(cx), self.editor.as_ref()) else { return };
-        let template = row.own.clone().unwrap_or(row.effective.clone());
-        let value = match &editor.control {
-            Control::Line(input) => shaped(&template, vec![input.read(cx).value().to_string()]),
-            Control::Text(text) => {
-                let text = text.read(cx).value().to_string();
-                if row.editor == EditorKind::Multiline {
-                    shaped(&template, vec![text])
-                } else {
-                    shaped(&template, text.lines().map(str::to_owned).collect())
-                }
-            }
-            _ => return,
-        };
-        self.set_value(&row.key, Some(value), cx);
-    }
-
-    /// Creates or refreshes the control for the selected key. Called from the handlers that
-    /// change the selection or the values, never from `render`: the controls own input state.
+    /// Retain input until its key or baseline changes. Construction happens only in handlers.
     fn sync_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(row) = self.selected_row(cx) else {
             self.editor = None;
@@ -659,50 +533,20 @@ impl ValuesView {
             self.editor = None;
             return;
         };
-        if self.editor.as_ref().is_some_and(|editor| editor.key == row.key && editor.source == own) {
+        if self.editor.as_ref().is_some_and(|editor| {
+            let editor = editor.read(cx);
+            editor.key() == row.key && editor.source() == &own
+        }) {
             return;
         }
-        let (control, subscription) = match &row.editor {
-            EditorKind::Bool => (Control::Bool, None),
-            EditorKind::Enum(choices) => {
-                let current = own.as_scalar().and_then(|value| choices.iter().position(|choice| choice.value == value));
-                let delegate = SearchableVec::new(choices.clone());
-                let state = cx.new(|cx| SelectState::new(delegate, current.map(IndexPath::new), window, cx));
-                let key = row.key.clone();
-                let template = own.clone();
-                let subscription = cx.subscribe_in(
-                    &state,
-                    window,
-                    move |this, _, event: &SelectEvent<SearchableVec<EnumChoice>>, _, cx| {
-                        let SelectEvent::Confirm(Some(value)) = event else { return };
-                        this.set_value(&key, Some(shaped(&template, vec![value.clone()])), cx);
-                    },
-                );
-                (Control::Enum(state), Some(subscription))
+        let key = row.key.clone();
+        let editor = cx.new(|cx| ValueEditor::new(row.key, row.editor, own, true, window, cx));
+        self.editor_subscription = Some(cx.subscribe(&editor, move |this, _, event: &ValueEditorEvent, cx| {
+            if let ValueEditorEvent::Apply(value) = event {
+                this.set_value(&key, Some(value.clone()), cx);
             }
-            EditorKind::Multiline if matches!(&own, RawValue::List(items) if items.len() > 1) => {
-                (Control::Unsupported, None)
-            }
-            EditorKind::Multiline => {
-                let text = editor_text(&own);
-                (Control::Text(cx.new(|cx| TextareaState::new(window, cx).default_value(text))), None)
-            }
-            EditorKind::Text if matches!(own, RawValue::Str(_)) => {
-                let text = editor_text(&own);
-                let state = cx.new(|cx| InputState::new(window, cx).default_value(text));
-                let subscription = cx.subscribe_in(&state, window, |this, _, event: &InputEvent, _, cx| {
-                    if matches!(event, InputEvent::PressEnter { .. }) {
-                        this.apply_text(cx);
-                    }
-                });
-                (Control::Line(state), Some(subscription))
-            }
-            EditorKind::Text => {
-                let text = editor_text(&own);
-                (Control::Text(cx.new(|cx| TextareaState::new(window, cx).default_value(text))), None)
-            }
-        };
-        self.editor = Some(Editor { key: row.key.clone(), source: own, control, _subscription: subscription });
+        }));
+        self.editor = Some(editor);
     }
 
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -790,63 +634,14 @@ impl ValuesView {
             )
     }
 
-    fn render_confirmation(&self, cx: &App) -> Div {
-        let muted = cx.theme().muted_foreground;
-        let edits = self.edits.read(cx);
-        let repo = &self.catalog.repo;
-        let mut panel = v_flex().gap_1();
-        let dirty = edits.dirty();
-        for &preset in &dirty {
-            let info = &repo.presets()[preset];
-            panel = panel.child(div().pt_1().text_color(muted).child(SharedString::from(format!(
-                "{} — {}",
-                info.name(),
-                info.path.display()
-            ))));
-            for change in edits.session(preset).map(|session| session.pending()).unwrap_or_default() {
-                let show = |value: &Option<RawValue>| {
-                    value.as_ref().map_or("(inherited)".to_owned(), |value| truncate_chars(&format_value(value), 80))
-                };
-                panel = panel.child(div().pl_3().child(SharedString::from(format!(
-                    "{}: {} → {}",
-                    change.key,
-                    show(&change.before),
-                    show(&change.after)
-                ))));
-            }
-        }
-        panel
-    }
-
     fn confirm_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.edits.read(cx).dirty().is_empty() || window.has_active_dialog(cx) {
-            return;
-        }
-        let view = cx.entity();
-        window.open_alert_dialog(cx, move |dialog, _, cx| {
-            let content = view.read(cx).render_confirmation(cx);
-            let count = view.read(cx).edits.read(cx).dirty().len();
-            let view = view.clone();
-            dialog
-                .title("Save changes to disk?")
-                .width(px(640.))
-                .confirm()
-                .description("Only applied edits are included. Existing file formatting is preserved.")
-                .child(
-                    div()
-                        .id("save-preview")
-                        .test_support()
-                        .aria_label("Changes to save")
-                        .max_h(rems(24.))
-                        .overflow_y_scroll()
-                        .text_sm()
-                        .child(content),
-                )
-                .ok_text(format!("Save {count} file(s)"))
-                .on_ok(move |_, _, cx| {
-                    view.update(cx, |view, cx| view.save(cx));
-                    true
-                })
+        let view = cx.entity().downgrade();
+        crate::save::confirm(&self.edits, window, cx, move |status, cx| {
+            view.update(cx, |view, cx| {
+                view.status = Some(status);
+                cx.notify();
+            })
+            .ok();
         });
     }
 
@@ -874,7 +669,7 @@ impl ValuesView {
         let key = row.key.clone();
         let mut section =
             v_flex().gap_1().pt_1().child(div().text_xs().font_semibold().text_color(muted).child("Edit"));
-        let Some(own) = &row.own else {
+        let Some(_) = &row.own else {
             let effective = row.effective.clone();
             return section.child(
                 h_flex()
@@ -886,67 +681,7 @@ impl ValuesView {
                     )),
             );
         };
-        let control = match self.editor.as_ref().filter(|editor| editor.key == row.key).map(|editor| &editor.control) {
-            Some(Control::Bool) => {
-                let checked = own.as_scalar() == Some("1");
-                let template = own.clone();
-                let key = key.clone();
-                Checkbox::new("value-bool")
-                    .label("Enabled")
-                    .checked(checked)
-                    .on_click(cx.listener(move |this, checked: &bool, _, cx| {
-                        let value = if *checked { "1" } else { "0" };
-                        this.set_value(&key, Some(shaped(&template, vec![value.to_owned()])), cx);
-                    }))
-                    .into_any_element()
-            }
-            Some(Control::Enum(state)) => Select::new(state)
-                .id("value-enum")
-                .accessibility_label(format!("Value for {}", row.key))
-                .w_80()
-                .max_w_full()
-                .into_any_element(),
-            Some(Control::Line(state)) => h_flex()
-                .gap_2()
-                .child(
-                    Input::new(state)
-                        .id("value-input")
-                        .aria_label(format!("Value for {}", row.key))
-                        .small()
-                        .w_80()
-                        .min_w_0(),
-                )
-                .child(
-                    Button::new("apply")
-                        .small()
-                        .label("Apply")
-                        .on_click(cx.listener(|this, _, _, cx| this.apply_text(cx))),
-                )
-                .into_any_element(),
-            Some(Control::Text(state)) => v_flex()
-                .gap_1()
-                .child(Textarea::new(state).aria_label(format!("Value for {}", row.key)).h(rems(7.)))
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .child(
-                            Button::new("apply")
-                                .small()
-                                .label("Apply")
-                                .on_click(cx.listener(|this, _, _, cx| this.apply_text(cx))),
-                        )
-                        .when(row.editor != EditorKind::Multiline, |line| {
-                            line.child(div().text_xs().text_color(muted).child("One item per line"))
-                        }),
-                )
-                .into_any_element(),
-            Some(Control::Unsupported) => div()
-                .text_color(muted)
-                .child("This value has several multi-line items; edit it in the file.")
-                .into_any_element(),
-            None => div().into_any_element(),
-        };
-        section = section.child(control);
+        section = section.children(self.editor.clone());
         let reset_label = if row.inherits() { "Reset to inherited" } else { "Remove from file" };
         section.child(
             h_flex().child(
@@ -1078,7 +813,8 @@ impl Render for ValuesView {
 
 #[cfg(test)]
 mod tests {
-    use super::{EditorKind, Filter, Layer, Source, ValueRow, shaped};
+    use super::{EditorKind, Filter, Layer, Source, ValueRow};
+    use crate::value_editor::shaped;
     use profile_core::RawValue;
 
     fn row(key: &str, category: &str, source: Source) -> ValueRow {

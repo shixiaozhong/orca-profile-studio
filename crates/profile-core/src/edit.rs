@@ -19,6 +19,12 @@ pub struct Change {
     pub after: Option<RawValue>,
 }
 
+#[derive(Debug, Clone)]
+struct HistoryEntry {
+    change: Change,
+    group: Option<u64>,
+}
+
 /// The values a preset file sets, as edited so far.
 #[derive(Debug, Clone)]
 pub struct EditSession {
@@ -26,8 +32,8 @@ pub struct EditSession {
     /// The own values as last loaded or saved.
     saved: IndexMap<String, RawValue>,
     current: IndexMap<String, RawValue>,
-    undo: Vec<Change>,
-    redo: Vec<Change>,
+    undo: Vec<HistoryEntry>,
+    redo: Vec<HistoryEntry>,
 }
 
 impl EditSession {
@@ -61,13 +67,30 @@ impl EditSession {
     /// Sets a key, or with `None` removes it so the inherited value applies again.
     /// Returns whether anything changed.
     pub fn set(&mut self, key: &str, value: Option<RawValue>) -> bool {
+        self.set_grouped(key, value, None)
+    }
+
+    /// Records a change belonging to a caller-owned cross-session undo group.
+    pub fn set_in_group(&mut self, key: &str, value: Option<RawValue>, group: u64) -> bool {
+        self.set_grouped(key, value, Some(group))
+    }
+
+    pub fn undo_group(&self) -> Option<u64> {
+        self.undo.last().and_then(|entry| entry.group)
+    }
+
+    pub fn redo_group(&self) -> Option<u64> {
+        self.redo.last().and_then(|entry| entry.group)
+    }
+
+    fn set_grouped(&mut self, key: &str, value: Option<RawValue>, group: Option<u64>) -> bool {
         let before = self.current.get(key).cloned();
         if before == value {
             return false;
         }
         let change = Change { key: key.to_owned(), before, after: value };
         self.apply(&change.key, change.after.clone());
-        self.undo.push(change);
+        self.undo.push(HistoryEntry { change, group });
         self.redo.clear();
         true
     }
@@ -82,19 +105,21 @@ impl EditSession {
 
     /// Reverts the last change and returns its key.
     pub fn undo(&mut self) -> Option<String> {
-        let change = self.undo.pop()?;
+        let entry = self.undo.pop()?;
+        let change = &entry.change;
         self.apply(&change.key, change.before.clone());
         let key = change.key.clone();
-        self.redo.push(change);
+        self.redo.push(entry);
         Some(key)
     }
 
     /// Re-applies the last undone change and returns its key.
     pub fn redo(&mut self) -> Option<String> {
-        let change = self.redo.pop()?;
+        let entry = self.redo.pop()?;
+        let change = &entry.change;
         self.apply(&change.key, change.after.clone());
         let key = change.key.clone();
-        self.undo.push(change);
+        self.undo.push(entry);
         Some(key)
     }
 
@@ -234,6 +259,28 @@ mod tests {
         assert!(!session.can_redo(), "a new change clears the redo history");
         assert_eq!(session.undo().as_deref(), Some("wall_loops"));
         assert!(session.is_modified("wall_loops"));
+    }
+
+    #[test]
+    fn group_identity_survives_save_rebase_and_history_but_noops_add_nothing() {
+        let (dir, repo) = fixture();
+        let id = repo.find(PresetKind::Process, "base")[0];
+        let mut session = EditSession::new(&repo, id);
+        assert!(session.set_in_group("wall_loops", s("3"), 42));
+        assert!(!session.set_in_group("wall_loops", s("3"), 43));
+        assert_eq!(session.undo_group(), Some(42));
+        session.save(&repo).unwrap();
+        let reloaded = Repository::load(dir.path()).unwrap();
+        session.rebase(&reloaded, id).unwrap();
+        session.undo();
+        assert_eq!(session.redo_group(), Some(42));
+        assert!(session.is_dirty());
+        session.redo();
+        assert!(!session.is_dirty());
+        session.set("layer_height", s("0.3"));
+        assert_eq!(session.undo_group(), None);
+        session.undo();
+        assert_eq!(session.undo_group(), Some(42));
     }
 
     #[test]

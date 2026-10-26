@@ -206,6 +206,22 @@ impl Document {
             self.insert(key, value);
             return;
         }
+        // Unique keys can retain unchanged array elements verbatim, including unusual whitespace
+        // and escaped strings. Duplicate keys keep the existing all-occurrences replacement rule.
+        if positions.len() == 1
+            && let RawValue::List(after) = value
+            && let Some(serde_json::Value::Array(before)) = self.value(key)
+        {
+            if after.is_empty() && !before.is_empty() {
+                // Removing items one by one would leave the multi-line layout's blank line behind.
+                let span = self.members[positions[0]].value.clone();
+                self.replace(span, "[]");
+                return;
+            }
+            let after: Vec<_> = after.iter().map(|item| serde_json::Value::String(item.clone())).collect();
+            self.update_array(key, &before, &after);
+            return;
+        }
         // Back to front, so earlier spans stay valid.
         for &ix in positions.iter().rev() {
             let span = self.members[ix].value.clone();
@@ -214,6 +230,60 @@ impl Document {
             }
             let rendered = self.render_replacement(&self.text[span.clone()], span.start, value);
             self.replace(span, &rendered);
+        }
+    }
+
+    fn update_array(&mut self, key: &str, before: &[serde_json::Value], after: &[serde_json::Value]) {
+        // Retain LCS matches verbatim. Profiles normally have short lists;
+        // for very large arrays use common prefix/suffix to bound both memory and work.
+        let mut pairs = Vec::new();
+        if before.len().saturating_mul(after.len()) <= 1_000_000 {
+            let width = after.len() + 1;
+            let mut lengths = vec![0usize; (before.len() + 1) * width];
+            for i in (0..before.len()).rev() {
+                for j in (0..after.len()).rev() {
+                    lengths[i * width + j] = if before[i] == after[j] {
+                        lengths[(i + 1) * width + j + 1] + 1
+                    } else {
+                        lengths[(i + 1) * width + j].max(lengths[i * width + j + 1])
+                    };
+                }
+            }
+            let (mut i, mut j) = (0, 0);
+            while i < before.len() && j < after.len() {
+                if before[i] == after[j] {
+                    pairs.push((i, j));
+                    i += 1;
+                    j += 1;
+                } else if lengths[(i + 1) * width + j] >= lengths[i * width + j + 1] {
+                    i += 1;
+                } else {
+                    j += 1;
+                }
+            }
+        } else {
+            let prefix = before.iter().zip(after).take_while(|(a, b)| a == b).count();
+            pairs.extend((0..prefix).map(|i| (i, i)));
+            let suffix =
+                before[prefix..].iter().rev().zip(after[prefix..].iter().rev()).take_while(|(a, b)| a == b).count();
+            pairs.extend((0..suffix).rev().map(|i| (before.len() - 1 - i, after.len() - 1 - i)));
+        }
+        // Work backwards through unmatched gaps. Replace paired elements in place rather than
+        // removing the last element and rebuilding an empty multiline array.
+        pairs.push((before.len(), after.len()));
+        for gap in (0..pairs.len()).rev() {
+            let (old_start, new_start) = if gap == 0 { (0, 0) } else { (pairs[gap - 1].0 + 1, pairs[gap - 1].1 + 1) };
+            let (old_end, new_end) = pairs[gap];
+            let common = (old_end - old_start).min(new_end - new_start);
+            for offset in 0..common {
+                self.array_set(key, old_start + offset, &after[new_start + offset]).expect("parsed array index");
+            }
+            for ix in (old_start + common..old_end).rev() {
+                self.array_remove(key, ix).expect("parsed array index");
+            }
+            for (offset, value) in after[new_start + common..new_end].iter().enumerate() {
+                self.array_insert(key, old_start + common + offset, value).expect("parsed array index");
+            }
         }
     }
 
@@ -475,6 +545,54 @@ mod tests {
         let text = doc.into_text();
         serde_json::from_str::<serde_json::Value>(&text).expect("still valid JSON");
         text
+    }
+
+    #[test]
+    fn array_diff_preserves_escaped_elements_and_irregular_separators() {
+        let source = "\u{feff}{\r\n\t\"items\": [\r\n\t\t\"\\u0041\", \r\n\t\t\"B\",\r\n  \"C\"\r\n\t],\r\n\t\"untouched\": \"yes\"\r\n}";
+        let mut doc = Document::parse(source).unwrap();
+        doc.set("items", &list(&["A", "B", "D", "C"]));
+        assert_eq!(doc.text(), source.replace("\"C\"", "\"D\",\r\n\t\t\"C\""));
+        doc.set("items", &list(&["A", "C"]));
+        assert!(doc.text().contains("\"\\u0041\""));
+        assert!(doc.text().contains("\"untouched\": \"yes\""));
+        assert_eq!(doc.value("items").unwrap(), serde_json::json!(["A", "C"]));
+    }
+
+    #[test]
+    fn array_diff_handles_empty_duplicate_and_reordered_elements() {
+        let cases = [
+            vec![],
+            vec!["a"],
+            vec!["b"],
+            vec!["a", "b"],
+            vec!["b", "a"],
+            vec!["a", "a", "b"],
+            vec!["b", "a", "b", "c"],
+        ];
+        for before in &cases {
+            for after in &cases {
+                for multiline in [false, true] {
+                    let separator = if multiline { ",\r\n  " } else { ",  " };
+                    let items = before.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(separator);
+                    let source = if multiline {
+                        format!("{{\r\n \"items\": [\r\n  {items}\r\n ],\r\n \"other\":\"x\"\r\n}}")
+                    } else {
+                        format!("{{\"items\":[{items}],\"other\":\"x\"}}")
+                    };
+                    let mut doc = Document::parse(source.clone()).unwrap();
+                    doc.set("items", &list(after));
+                    assert_eq!(doc.value("items").unwrap(), serde_json::json!(after), "{before:?} -> {after:?}");
+                    assert_eq!(doc.value("other").unwrap(), "x");
+                    if before == after {
+                        assert_eq!(doc.text(), source);
+                    }
+                    if after.is_empty() && !before.is_empty() {
+                        assert!(doc.text().contains("\"items\":[]") || doc.text().contains("\"items\": []"));
+                    }
+                }
+            }
+        }
     }
 
     #[test]

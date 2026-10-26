@@ -22,6 +22,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use profile_core::{Repository, Schema, Severity};
 
+use crate::batch::{BatchEvent, BatchView};
 use crate::catalog::Catalog;
 use crate::details::{self, Compatibility, severity_color};
 use crate::edits::{Edits, EditsEvent, RefreshConflict};
@@ -95,6 +96,9 @@ pub struct StudioApp {
     values: Option<Entity<ValuesView>>,
     management: Option<Entity<ManagementView>>,
     managing: bool,
+    batch: Option<Entity<BatchView>>,
+    batching: bool,
+    _batch_events: Option<Subscription>,
     _management_events: Option<Subscription>,
     /// Unsaved edits of the loaded profiles.
     edits: Option<Entity<Edits>>,
@@ -200,6 +204,9 @@ impl StudioApp {
             values: None,
             management: None,
             managing: false,
+            batch: None,
+            batching: false,
+            _batch_events: None,
             _management_events: None,
             edits: None,
             palette: None,
@@ -240,7 +247,10 @@ impl StudioApp {
             self.selected = None;
             self.values = None;
             self.management = None;
+            self.batch = None;
+            self._batch_events = None;
             self.managing = false;
+            self.batching = false;
             self._management_events = None;
             self.edits = None;
             self._edit_events = None;
@@ -352,6 +362,9 @@ impl StudioApp {
         if let Some(management) = &self.management {
             management.update(cx, |management, cx| management.refresh(&catalog, window, cx));
         }
+        if let Some(batch) = &self.batch {
+            batch.update(cx, |batch, cx| batch.refresh(&catalog, window, cx));
+        }
         self.compatibility = match self.selected {
             Some(Node::Preset(preset)) => Some(Compatibility::compute(&catalog, preset)),
             _ => None,
@@ -451,7 +464,11 @@ impl StudioApp {
                 presets.push(values.preset());
             }
         }
+        if let Some(batch) = &self.batch {
+            presets.extend(batch.read(cx).unapplied_presets(cx));
+        }
         presets.sort_unstable();
+        presets.dedup();
         presets.into_iter().map(|index| catalog.repo.root().join(&catalog.repo.presets()[index].path)).collect()
     }
 
@@ -563,6 +580,29 @@ impl StudioApp {
         });
     }
 
+    fn open_batch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_writing_files(cx) {
+            return;
+        }
+        let (LoadState::Ready(catalog), Some(edits)) = (&self.state, &self.edits) else { return };
+        if self.batch.is_none() {
+            let initial = match self.selected {
+                Some(Node::Preset(ix)) => Some(ix),
+                _ => None,
+            };
+            let view = cx.new(|cx| BatchView::new(catalog, edits, initial, window, cx));
+            self._batch_events = Some(cx.subscribe(&view, |this, _, _: &BatchEvent, cx| {
+                this.batching = false;
+                cx.notify();
+            }));
+            self.batch = Some(view);
+        }
+        self.managing = false;
+        self.batching = true;
+        self.batch.as_ref().unwrap().update(cx, |batch, cx| batch.focus(window, cx));
+        cx.notify();
+    }
+
     fn open_management(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.unsaved_files(cx).is_empty() {
             crate::feedback::window_error(
@@ -592,6 +632,7 @@ impl StudioApp {
             self.management = Some(management);
         }
         self.managing = true;
+        self.batching = false;
         cx.notify();
     }
 
@@ -610,6 +651,14 @@ impl StudioApp {
             .child(Icon::new(IconName::FolderTree).text_color(theme.muted_foreground))
             .child(div().font_semibold().child("Orca Profile Studio"))
             .child(div().flex_1().min_w_0().truncate().text_sm().text_color(theme.muted_foreground).child(location))
+            .child(
+                Button::new("batch-edit")
+                    .small()
+                    .label("Batch edit")
+                    .selected(self.batching)
+                    .disabled(!matches!(self.state, LoadState::Ready(_)) || self.is_writing_files(cx))
+                    .on_click(cx.listener(|this, _, window, cx| this.open_batch(window, cx))),
+            )
             .child(
                 Button::new("manage-presets")
                     .small()
@@ -658,6 +707,11 @@ impl StudioApp {
     }
 
     fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {
+        if self.batching
+            && let Some(batch) = &self.batch
+        {
+            return batch.clone().into_any_element();
+        }
         if self.managing
             && let Some(management) = &self.management
         {
@@ -793,6 +847,7 @@ impl StudioApp {
 
     fn set_preset_tab(&mut self, tab: PresetTab, window: &mut Window, cx: &mut Context<Self>) {
         self.managing = false;
+        self.batching = false;
         self.preset_tab = tab;
         self.sync_values(window, cx);
         cx.notify();
@@ -852,6 +907,7 @@ impl StudioApp {
         };
         let reveal = |this: &mut Self, preset: usize, key: &str, window: &mut Window, cx: &mut Context<Self>| {
             this.managing = false;
+            this.batching = false;
             this.preset_tab = PresetTab::Values;
             if let Some(values) = this.ensure_values(preset, window, cx) {
                 values.update(cx, |values, cx| values.reveal_key(key, window, cx));
@@ -865,9 +921,11 @@ impl StudioApp {
             Target::Command(AppCommand::ShowOverview) => self.set_preset_tab(PresetTab::Overview, window, cx),
             Target::Command(AppCommand::ShowValues) => self.set_preset_tab(PresetTab::Values, window, cx),
             Target::Command(AppCommand::ShowIssues) => self.open_issues(window, cx),
+            Target::Command(AppCommand::BatchEdit) => self.open_batch(window, cx),
             Target::Command(AppCommand::ManagePresets) => self.open_management(window, cx),
             Target::Preset(preset) => {
                 self.managing = false;
+                self.batching = false;
                 self.select_node(Node::Preset(preset), true, window, cx);
             }
             Target::Option(key) => {
@@ -899,6 +957,7 @@ impl StudioApp {
 
     fn open_issues(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.managing = false;
+        self.batching = false;
         let LoadState::Ready(catalog) = &self.state else { return };
         if self.issues.is_none() {
             let catalog = catalog.clone();
@@ -2012,6 +2071,231 @@ mod tests {
         cx.run_until_parked();
         run_palette(window, "new window", cx);
         assert_eq!(cx.update(|cx| cx.windows().len()), 2);
+    }
+
+    fn batch_fixture() -> tempfile::TempDir {
+        let dir = editable_fixture();
+        let manifest = dir.path().join("Acme.json");
+        let mut doc = profile_core::Document::parse(std::fs::read_to_string(&manifest).unwrap()).unwrap();
+        doc.array_insert(
+            "process_list",
+            2,
+            &serde_json::json!({"name":"Acme 0.3", "sub_path":"process/Acme 0.3.json"}),
+        )
+        .unwrap();
+        std::fs::write(manifest, doc.text()).unwrap();
+        std::fs::write(dir.path().join("Acme/process/Acme 0.3.json"), CHILD.replace("Acme 0.2", "Acme 0.3")).unwrap();
+        for file in ["fdm_process_common.json", "Acme 0.2.json", "Acme 0.3.json"] {
+            let path = dir.path().join("Acme/process").join(file);
+            let mut doc = profile_core::Document::parse(std::fs::read_to_string(&path).unwrap()).unwrap();
+            doc.set("wall_loops", &profile_core::RawValue::Str("2".into()));
+            doc.set("compatible_printers", &profile_core::RawValue::List(vec![file.into()]));
+            std::fs::write(path, doc.text()).unwrap();
+        }
+        dir
+    }
+
+    fn batch_select(window: WindowHandle<Root>, control: &'static str, query: &str, cx: &mut TestAppContext) {
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.within(control).click("input", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.press("cmd-a", cx);
+            window.input(query, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.press("down", cx);
+            window.press("enter", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+
+    fn batch_rows(app: &Entity<StudioApp>, cx: &mut TestAppContext) -> Vec<Vec<String>> {
+        let view = app.read_with(cx, |app, _| app.batch.clone().unwrap());
+        view.read_with(cx, |view, cx| view.table().read(cx).dump(cx).1)
+    }
+
+    #[gpui_kit::test]
+    fn batch_edit_previews_three_files_and_undoes_from_values_after_save(cx: &mut TestAppContext) {
+        let dir = batch_fixture();
+        let files = ["fdm_process_common.json", "Acme 0.2.json", "Acme 0.3.json"]
+            .map(|f| dir.path().join("Acme/process").join(f));
+        let before = files.iter().map(|f| std::fs::read_to_string(f).unwrap()).collect::<Vec<_>>();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "Acme 0.2", cx);
+        run_palette(window, "batch edit", cx);
+        click(window, "manage-select-shown", cx);
+        management_input(window, "value-input", "5", cx);
+        click(window, "batch-preview-button", cx);
+        assert_eq!(batch_rows(&app, cx).len(), 3);
+        assert!(batch_rows(&app, cx).iter().all(|r| r[2] == "5 — this file"));
+        click(window, "batch-review-Acme/process/fdm_process_common.json", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("batch-row-detail").label(), Some("Acme/process/fdm_process_common.json"));
+            window.press("escape", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        for (file, text) in files.iter().zip(&before) {
+            assert_eq!(std::fs::read_to_string(file).unwrap(), *text);
+        }
+        click(window, "batch-apply", cx);
+        assert_eq!(app.read_with(cx, |app, cx| app.edits.as_ref().unwrap().read(cx).dirty().len()), 3);
+        click(window, "batch-undo", cx);
+        assert!(app.read_with(cx, |app, cx| app.edits.as_ref().unwrap().read(cx).dirty().is_empty()));
+        click(window, "batch-redo", cx);
+        click(window, "batch-save", cx);
+        cx.update_window(window.into(), |_, window, cx| window.press("escape", cx)).unwrap();
+        cx.run_until_parked();
+        assert_eq!(std::fs::read_to_string(&files[1]).unwrap(), before[1]);
+        click(window, "batch-save", cx);
+        cx.update_window(window.into(), |_, window, cx| window.press("enter", cx)).unwrap();
+        cx.run_until_parked();
+        for (file, text) in files.iter().zip(&before) {
+            assert_eq!(
+                std::fs::read_to_string(file).unwrap(),
+                text.replace("\"wall_loops\": \"2\"", "\"wall_loops\": \"5\"")
+            );
+        }
+        click(window, "batch-close", cx);
+        run_palette(window, "show preset values", cx);
+        find_key(window, "wall_loops", cx);
+        click(window, "undo", cx);
+        assert_eq!(app.read_with(cx, |app, cx| app.edits.as_ref().unwrap().read(cx).dirty().len()), 3);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("save-status").label(), Some("Undid a batch change in 3 presets."));
+            window.press("cmd-shift-z", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert!(app.read_with(cx, |app, cx| app.edits.as_ref().unwrap().read(cx).dirty().is_empty()));
+    }
+
+    #[gpui_kit::test]
+    fn batch_input_starts_from_current_values_and_choosing_a_key_is_not_unsaved(cx: &mut TestAppContext) {
+        let dir = batch_fixture();
+        let common = dir.path().join("Acme/process/fdm_process_common.json");
+        std::fs::write(
+            &common,
+            std::fs::read_to_string(&common).unwrap().replace("\"wall_loops\": \"2\"", "\"wall_loops\": \"3\""),
+        )
+        .unwrap();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "Acme 0.2", cx);
+        run_palette(window, "batch edit", cx);
+        click(window, "manage-select-shown", cx);
+        batch_select(window, "batch-operation", "Remove key", cx);
+        batch_select(window, "batch-operation", "Set value", cx);
+        let unsaved = |cx: &mut TestAppContext| app.read_with(cx, |app, cx| app.unsaved_files(cx).len());
+        assert_eq!(unsaved(cx), 0, "choosing a key or an operation is not unsaved input");
+        // The untouched input holds the first selected preset's value (3), not the schema default (2).
+        click(window, "batch-preview-button", cx);
+        let rows = batch_rows(&app, cx);
+        assert_eq!(rows[0][3], "Unchanged (skipped)", "{rows:?}");
+        assert_eq!(rows[1][3], "Will change", "{rows:?}");
+        management_input(window, "value-input", "7", cx);
+        assert_eq!(unsaved(cx), 3);
+    }
+
+    #[gpui_kit::test]
+    fn batch_array_items_keep_each_list_and_filters_invalidate_previews(cx: &mut TestAppContext) {
+        let dir = batch_fixture();
+        let files = ["fdm_process_common.json", "Acme 0.2.json", "Acme 0.3.json"]
+            .map(|f| dir.path().join("Acme/process").join(f));
+        let before = files.iter().map(|f| std::fs::read_to_string(f).unwrap()).collect::<Vec<_>>();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        click(window, "batch-edit", cx);
+        click(window, "manage-select-shown", cx);
+        batch_select(window, "batch-key", "Select printers", cx);
+        batch_select(window, "batch-operation", "Add item", cx);
+        management_input(window, "value-input", "New printer", cx);
+        click(window, "batch-preview-button", cx);
+        assert_eq!(batch_rows(&app, cx).len(), 3);
+        management_input(window, "manage-search", "Acme 0.2", cx);
+        assert!(batch_rows(&app, cx).is_empty());
+        click(window, "batch-preview-button", cx);
+        assert_eq!(batch_rows(&app, cx).len(), 1);
+        management_input(window, "manage-search", "", cx);
+        click(window, "manage-select-shown", cx);
+        click(window, "batch-preview-button", cx);
+        click(window, "batch-apply", cx);
+        click(window, "batch-save", cx);
+        click(window, "ok", cx);
+        for (file, text) in files.iter().zip(&before) {
+            let mut expected = profile_core::Document::parse(text).unwrap();
+            expected.array_insert("compatible_printers", 1, &serde_json::json!("New printer")).unwrap();
+            assert_eq!(std::fs::read_to_string(file).unwrap(), expected.text());
+        }
+        click(window, "batch-preview-button", cx);
+        assert!(batch_rows(&app, cx).iter().all(|r| r[3] == "Unchanged (skipped)"));
+        batch_select(window, "batch-operation", "Remove item", cx);
+        management_input(window, "value-input", "New printer", cx);
+        click(window, "batch-preview-button", cx);
+        click(window, "batch-apply", cx);
+        click(window, "batch-save", cx);
+        click(window, "ok", cx);
+        for (file, text) in files.iter().zip(&before) {
+            assert_eq!(std::fs::read_to_string(file).unwrap(), *text);
+        }
+        batch_select(window, "batch-operation", "Remove key", cx);
+        click(window, "batch-preview-button", cx);
+        assert!(batch_rows(&app, cx).iter().all(|r| r[2].ends_with("default")));
+        click(window, "batch-apply", cx);
+        click(window, "batch-undo", cx);
+        assert!(app.read_with(cx, |app, cx| app.edits.as_ref().unwrap().read(cx).dirty().is_empty()));
+    }
+
+    #[gpui_kit::test]
+    fn batch_preview_validation_input_protection_and_small_window_layout(cx: &mut TestAppContext) {
+        let dir = batch_fixture();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        click(window, "batch-edit", cx);
+        click(window, "manage-select-shown", cx);
+        management_input(window, "value-input", "invalid", cx);
+        click(window, "batch-preview-button", cx);
+        assert!(batch_rows(&app, cx).iter().all(|r| r[4].contains("fatal")));
+        management_input(window, "value-input", "4", cx);
+        assert!(batch_rows(&app, cx).is_empty());
+        cx.simulate_window_resize(window.into(), size(px(960.), px(720.)));
+        cx.update(|cx| gpui_kit::component::Theme::update(cx, |t| t.font_size = px(20.)));
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            for id in ["batch-preview-button", "batch-apply", "batch-save"] {
+                let bounds = window.find(id).bounds();
+                assert!(bounds.bottom() <= px(720.), "{id}: {bounds:?}");
+                assert!(bounds.right() <= px(960.), "{id}: {bounds:?}");
+            }
+            let table = window.find("batch-preview").bounds();
+            assert!(table.size.height > px(0.));
+            assert!(table.top() >= window.find("batch-apply").bounds().bottom());
+            window.press("cmd-w", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(cx.windows().len(), 1);
+        click(window, "cancel", cx);
+        assert!(!app.read_with(cx, |app, cx| app.unsaved_files(cx).is_empty()));
+        click(window, "batch-discard-input", cx);
+        assert!(app.read_with(cx, |app, cx| app.unsaved_files(cx).is_empty()));
+        management_input(window, "batch-issue-filter", "no-such-code", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("manage-count").label(), Some("0 selected · 0 shown"));
+            assert_eq!(window.find("batch-preview-button").disabled(), Some(true));
+        })
+        .unwrap();
     }
 
     fn management_fixture() -> tempfile::TempDir {

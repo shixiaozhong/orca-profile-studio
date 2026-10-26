@@ -160,6 +160,19 @@ from the package directory).
   one array element and keeps all other bytes. The studio's `ManagementView` (`manage.rs`) and the
   reusable `PresetPicker` (`preset_picker.rs`, selection by file path, pruned to visible rows) run
   previews and writes on the background executor; writing blocks close, quit, reload and open.
+- Batch editing (M11): `BatchView` previews a `BatchPlan` on the background executor from a cloned
+  `Edits` snapshot. It resolves every edited ancestor, stages one key per preset, and applies only
+  after the baseline still matches. Invalidate previews on selection/input/session/reload changes.
+  String-array item operations materialize inherited values only when changed; no-op rows are skipped.
+  Targets are planned in index (load) order, so a child without its own value that already receives
+  the target through a selected, edited ancestor is skipped instead of getting a redundant override.
+  Set input starts from the first selected preset's current value; only typed input counts as unapplied.
+  `EditSession` history entries carry group IDs; `Edits` owns group membership by file path. Route
+  UI undo/redo through `Edits::history` / `history_group`, never directly through a grouped session:
+  all member stack tops must agree before any mutation. Lost member history blocks the whole group.
+  `ValueEditor` is shared by Values and Batch; `save::confirm` is the common save preview/commit.
+  Batch Apply only changes sessions; Save keeps M3's per-file/partial-success semantics. Include
+  unapplied batch input in window/open/quit protection, even while the batch view is hidden.
 - Saving writes into the profiles directory, i.e. the OrcaSlicer checkout. UI tests that save use a
   temporary fixture (`editable_fixture` in `app.rs`), never the real profiles.
 - App preferences live in the `SettingsStore` global (`settings.rs`), saved on every change to
@@ -198,11 +211,11 @@ from the package directory).
 
 [docs/roadmap.md](docs/roadmap.md) (Chinese) is the roadmap: stages and status, key design decisions
 of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
-M1–M8; M9 review/fixes and M10 preset management (new/copy/batch copy/rename/delete) are implemented
-and awaiting user validation in a real window. Next: M11–M13 (batch edit incl. array elements, Chinese UI,
-Git diff); the G-code viewer and OrcaSlicer sync automation are deferred. When a stage is finished, move it to "已完成" there with its design
-decisions, and update the status line in README, all in the stage's own commit (see the
-commit rule above for the 提交 column).
+M1–M11. Next: M12–M13 (Chinese UI, Git diff).
+Promoting shared values to a parent, the G-code viewer and OrcaSlicer sync automation are deferred.
+When a stage is finished, move it to "已完成" there with its design decisions, mark it ✅, and update
+the status line in README, all in the stage's own commit (see the commit rule above for the 提交 column).
+The user committing a stage is its acceptance: there is no separate "awaiting validation" status.
 
 Changing the exporter is work in another repository (`../OrcaSlicer`); confirm with the user first.
 
