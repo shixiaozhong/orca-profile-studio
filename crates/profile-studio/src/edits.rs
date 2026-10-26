@@ -16,7 +16,6 @@ pub struct Edits {
     catalog: Arc<Catalog>,
     /// Keyed by preset index.
     sessions: BTreeMap<usize, EditSession>,
-    save_revision: u64,
 }
 
 pub enum EditsEvent {
@@ -34,16 +33,12 @@ pub struct RefreshConflict {
 
 impl Edits {
     pub fn new(catalog: Arc<Catalog>) -> Self {
-        Edits { catalog, sessions: BTreeMap::new(), save_revision: 0 }
-    }
-
-    pub fn save_revision(&self) -> u64 {
-        self.save_revision
+        Edits { catalog, sessions: BTreeMap::new() }
     }
 
     /// Migration is atomic: on a conflict the window keeps its previous, coherent snapshot.
+    /// Only unsaved changes conflict; a saved session whose file changed on disk loses its history.
     pub fn rebase(&mut self, catalog: &Arc<Catalog>) -> Result<(), Vec<RefreshConflict>> {
-        let by_path: BTreeMap<_, _> = catalog.repo.presets().iter().map(|p| (&p.path, p)).collect();
         let mut sessions = BTreeMap::new();
         let mut conflicts = Vec::new();
         for (&index, session) in &self.sessions {
@@ -51,8 +46,9 @@ impl Edits {
                 continue;
             }
             let old = &self.catalog.repo.presets()[index];
+            let dirty = session.is_dirty();
             let mut session = session.clone();
-            let reason = match by_path.get(&old.path) {
+            let reason = match catalog.preset_at(&old.path).map(|index| &catalog.repo.presets()[index]) {
                 None => Some("File is missing or could not be loaded"),
                 Some(new) if old.kind != new.kind || old.meta != new.meta => Some("Preset metadata changed on disk"),
                 Some(new) => match session.rebase(&catalog.repo, new.id) {
@@ -63,7 +59,9 @@ impl Edits {
                     Err(_) => Some("Values changed on disk"),
                 },
             };
-            if let Some(reason) = reason {
+            if let Some(reason) = reason
+                && dirty
+            {
                 conflicts.push(RefreshConflict { path: old.path.clone(), reason });
             }
         }
@@ -104,10 +102,7 @@ impl Edits {
         let mut saved = Vec::new();
         for (&preset, session) in self.sessions.iter_mut().filter(|(_, session)| session.is_dirty()) {
             match session.save(repo) {
-                Ok(path) => {
-                    saved.push(path);
-                    self.save_revision += 1;
-                }
+                Ok(path) => saved.push(path),
                 Err(err) => return (saved, Some((preset, err))),
             }
         }

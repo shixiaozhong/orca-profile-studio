@@ -215,7 +215,6 @@ impl StudioApp {
         let refreshing = self.profiles_dir.as_ref() == Some(&dir) && matches!(self.state, LoadState::Ready(_));
         self.load_generation += 1;
         let generation = self.load_generation;
-        let revision = self.edits.as_ref().map_or(0, |edits| edits.read(cx).save_revision());
         self.profiles_dir = Some(dir.clone());
         self.refresh_error = None;
         self.refresh_conflicts.clear();
@@ -245,12 +244,9 @@ impl StudioApp {
         self.load_task = Some(cx.spawn_in(window, async move |this, cx| {
             let result = job.await;
             this.update_in(cx, |this, window, cx| {
+                // A save emits `EditsEvent::Saved`, which starts a newer load: a snapshot read during
+                // a save is always superseded here.
                 if this.load_generation != generation {
-                    return;
-                }
-                // A save during the background read can produce a mixed snapshot. Start again.
-                if refreshing && this.edits.as_ref().is_some_and(|edits| edits.read(cx).save_revision() != revision) {
-                    this.reload(window, cx);
                     return;
                 }
                 this.finish_load(dir, result, window, cx);
@@ -339,7 +335,11 @@ impl StudioApp {
         };
         self.state = LoadState::Ready(catalog.clone());
         self.tree.update(cx, |tree, cx| {
-            tree.set_items(nav::build(&catalog), cx);
+            let expanded: Vec<Node> =
+                nav::expanded_nodes(tree).into_iter().filter_map(|node| node.remap(old, &catalog)).collect();
+            let items = nav::build(&catalog);
+            nav::expand(&items, &expanded);
+            tree.set_items(items, cx);
             if let Some(node) = self.selected {
                 let id = node.id();
                 tree.set_selected_item(Some(&TreeItem::new(id.clone(), "")), cx);
@@ -369,8 +369,15 @@ impl StudioApp {
                 }
             }
             Ok(Err(err)) => {
-                cx.update(|_, cx| {
-                    crate::feedback::error("open-folder", "Could not choose a folder", err.to_string(), cx)
+                cx.update(|window, cx| {
+                    let window = window.window_handle();
+                    crate::feedback::window_error(
+                        window,
+                        "open-folder",
+                        "Could not choose a folder",
+                        err.to_string(),
+                        cx,
+                    )
                 })
                 .ok();
             }
@@ -2020,12 +2027,30 @@ mod tests {
         let storage = tempfile::tempdir().unwrap();
         let path = storage.path().join("settings.json");
         std::fs::write(&path, "invalid json").unwrap();
-        let (window, _) = open_with_settings(cx, dir.path().to_path_buf(), Some(path));
+        let (window, _) = open_with_settings(cx, dir.path().to_path_buf(), Some(path.clone()));
         cx.run_until_parked();
         cx.update_window(window.into(), |_, window, cx| assert_eq!(window.notifications(cx).len(), 1)).unwrap();
         cx.update(|cx| crate::feedback::error("open-window", "Could not open a window", "Platform error".into(), cx));
         cx.run_until_parked();
         cx.update_window(window.into(), |_, window, cx| assert_eq!(window.notifications(cx).len(), 2)).unwrap();
+        // The first saved change replaces the file; its unreadable content is kept aside.
+        run_palette(window, "theme: dark", cx);
+        assert_eq!(crate::settings::Settings::load(&path).unwrap().theme, ThemePreference::Dark);
+        assert_eq!(std::fs::read_to_string(storage.path().join("settings.json.invalid")).unwrap(), "invalid json");
+    }
+
+    #[gpui_kit::test]
+    fn window_errors_only_reach_their_window(cx: &mut TestAppContext) {
+        let dir = editable_fixture();
+        let (first, _) = open(cx, dir.path().to_path_buf());
+        let (second, _) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        cx.update(|cx| {
+            crate::feedback::window_error(first.into(), "open-folder", "Could not choose a folder", "No".into(), cx)
+        });
+        cx.run_until_parked();
+        cx.update_window(first.into(), |_, window, cx| assert_eq!(window.notifications(cx).len(), 1)).unwrap();
+        cx.update_window(second.into(), |_, window, cx| assert_eq!(window.notifications(cx).len(), 0)).unwrap();
     }
 
     #[gpui_kit::test]
@@ -2151,6 +2176,67 @@ mod tests {
         .unwrap();
         click(window, "close-issues", cx);
         assert!(!app.read_with(cx, |app, _| app.issues_open));
+    }
+
+    #[gpui_kit::test]
+    fn saving_keeps_the_folders_the_user_expanded(cx: &mut TestAppContext) {
+        let dir = editable_fixture();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        let loaded = catalog(&app, cx);
+        let child = loaded.repo.find(PresetKind::Process, "Acme 0.2")[0].index();
+        let template = loaded.repo.find(PresetKind::Process, "fdm_process_common")[0].index();
+        click_node(window, &app, Node::Vendor(0), cx);
+        click_node(window, &app, Node::Group(0, nav::Group::Templates), cx);
+        click_node(window, &app, Node::Group(0, nav::Group::Processes), cx);
+        click_node(window, &app, Node::Preset(child), cx);
+        let visible = |node: Node, cx: &mut TestAppContext| {
+            app.read_with(cx, |app, cx| app.tree.read(cx).index_of(&node.id()).is_some())
+        };
+        assert!(visible(Node::Preset(template), cx));
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.within("preset-tabs").click(1usize, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        find_key(window, "wall_loops", cx);
+        enter_value(window, "3", cx);
+        click(window, "save", cx);
+        click(window, "ok", cx);
+        cx.run_until_parked();
+        let refreshed = catalog(&app, cx);
+        assert!(!Arc::ptr_eq(&loaded, &refreshed), "saving refreshed the catalog");
+        let template = refreshed.remap_preset(&loaded, template).unwrap();
+        assert!(visible(Node::Preset(template), cx), "the Templates folder is still expanded");
+    }
+
+    #[gpui_kit::test]
+    fn a_saved_file_changed_elsewhere_does_not_pause_the_refresh(cx: &mut TestAppContext) {
+        let dir = editable_fixture();
+        let file = dir.path().join("Acme/process/Acme 0.2.json");
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "Acme 0.2", cx);
+        run_palette(window, "show preset values", cx);
+        find_key(window, "wall_loops", cx);
+        enter_value(window, "3", cx);
+        click(window, "save", cx);
+        click(window, "ok", cx);
+        cx.run_until_parked();
+        // Another window or `git checkout` changes the saved file; nothing is unsaved here.
+        std::fs::write(&file, std::fs::read_to_string(&file).unwrap().replace("\"3\"", "\"9\"")).unwrap();
+        click(window, "reload", cx);
+        cx.run_until_parked();
+        let loaded = catalog(&app, cx);
+        let id = loaded.repo.find(PresetKind::Process, "Acme 0.2")[0];
+        assert_eq!(loaded.repo.lookup_scalar(id, "wall_loops"), Some("9"));
+        let preset = id.index();
+        app.read_with(cx, |app, cx| {
+            assert_eq!(app.refresh_error, None);
+            assert!(app.refresh_conflicts.is_empty());
+            assert!(app.edits.as_ref().unwrap().read(cx).session(preset).is_none(), "the stale history is dropped");
+        });
     }
 
     #[gpui_kit::test]

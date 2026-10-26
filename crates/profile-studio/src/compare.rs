@@ -248,8 +248,8 @@ pub struct CompareView {
 impl CompareView {
     pub fn refresh(&mut self, catalog: &Arc<Catalog>, left: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.right = self.right.and_then(|index| {
-            let old = &self.catalog.repo.presets()[index];
-            catalog.repo.presets().iter().position(|p| p.path == old.path && p.kind == old.kind)
+            let kind = self.catalog.repo.presets()[index].kind;
+            catalog.remap_preset(&self.catalog, index).filter(|&new| catalog.repo.presets()[new].kind == kind)
         });
         self.catalog = catalog.clone();
         self.left = left;

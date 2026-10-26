@@ -1,7 +1,7 @@
 //! Display-oriented indexes over a loaded [`Repository`]. Built on a background thread.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use profile_core::{Issue, PresetKind, Repository, SearchIndex, Severity};
@@ -50,6 +50,8 @@ pub struct Catalog {
     pub preset_severity: Vec<Option<Severity>>,
     /// Global search over the loaded data (not over unsaved edits).
     pub search: SearchIndex,
+    /// Indexes are local to one load; file paths keep identity across reloads.
+    preset_by_path: HashMap<PathBuf, usize>,
 }
 
 impl Catalog {
@@ -67,7 +69,42 @@ impl Catalog {
             .map(|issues| issues.iter().map(|&index| repo.issues()[index].severity()).max())
             .collect();
         let search = SearchIndex::build(&repo);
-        Catalog { repo, load_time, vendors, model_printer_counts, preset_issues, preset_severity, search }
+        let mut preset_by_path = HashMap::new();
+        for preset in repo.presets() {
+            // A file listed twice resolves to its first preset, like a linear search would.
+            preset_by_path.entry(preset.path.clone()).or_insert(preset.id.index());
+        }
+        Catalog {
+            repo,
+            load_time,
+            vendors,
+            model_printer_counts,
+            preset_issues,
+            preset_severity,
+            search,
+            preset_by_path,
+        }
+    }
+
+    pub fn preset_at(&self, path: &Path) -> Option<usize> {
+        self.preset_by_path.get(path).copied()
+    }
+
+    /// The preset of `old` (another load) with the same file in this catalog.
+    pub fn remap_preset(&self, old: &Catalog, preset: usize) -> Option<usize> {
+        self.preset_at(&old.repo.presets()[preset].path)
+    }
+
+    /// The vendor of `old` (another load) with the same index file in this catalog.
+    pub fn remap_vendor(&self, old: &Catalog, vendor: usize) -> Option<usize> {
+        let path = &old.repo.vendors()[vendor].index_path;
+        self.repo.vendors().iter().position(|vendor| &vendor.index_path == path)
+    }
+
+    /// The machine model of `old` (another load) with the same file in this catalog.
+    pub fn remap_model(&self, old: &Catalog, model: usize) -> Option<usize> {
+        let path = &old.repo.models()[model].path;
+        self.repo.models().iter().position(|model| &model.path == path)
     }
 
     pub fn issues_of(&self, preset: usize) -> impl Iterator<Item = &Issue> {

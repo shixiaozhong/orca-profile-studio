@@ -133,14 +133,19 @@ from the package directory).
   cannot return `Stateful<Div>`; return `AnyElement` (an `impl IntoElement` return captures `cx`).
 - Saving emits `EditsEvent::Saved` (including partial success), which triggers a background full
   refresh. Reload uses the same path and retains edits. `Edits::rebase` maps sessions by file path;
-  `EditSession::rebase` preserves undo/redo and rejects external value changes. A conflict pauses
+  `EditSession::rebase` preserves undo/redo and rejects external value changes. Only sessions with
+  unsaved changes conflict (a saved one whose file changed drops its history). A conflict pauses
   the whole snapshot replacement; the window retains its old data until retry or explicit discard
-  of the conflicting sessions. Keep `load_generation` and `save_revision` checks when changing this
-  flow, and migrate the latest state at completion so edits made during loading survive.
+  of the conflicting sessions. Keep the `load_generation` check when changing this flow (every save
+  starts a newer load, so a snapshot read during a save never lands), and migrate the latest state
+  at completion so edits made during loading survive. Tree expansion is carried over by node path
+  (`nav::expanded_nodes` / `nav::expand`); `Catalog::remap_*` maps indexes between loads.
 - Save previews and destructive confirmations use `Root`'s `AlertDialog`: Enter commits and
-  Escape cancels. Global errors use `feedback::error`, deferred until window updates finish,
+  Escape cancels. App-wide errors use `feedback::error` (every window), one window's errors
+  `feedback::window_error`; both are deferred until window updates finish,
   with stable notification IDs and a visible Dismiss action. Settings writes retry unchanged
-  values after failures. Startup without a window falls back to a system notification and stderr.
+  values after failures; an unreadable settings file is copied to `settings.json.invalid` before
+  it is overwritten, or saving is disabled for the run when the copy fails. Startup without a window falls back to a system notification and stderr.
 - `lifecycle` handles application-menu/Command-Q quit across all windows; native close and
   Command-W check one window. Both include unapplied editor text. Quit rechecks the window/file
   scope before discarding because another window may gain edits while confirmation is open.

@@ -1,8 +1,10 @@
 //! The navigation tree: vendor → machine models (→ printers) / filaments / processes / templates.
 
+use std::collections::HashSet;
+
 use gpui_kit::SharedString;
 use gpui_kit::assets::IconName;
-use gpui_kit::component::tree::TreeItem;
+use gpui_kit::component::tree::{TreeEntry, TreeItem, TreeState};
 use profile_core::PresetKind;
 
 use crate::catalog::Catalog;
@@ -65,17 +67,11 @@ impl Group {
 impl Node {
     /// Indexes are local to one load; file paths retain identity across reloads.
     pub fn remap(self, old: &Catalog, new: &Catalog) -> Option<Self> {
-        let vendor =
-            |index: usize| new.repo.vendors().iter().position(|v| v.index_path == old.repo.vendors()[index].index_path);
         match self {
-            Self::Vendor(index) => vendor(index).map(Self::Vendor),
-            Self::Group(index, group) => vendor(index).map(|index| Self::Group(index, group)),
-            Self::Model(index) => {
-                new.repo.models().iter().position(|m| m.path == old.repo.models()[index].path).map(Self::Model)
-            }
-            Self::Preset(index) => {
-                new.repo.presets().iter().position(|p| p.path == old.repo.presets()[index].path).map(Self::Preset)
-            }
+            Self::Vendor(index) => new.remap_vendor(old, index).map(Self::Vendor),
+            Self::Group(index, group) => new.remap_vendor(old, index).map(|index| Self::Group(index, group)),
+            Self::Model(index) => new.remap_model(old, index).map(Self::Model),
+            Self::Preset(index) => new.remap_preset(old, index).map(Self::Preset),
         }
     }
 
@@ -158,6 +154,34 @@ pub fn build(catalog: &Catalog) -> Vec<TreeItem> {
             TreeItem::new(Node::Vendor(vendor).id(), label).children(groups)
         })
         .collect()
+}
+
+/// Expanded folders anywhere in the tree, including inside collapsed ones.
+pub fn expanded_nodes(tree: &TreeState) -> Vec<Node> {
+    let mut pending: Vec<&TreeItem> =
+        (0..).map_while(|ix| tree.entry(ix)).filter(|entry| entry.is_root()).map(TreeEntry::item).collect();
+    let mut nodes = Vec::new();
+    while let Some(item) = pending.pop() {
+        if item.is_expanded()
+            && let Some(node) = Node::parse(&item.id)
+        {
+            nodes.push(node);
+        }
+        pending.extend(&item.children);
+    }
+    nodes
+}
+
+/// Expands the folders of `nodes` in freshly built `items`.
+pub fn expand(items: &[TreeItem], nodes: &[Node]) {
+    let ids: HashSet<SharedString> = nodes.iter().map(|node| node.id()).collect();
+    let mut pending: Vec<&TreeItem> = items.iter().collect();
+    while let Some(item) = pending.pop() {
+        if ids.contains(&item.id) {
+            item.clone().expanded(true);
+        }
+        pending.extend(&item.children);
+    }
 }
 
 #[cfg(test)]

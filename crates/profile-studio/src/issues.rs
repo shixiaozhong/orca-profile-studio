@@ -201,34 +201,29 @@ pub struct IssuesView {
 impl EventEmitter<IssuesEvent> for IssuesView {}
 
 impl IssuesView {
+    /// Shows `catalog`'s issues and keeps the filters, sort and text that still apply.
     pub fn refresh(&mut self, catalog: &Arc<Catalog>, window: &mut Window, cx: &mut Context<Self>) {
-        let mut filter = self.filter.clone();
-        filter.vendor = filter.vendor.and_then(|index| {
-            catalog.repo.vendors().iter().position(|v| v.index_path == self.catalog.repo.vendors()[index].index_path)
-        });
-        if filter.code.is_some_and(|code| !catalog.repo.issues().iter().any(|issue| issue.kind.code() == code)) {
-            filter.code = None;
+        self.filter.vendor = self.filter.vendor.and_then(|index| catalog.remap_vendor(&self.catalog, index));
+        if self.filter.code.is_some_and(|code| !catalog.repo.issues().iter().any(|issue| issue.kind.code() == code)) {
+            self.filter.code = None;
         }
-        let sort = self.table.read(cx).delegate().sort;
-        *self = Self::new(catalog, window, cx);
-        self.filter = filter;
-        self.search.update(cx, |search, cx| search.set_value(self.filter.query.clone(), window, cx));
-        self.severity.update(cx, |select, cx| select.set_selected_value(&self.filter.min_severity, window, cx));
-        self.code.update(cx, |select, cx| select.set_selected_value(&self.filter.code, window, cx));
-        self.vendor.update(cx, |select, cx| select.set_selected_value(&self.filter.vendor, window, cx));
-        self.table.update(cx, |table, _| table.delegate_mut().sort = sort);
+        self.catalog = catalog.clone();
+        let (codes, vendors) = filter_choices(catalog);
+        self.code.update(cx, |select, cx| {
+            select.set_items(SearchableVec::new(codes), window, cx);
+            select.set_selected_value(&self.filter.code, window, cx);
+        });
+        self.vendor.update(cx, |select, cx| {
+            select.set_items(SearchableVec::new(vendors), window, cx);
+            select.set_selected_value(&self.filter.vendor, window, cx);
+        });
+        self.table.update(cx, |table, _| table.delegate_mut().catalog = catalog.clone());
         self.apply_filter(cx);
     }
 
     pub fn new(catalog: &Arc<Catalog>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let repo = &catalog.repo;
         let filter = IssueFilter::default();
-        let mut codes: BTreeMap<&'static str, usize> = BTreeMap::new();
-        let mut vendors: BTreeMap<usize, usize> = BTreeMap::new();
-        for issue in repo.issues() {
-            *codes.entry(issue.kind.code()).or_default() += 1;
-            *vendors.entry(issue.vendor.index()).or_default() += 1;
-        }
+        let (code_choices, vendor_choices) = filter_choices(catalog);
 
         let severities = [
             (Severity::Info, "All severities"),
@@ -241,23 +236,10 @@ impl IssuesView {
         let selected = severities.iter().position(|&(value, _)| value == filter.min_severity).map(IndexPath::new);
         let severity = cx.new(|cx| SelectState::new(SearchableVec::new(severity_choices), selected, window, cx));
 
-        let mut code_choices = vec![Choice { value: None, label: "All codes".into() }];
-        code_choices.extend(
-            codes.iter().map(|(&code, count)| Choice { value: Some(code), label: format!("{code} ({count})").into() }),
-        );
         let code = cx.new(|cx| {
             SelectState::new(SearchableVec::new(code_choices), Some(IndexPath::new(0)), window, cx).searchable(true)
         });
 
-        let mut vendor_choices = vec![Choice { value: None, label: "All vendors".into() }];
-        let mut by_name: Vec<_> =
-            vendors.iter().map(|(&vendor, &count)| (&repo.vendors()[vendor].name, vendor, count)).collect();
-        by_name.sort();
-        vendor_choices.extend(
-            by_name
-                .into_iter()
-                .map(|(name, vendor, count)| Choice { value: Some(vendor), label: format!("{name} ({count})").into() }),
-        );
         let vendor = cx.new(|cx| {
             SelectState::new(SearchableVec::new(vendor_choices), Some(IndexPath::new(0)), window, cx).searchable(true)
         });
@@ -326,6 +308,34 @@ impl IssuesView {
         });
         cx.notify();
     }
+}
+
+type CodeChoice = Choice<Option<&'static str>>;
+type VendorChoice = Choice<Option<usize>>;
+
+/// The code and vendor filter choices, with issue counts.
+fn filter_choices(catalog: &Catalog) -> (Vec<CodeChoice>, Vec<VendorChoice>) {
+    let repo = &catalog.repo;
+    let mut codes: BTreeMap<&'static str, usize> = BTreeMap::new();
+    let mut vendors: BTreeMap<usize, usize> = BTreeMap::new();
+    for issue in repo.issues() {
+        *codes.entry(issue.kind.code()).or_default() += 1;
+        *vendors.entry(issue.vendor.index()).or_default() += 1;
+    }
+    let mut code_choices = vec![Choice { value: None, label: "All codes".into() }];
+    code_choices.extend(
+        codes.iter().map(|(&code, count)| Choice { value: Some(code), label: format!("{code} ({count})").into() }),
+    );
+    let mut vendor_choices = vec![Choice { value: None, label: "All vendors".into() }];
+    let mut by_name: Vec<_> =
+        vendors.iter().map(|(&vendor, &count)| (&repo.vendors()[vendor].name, vendor, count)).collect();
+    by_name.sort();
+    vendor_choices.extend(
+        by_name
+            .into_iter()
+            .map(|(name, vendor, count)| Choice { value: Some(vendor), label: format!("{name} ({count})").into() }),
+    );
+    (code_choices, vendor_choices)
 }
 
 impl Render for IssuesView {

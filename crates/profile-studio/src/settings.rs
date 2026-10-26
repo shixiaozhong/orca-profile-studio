@@ -1,7 +1,8 @@
 //! Preferences that persist between runs: theme, last profiles directory, layout, window size.
 //!
 //! One [`SettingsStore`] global serves every window. Changes go through [`update`], which saves the
-//! file right away; a missing or unreadable file means defaults.
+//! file right away; a missing or unreadable file means defaults. An unreadable file is copied aside
+//! before the first save replaces it, or left alone (no saving) when that copy fails.
 
 use std::path::{Path, PathBuf};
 use std::{fs, io};
@@ -91,14 +92,36 @@ pub struct SettingsStore {
 impl Global for SettingsStore {}
 
 pub fn init(path: Option<PathBuf>, cx: &mut App) {
-    let (settings, load_error) = match path.as_deref().map(Settings::load).transpose() {
-        Ok(settings) => (settings.unwrap_or_default(), None),
-        Err(err) => {
-            (Settings::default(), Some(format!("{}: {err}. Using default settings.", path.as_ref().unwrap().display())))
-        }
-    };
+    let (path, settings, load_error) = open(path);
     cx.set_global(SettingsStore { path, settings, load_error, save_failed: false });
     apply_theme(None, cx);
+}
+
+/// Loads `path`; returns where to save (`None` disables saving), the settings and a load error.
+fn open(path: Option<PathBuf>) -> (Option<PathBuf>, Settings, Option<String>) {
+    let Some(path) = path else { return (None, Settings::default(), None) };
+    let err = match Settings::load(&path) {
+        Ok(settings) => return (Some(path), settings, None),
+        Err(err) => err,
+    };
+    let backup = path.with_extension("json.invalid");
+    match fs::copy(&path, &backup) {
+        Ok(_) => {
+            let message = format!(
+                "{}: {err}. Using default settings; the unreadable file was copied to {}.",
+                path.display(),
+                backup.display()
+            );
+            (Some(path), Settings::default(), Some(message))
+        }
+        Err(_) => {
+            let message = format!(
+                "{}: {err}. Using default settings without saving them, so the file is left as it is.",
+                path.display()
+            );
+            (None, Settings::default(), Some(message))
+        }
+    }
 }
 
 /// Called while creating the first view, so feedback is delivered after its Root exists.
@@ -156,7 +179,7 @@ pub fn set_theme(theme: ThemePreference, window: &mut Window, cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Settings, ThemePreference};
+    use super::{Settings, ThemePreference, open};
 
     #[test]
     fn round_trips_and_tolerates_bad_files() {
@@ -180,5 +203,24 @@ mod tests {
         // Unknown and missing fields are fine: files from other versions still load.
         std::fs::write(&path, r#"{ "theme": "light", "future": 1 }"#).unwrap();
         assert_eq!(Settings::load(&path).unwrap().theme, ThemePreference::Light);
+    }
+
+    #[test]
+    fn keeps_an_unreadable_file_before_saving_over_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, "{ not json").unwrap();
+        let (save_to, settings, error) = open(Some(path.clone()));
+        assert_eq!(save_to.as_ref(), Some(&path));
+        assert_eq!(settings, Settings::default());
+        assert!(error.unwrap().contains("settings.json.invalid"));
+        assert_eq!(std::fs::read_to_string(dir.path().join("settings.json.invalid")).unwrap(), "{ not json");
+
+        // Without a copy (here: the path is a directory), saving is disabled and the file stays.
+        let (save_to, _, error) = open(Some(dir.path().to_path_buf()));
+        assert_eq!(save_to, None);
+        assert!(error.unwrap().contains("without saving"));
+
+        assert_eq!(open(Some(dir.path().join("missing.json"))).2, None, "a missing file is not an error");
     }
 }

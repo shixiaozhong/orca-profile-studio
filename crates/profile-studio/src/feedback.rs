@@ -1,15 +1,26 @@
 //! Error feedback shared by operations that may run outside a window update.
 
 use gpui_kit::component::{WindowExt as _, button::Button, notification::Notification};
-use gpui_kit::{App, SystemNotification};
+use gpui_kit::{AnyWindowHandle, App, SystemNotification};
 
 struct OperationError;
 
-/// Defer until the caller releases its window; use a stable ID to replace repeated failures.
+/// An error of the whole app, shown in every window. Defer until the caller releases its window;
+/// use a stable ID to replace repeated failures.
 pub fn error(id: &'static str, title: &'static str, message: String, cx: &mut App) {
+    deliver(None, id, title, message, cx);
+}
+
+/// An error of one window's operation, shown only there.
+pub fn window_error(window: AnyWindowHandle, id: &'static str, title: &'static str, message: String, cx: &mut App) {
+    deliver(Some(window), id, title, message, cx);
+}
+
+fn deliver(target: Option<AnyWindowHandle>, id: &'static str, title: &'static str, message: String, cx: &mut App) {
     cx.defer(move |cx| {
         let mut delivered = false;
-        for handle in cx.windows() {
+        let windows = target.map_or_else(|| cx.windows(), |window| vec![window]);
+        for handle in windows {
             if handle
                 .update(cx, |_, window, cx| {
                     window.push_notification(
@@ -30,7 +41,7 @@ pub fn error(id: &'static str, title: &'static str, message: String, cx: &mut Ap
                 delivered = true;
             }
         }
-        // The first window can fail too; there is then no Root in which to show an alert.
+        // The first window can fail too, or the target closed; there is then no Root to show it in.
         if !delivered {
             eprintln!("{title}: {message}");
             cx.show_system_notification(SystemNotification {
