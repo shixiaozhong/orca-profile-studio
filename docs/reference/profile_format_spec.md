@@ -396,6 +396,21 @@ nlohmann::json 会自动跳过 BOM，所以 Orca 能正常加载；但 **Rust �
 
 ---
 
+### 8.8 工作台的多余覆盖值提示（M14）
+
+这是一项工作台新增的 info 提示，不是 OrcaSlicer 的加载错误。子预设自己写出的值与其父项的最终值按原始字符串/数组完全相同时，报告 `redundant-override`；字符串与单元素数组、不同数字拼写、数组顺序均不等同。根预设和不完整的继承链不参与比较；有 schema 时，不属于该预设类型的键（OrcaSlicer 会丢弃它们，已另有提示）也不参与比较。有 schema 时，父项未显式设置的键可以来自默认层。
+
+在同一个锁定数据版本上，不带 schema 为 **56,926** 项，带 bundled schema 为 **73,253** 项。独立参考统计：
+
+```bash
+python3 -I docs/reference/profile_format_stats.py ../OrcaSlicer/resources/profiles
+python3 -I docs/reference/profile_format_stats.py ../OrcaSlicer/resources/profiles crates/profile-core/schema/schema.json
+```
+
+该提示不修改文件。删除相同覆盖后，子项会跟随后续的父项变化；是否删除或把兄弟项共同值提到父项由用户决定。
+
+---
+
 ## 9. 对新项目的设计建议
 
 ### 9.1 数据模型草案（Rust）

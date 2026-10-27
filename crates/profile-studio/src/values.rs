@@ -117,7 +117,15 @@ pub fn build_rows(catalog: &Catalog, edits: &Edits, preset: usize) -> Vec<ValueR
     let chain = repo.chain(id);
     let schema = repo.schema();
     let own = edits.session(preset).map_or(&repo.preset(id).params, |session| session.params());
-    let issues = repo.check_values(id, own);
+    let mut issues = repo.check_values(id, own);
+    // Compare with what the parent inherits now, including unsaved edits of the ancestors.
+    if let Some(parent) = repo.preset(id).parent {
+        issues.extend(
+            repo.redundant_overrides_against(id, own, |key| {
+                edits.effective(parent.index(), key).map(|(value, _)| value)
+            }),
+        );
+    }
 
     let mut rows: Vec<ValueRow> = repo
         .trace_with(id, own)

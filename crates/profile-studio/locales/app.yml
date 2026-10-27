@@ -1211,3 +1211,48 @@ models.applied:
 models.source_changed:
   en: The source model changed during Reload. Your input is kept; reset the form before creating another preview.
   zh-CN: 重新加载时来源机型已变化。输入已保留，请重置表单后再生成预览。
+issue.redundant_override:
+  en: "`%{key}` is identical to its inherited value; the own override is redundant"
+  zh-CN: "`%{key}` 与继承值完全相同，本文件中的覆盖值是多余的"
+batch.promote:
+  en: Promote to parent
+  zh-CN: 提到父项
+promote.need_siblings:
+  en: Select at least two distinct sibling presets.
+  zh-CN: 请至少选择两个不同的兄弟预设。
+promote.same_parent:
+  en: The selected presets must have the same direct parent and kind.
+  zh-CN: 所选预设必须类型相同，并具有同一个直接父项。
+promote.incomplete:
+  en: The inheritance chain is incomplete. Resolve it before promoting values.
+  zh-CN: 继承链不完整，请先处理继承问题。
+promote.cross_vendor:
+  en: Values cannot be promoted to a parent in another vendor, including OrcaFilamentLibrary.
+  zh-CN: 不允许提到其他厂商的父项，包括 OrcaFilamentLibrary。
+promote.shared_library:
+  en: Values cannot be promoted into OrcaFilamentLibrary; that parent is shared by filaments of every vendor.
+  zh-CN: 不允许把值提到 OrcaFilamentLibrary 的父项：它被所有厂商的耗材共用。
+promote.own_required:
+  en: Every selected preset must set this key in its own file.
+  zh-CN: 每个所选预设都必须在自己的文件中设置此键。
+promote.same_value:
+  en: The selected presets must set exactly the same value, including string/array shape and item order.
+  zh-CN: 所选预设的值必须完全相同，包括字符串或数组形态，以及元素顺序。
+promote.parent_changed:
+  en: Parent — set shared value
+  zh-CN: 父项：设置共同值
+promote.parent_unchanged:
+  en: Parent — already sets this value
+  zh-CN: 父项：已设置此值
+promote.child:
+  en: Selected child — remove own override
+  zh-CN: 所选子项：删除本地覆盖
+promote.impact:
+  en: Unselected descendant — effective value changes, file unchanged
+  zh-CN: 未选子孙：最终值变化，文件不改动
+promote.help:
+  en: "Use the identical own value of the selected siblings. The preview includes the parent and every unselected descendant whose effective value changes. Apply is one undo group; Save writes only changed files."
+  zh-CN: "使用所选兄弟预设相同的本地值。预览包含父项，以及最终值会变化的全部未选子孙。应用后可整组撤销，保存只写入有修改的文件。"
+promote.summary:
+  en: "%{selected} selected · %{changed} files will change · effective values will also change in %{affected} unselected descendants. Review all preview rows before applying."
+  zh-CN: "已选 %{selected} 项 · 将修改 %{changed} 个文件 · 另有 %{affected} 个未选子孙的最终值会变化。应用前请检查全部预览行。"

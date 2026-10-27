@@ -114,6 +114,8 @@ fn reports_known_data_problems() {
     assert_eq!(count("utf8-bom"), 2);
     assert_eq!(count("list-name-mismatch"), 6);
     assert_eq!(count("unexpected-from"), 97);
+    // Independently matched by profile_format_stats.py (without schema defaults).
+    assert_eq!(count("redundant-override"), 56926);
 
     let forgotten = Path::new("Snapmaker/process/0.24 Standard @Snapmaker (0.8 nozzle).json");
     assert!(
@@ -156,6 +158,8 @@ fn schema_checks_report_known_value_problems() {
 
     let stats = Stats::collect(repo);
     let count = |code| stats.issues_by_code.get(code).copied().unwrap_or(0);
+    // profile_format_stats.py ROOT schema.json supplies the same default layer.
+    assert_eq!(count("redundant-override"), 73253);
     assert_eq!(count("unknown-key"), 2288);
     assert_eq!(count("obsolete-key"), 2764);
     assert_eq!(count("renamed-key"), 805);

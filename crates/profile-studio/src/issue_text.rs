@@ -3,6 +3,7 @@ use profile_core::IssueKind;
 pub fn issue(issue: &IssueKind) -> String {
     use IssueKind::*;
     match issue {
+        RedundantOverride { key } => t!("issue.redundant_override", key = key),
         FileUnreadable(reason) => t!("issue.file_unreadable", reason = reason),
         ListedFileMissing => t!("issue.listed_missing").to_owned(),
         Utf8Bom => t!("issue.bom").to_owned(),

@@ -85,6 +85,10 @@ pub enum IssueKind {
     DanglingCompatiblePrinter {
         printer: String,
     },
+    /// An own value exactly matches the value inherited through the parent.
+    RedundantOverride {
+        key: String,
+    },
     // Values, checked against the schema
     ObsoleteKey {
         key: String,
@@ -182,9 +186,12 @@ impl IssueKind {
             | NilNotNullable { .. }
             | ValueTrailingText { .. }
             | ValueOutOfRange { .. } => Severity::Warning,
-            OrphanFile | UnexpectedFrom(None) | ListNameMismatch { .. } | ObsoleteKey { .. } | RenamedKey { .. } => {
-                Severity::Info
-            }
+            OrphanFile
+            | UnexpectedFrom(None)
+            | ListNameMismatch { .. }
+            | ObsoleteKey { .. }
+            | RenamedKey { .. }
+            | RedundantOverride { .. } => Severity::Info,
         }
     }
 
@@ -192,7 +199,8 @@ impl IssueKind {
     pub fn key(&self) -> Option<&str> {
         use IssueKind::*;
         match self {
-            ObsoleteKey { key }
+            RedundantOverride { key }
+            | ObsoleteKey { key }
             | RenamedKey { key, .. }
             | UnknownKey { key }
             | KeyNotForKind { key, .. }
@@ -237,6 +245,7 @@ impl IssueKind {
             PrinterModelUnknown { .. } => "printer-model-unknown",
             PrinterVariantUnknown { .. } => "printer-variant-unknown",
             DanglingCompatiblePrinter { .. } => "dangling-compatible-printer",
+            RedundantOverride { .. } => "redundant-override",
             ObsoleteKey { .. } => "obsolete-key",
             RenamedKey { .. } => "renamed-key",
             UnknownKey { .. } => "unknown-key",
@@ -258,6 +267,9 @@ impl fmt::Display for IssueKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use IssueKind::*;
         match self {
+            RedundantOverride { key } => {
+                write!(f, "`{key}` is identical to its inherited value; the own override is redundant")
+            }
             FileUnreadable(reason) => write!(f, "cannot load file: {reason}"),
             ListedFileMissing => f.write_str("listed in the vendor index but the file does not exist"),
             Utf8Bom => f.write_str("file starts with a UTF-8 BOM"),

@@ -1,7 +1,8 @@
 """Simulate Orca's system-profile loading rules over resources/profiles and print statistics.
 
-Reference implementation for docs/profile_format_spec.md.
-Usage: python3 -I docs/profile_format_stats.py resources/profiles
+Reference implementation for docs/reference/profile_format_spec.md.
+Usage: python3 -I docs/reference/profile_format_stats.py resources/profiles [schema.json]
+The optional schema supplies defaults for redundant-override detection only.
 """
 import collections
 import json
@@ -56,6 +57,9 @@ def lib_manifest(vdir):
     return items
 
 
+defaults = load(sys.argv[2])["default_presets"] if len(sys.argv) > 2 else {}
+library_values = {}
+
 vendors = sorted(f[:-5] for f in os.listdir(ROOT) if f.endswith(".json") and f != "blacklist.json")
 vendors.remove(LIB)
 vendors.insert(0, LIB)
@@ -91,6 +95,7 @@ for v in vendors:
                 issues["listed_but_missing"].append(f"{v}/{sub}")
         pending = {d.get("name") for d in files.values()}
         local = {}          # per-vendor, per-section map: preset name (from file) -> depth
+        local_values = {}  # independent whole-key inheritance for redundant-override counts
         resolved_pm = {}    # machine name -> resolved printer_model / printer_variant
         for name, sub in items:
             d = files.get(sub)
@@ -135,6 +140,22 @@ for v in vendors:
                     continue
             else:
                 depth = 0
+            inherited = (local_values.get(par, library_values.get(par, {})) if par
+                         else defaults.get(typ, {}).get("values", {}))
+            own = {k: value for k, value in d.items() if k.lower() not in META
+                   and (isinstance(value, str) or (isinstance(value, list) and all(isinstance(x, str) for x in value)))}
+            kind_keys = defaults.get(typ, {}).get("values", {})
+            if par:
+                for key, value in own.items():
+                    # With a schema, keys outside the kind are dropped by OrcaSlicer, not inherited.
+                    if defaults and key not in kind_keys:
+                        continue
+                    if key in inherited and type(value) is type(inherited[key]) and value == inherited[key]:
+                        issues["redundant_override"].append(f"{v}/{sub}: {key}")
+            effective = {**inherited, **own}
+            local_values.setdefault(d.get("name"), effective)
+            if typ == "filament" and v == LIB:
+                library_values.setdefault(d.get("name"), effective)
             local[d.get("name")] = depth
             if typ == "filament" and v == LIB:
                 lib_maps[d.get("name")] = depth

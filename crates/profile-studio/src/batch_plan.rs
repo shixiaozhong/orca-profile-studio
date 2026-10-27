@@ -10,15 +10,17 @@ pub enum Operation {
     Remove,
     AddItem,
     RemoveItem,
+    Promote,
 }
 impl Operation {
-    pub const ALL: [Self; 4] = [Self::Set, Self::Remove, Self::AddItem, Self::RemoveItem];
+    pub const ALL: [Self; 5] = [Self::Set, Self::Remove, Self::AddItem, Self::RemoveItem, Self::Promote];
     pub fn label(self) -> String {
         match self {
             Self::Set => t!("batch.set"),
             Self::Remove => t!("batch.remove"),
             Self::AddItem => t!("batch.add_item"),
             Self::RemoveItem => t!("batch.remove_item"),
+            Self::Promote => t!("batch.promote"),
         }
     }
 }
@@ -37,10 +39,18 @@ pub struct BatchPlan {
     baseline: Edits,
     changes: Vec<(usize, String, Option<RawValue>)>,
     rows: Vec<PreviewRow>,
+    selected_count: usize,
+    impact_count: usize,
 }
 impl BatchPlan {
     pub fn rows(&self) -> &[PreviewRow] {
         &self.rows
+    }
+    pub fn selected_count(&self) -> usize {
+        self.selected_count
+    }
+    pub fn impact_count(&self) -> usize {
+        self.impact_count
     }
     pub fn changed_count(&self) -> usize {
         self.changes.len()
@@ -71,6 +81,9 @@ impl BatchPlan {
         }
         if selected.iter().any(|id| repo.preset(*id).kind != kind) {
             return Err(t!("batch.same_kind"));
+        }
+        if operation == Operation::Promote {
+            return Self::promote(catalog, baseline, selected, key);
         }
         let array = matches!(operation, Operation::AddItem | Operation::RemoveItem);
         if array && schema.option(&key).is_none_or(|o| o.type_ != OptionType::Strings) {
@@ -111,6 +124,7 @@ impl BatchPlan {
                 }
                 Operation::Set => value.clone(),
                 Operation::Remove => None,
+                Operation::Promote => unreachable!("promotion has its own plan"),
                 Operation::AddItem | Operation::RemoveItem => {
                     // A preset without its own list follows its (possibly edited) ancestors.
                     let base = if own.is_some() { effective.clone() } else { inherited.clone() };
@@ -199,10 +213,84 @@ impl BatchPlan {
             row.cells[2] = describe(candidate.effective(row.preset, &key));
             row.cells[5] = descendants[&row.preset].to_string();
         }
-        Ok(Self { baseline, changes, rows })
+        Ok(Self { baseline, changes, selected_count: rows.len(), impact_count: 0, rows })
+    }
+    fn promote(catalog: &Arc<Catalog>, baseline: Edits, selected: Vec<PresetId>, key: String) -> Result<Self, String> {
+        let repo = &catalog.repo;
+        let plan = profile_core::PromotionPlan::with_values(repo, &selected, &key, |id| {
+            baseline.session(id.index()).map_or(&repo.preset(id).params, |session| session.params())
+        })
+        .map_err(|error| match error {
+            profile_core::PromotionError::NeedSiblings => t!("promote.need_siblings"),
+            profile_core::PromotionError::DifferentParents => t!("promote.same_parent"),
+            profile_core::PromotionError::IncompleteChain => t!("promote.incomplete"),
+            profile_core::PromotionError::CrossVendor => t!("promote.cross_vendor"),
+            profile_core::PromotionError::SharedLibrary => t!("promote.shared_library"),
+            profile_core::PromotionError::MissingOwnValue => t!("promote.own_required"),
+            profile_core::PromotionError::DifferentValues => t!("promote.same_value"),
+        })?;
+        let changes =
+            plan.changes().iter().map(|(id, value)| (id.index(), key.clone(), value.clone())).collect::<Vec<_>>();
+        let mut candidate = baseline.clone();
+        for (id, _, value) in &changes {
+            candidate.session_mut(*id).set(&key, value.clone());
+        }
+        let mut targets = vec![(
+            plan.parent(),
+            if changes.iter().any(|(ix, _, _)| *ix == plan.parent().index()) {
+                t!("promote.parent_changed")
+            } else {
+                t!("promote.parent_unchanged")
+            },
+        )];
+        let mut children = selected.clone();
+        children.sort_unstable();
+        targets.extend(children.into_iter().map(|id| (id, t!("promote.child"))));
+        targets.extend(plan.impacts().iter().map(|impact| (impact.preset(), t!("promote.impact"))));
+        // One chain walk per impacted preset, counted for each row's preset among its ancestors.
+        let mut descendants: BTreeMap<PresetId, usize> = BTreeMap::new();
+        for impact in plan.impacts() {
+            for ancestor in repo.chain(impact.preset()).into_iter().skip(1) {
+                *descendants.entry(ancestor).or_default() += 1;
+            }
+        }
+        let rows = targets
+            .into_iter()
+            .map(|(id, state)| {
+                let ix = id.index();
+                let preset = repo.preset(id);
+                let before = baseline.session(ix).map_or(&preset.params, |s| s.params());
+                let after = candidate.session(ix).map_or(&preset.params, |s| s.params());
+                let existing = repo.check_values(id, before);
+                let issues = repo
+                    .check_values(id, after)
+                    .into_iter()
+                    .filter(|issue| !existing.contains(issue))
+                    .map(|issue| {
+                        format!("{}: {}", crate::i18n::severity(issue.severity()), crate::issue_text::issue(&issue))
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let descendants = descendants.get(&id).copied().unwrap_or(0);
+                PreviewRow {
+                    preset: ix,
+                    cells: [
+                        format!("{} / {}", repo.vendor(preset.vendor).name, preset.name()),
+                        describe(baseline.effective(ix, &key)),
+                        describe(candidate.effective(ix, &key)),
+                        state,
+                        issues,
+                        descendants.to_string(),
+                        preset.path.display().to_string(),
+                    ],
+                }
+            })
+            .collect();
+        Ok(Self { baseline, changes, rows, selected_count: selected.len(), impact_count: plan.impacts().len() })
     }
 }
 fn describe(value: Option<(RawValue, String)>) -> String {
+    // The same rendering as Values, Compare and Details.
     value.map_or(t!("common.unset"), |(value, source)| format!("{} — {source}", format_value(&value)))
 }
 
@@ -367,6 +455,57 @@ mod tests {
         edits.discard_sessions(&[fresh.repo.presets()[b].path.clone()]);
         assert!(edits.history_group(group, false).is_err());
         assert!(!edits.is_dirty(a));
+    }
+
+    #[test]
+    fn values_redundancy_hint_follows_unsaved_parent_edits() {
+        let _locale = crate::i18n::test_locale();
+        let (_dir, catalog) = fixture();
+        let mut edits = Edits::new(catalog.clone());
+        let base = id(&catalog, "base").index();
+        let b = id(&catalog, "b").index();
+        let redundant = |edits: &Edits| {
+            crate::values::build_rows(&catalog, edits, b)
+                .into_iter()
+                .find(|row| row.key == "wall_loops")
+                .is_some_and(|row| row.issues.iter().any(|(severity, _)| *severity == profile_core::Severity::Info))
+        };
+        edits.session_mut(b).set("wall_loops", text("2"));
+        assert!(redundant(&edits), "equal to the parent's saved value");
+        // The parent is edited but not saved: the child's value is no longer what it inherits.
+        edits.session_mut(base).set("wall_loops", text("4"));
+        assert!(!redundant(&edits));
+        edits.session_mut(b).set("wall_loops", text("4"));
+        assert!(redundant(&edits), "equal to the parent's unsaved value");
+    }
+
+    #[test]
+    fn promotion_groups_parent_and_children_and_rejects_stale_ancestor_edits() {
+        let _locale = crate::i18n::test_locale();
+        let (dir, catalog) = fixture();
+        let mut edits = Edits::new(catalog.clone());
+        let parent = id(&catalog, "base").index();
+        for name in ["a", "b"] {
+            edits.session_mut(id(&catalog, name).index()).set("wall_loops", text("5"));
+        }
+        let preview = plan(&catalog, &edits, &["a", "b"], "wall_loops", Operation::Promote, None);
+        assert_eq!(preview.selected_count(), 2);
+        assert_eq!(preview.changed_count(), 3);
+        assert_eq!(preview.rows().len(), 3, "c inherits a, whose effective value stays unchanged");
+        assert!(preview.rows()[0].cell(3).contains("Parent"));
+        let original = std::fs::read_to_string(dir.path().join("Acme/process/base.json")).unwrap();
+        let group = preview.apply(&mut edits).unwrap().unwrap();
+        assert!(edits.session(id(&catalog, "a").index()).unwrap().params().get("wall_loops").is_none());
+        assert_eq!(edits.effective(id(&catalog, "c").index(), "wall_loops").unwrap().0, RawValue::Str("5".into()));
+        assert_eq!(std::fs::read_to_string(dir.path().join("Acme/process/base.json")).unwrap(), original);
+        edits.session_mut(parent).set("layer_height", text("0.3"));
+        assert!(edits.history_group(group, false).is_err());
+        edits.history(parent, false).unwrap();
+        assert_eq!(edits.history_group(group, false).unwrap(), 3);
+        assert_eq!(edits.effective(parent, "wall_loops").unwrap().0, RawValue::Str("2".into()));
+        let preview = plan(&catalog, &edits, &["a", "b"], "wall_loops", Operation::Promote, None);
+        edits.session_mut(parent).set("wall_loops", text("9"));
+        assert!(preview.apply(&mut edits).is_err());
     }
 
     #[test]

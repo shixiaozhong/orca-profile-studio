@@ -2698,6 +2698,153 @@ msgstr "选择打印机"
         .unwrap();
     }
 
+    fn promotion_fixture() -> tempfile::TempDir {
+        let dir = batch_fixture();
+        for (file, value) in [("fdm_process_common.json", "1"), ("Acme 0.2.json", "3"), ("Acme 0.3.json", "3")] {
+            let path = dir.path().join("Acme/process").join(file);
+            let mut doc = profile_core::Document::parse(std::fs::read_to_string(&path).unwrap()).unwrap();
+            doc.set("wall_loops", &profile_core::RawValue::Str(value.into()));
+            std::fs::write(path, doc.text()).unwrap();
+        }
+        let path = dir.path().join("Acme.json");
+        let mut manifest = profile_core::Document::parse(std::fs::read_to_string(&path).unwrap()).unwrap();
+        for (offset, name, parent) in [(3, "Unselected", "fdm_process_common"), (4, "Deep", "Unselected")] {
+            manifest
+                .array_insert(
+                    "process_list",
+                    offset,
+                    &serde_json::json!({"name":name,"sub_path":format!("process/{name}.json")}),
+                )
+                .unwrap();
+            std::fs::write(dir.path().join(format!("Acme/process/{name}.json")),serde_json::json!({"name":name,"type":"process","from":"system","instantiation":"false","inherits":parent}).to_string()).unwrap();
+        }
+        std::fs::write(path, manifest.text()).unwrap();
+        dir
+    }
+
+    #[gpui_kit::test]
+    fn promotes_siblings_with_explicit_unselected_impact_and_grouped_undo_after_saving(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
+        let dir = promotion_fixture();
+        let untouched = ["Unselected", "Deep"].map(|name| {
+            let path = dir.path().join(format!("Acme/process/{name}.json"));
+            let text = std::fs::read_to_string(&path).unwrap();
+            (path, text)
+        });
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "Acme 0.2", cx);
+        click(window, "batch-edit", cx);
+        management_input(window, "manage-search", "Acme 0.", cx);
+        click(window, "manage-select-shown", cx);
+        batch_select(window, "batch-operation", "Promote to parent", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("value-input").is_none());
+        })
+        .unwrap();
+        click(window, "batch-preview-button", cx);
+        let rows = batch_rows(&app, cx);
+        assert_eq!(rows.len(), 5);
+        assert_eq!(rows[0][2], "3 — this file");
+        assert!(rows[1..3].iter().all(|r| r[2] == "3 — fdm_process_common"));
+        assert!(
+            rows[3..]
+                .iter()
+                .all(|r| r[1].starts_with("1 —") && r[2].starts_with("3 —") && r[3].contains("file unchanged"))
+        );
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find("batch-status").label().unwrap().contains("2 unselected descendants"));
+        })
+        .unwrap();
+        click(window, "batch-apply", cx);
+        assert_eq!(app.read_with(cx, |app, cx| app.edits.as_ref().unwrap().read(cx).dirty().len()), 3);
+        click(window, "batch-undo", cx);
+        assert!(app.read_with(cx, |app, cx| app.edits.as_ref().unwrap().read(cx).dirty().is_empty()));
+        click(window, "batch-redo", cx);
+        click(window, "batch-save", cx);
+        click(window, "ok", cx);
+        let loaded = catalog(&app, cx);
+        for name in ["Acme 0.2", "Acme 0.3", "Unselected", "Deep"] {
+            let id = loaded.repo.find(PresetKind::Process, name)[0];
+            assert_eq!(loaded.repo.lookup_scalar(id, "wall_loops"), Some("3"));
+            assert!(!loaded.repo.preset(id).params.contains_key("wall_loops"));
+        }
+        for (path, before) in &untouched {
+            assert_eq!(std::fs::read_to_string(path).unwrap(), *before);
+        }
+        click(window, "batch-close", cx);
+        run_palette(window, "show preset values", cx);
+        find_key(window, "wall_loops", cx);
+        click(window, "undo", cx);
+        assert_eq!(app.read_with(cx, |app, cx| app.edits.as_ref().unwrap().read(cx).dirty().len()), 3);
+        let other = loaded.repo.find(PresetKind::Process, "Unselected")[0].index();
+        assert_eq!(
+            app.read_with(cx, |app, cx| app.edits.as_ref().unwrap().read(cx).effective(other, "wall_loops").unwrap().0),
+            profile_core::RawValue::Str("1".into())
+        );
+        click(window, "redo", cx);
+        assert!(app.read_with(cx, |app, cx| app.edits.as_ref().unwrap().read(cx).dirty().is_empty()));
+    }
+
+    #[gpui_kit::test]
+    fn redundant_issue_filter_and_chinese_promotion_keep_selection_and_reject_invalid_targets(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale_switching();
+        let dir = batch_fixture(); // All three own wall_loops values are 2.
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "show issues", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.within("issues-severity").click("input", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.press("up", cx);
+            window.press("enter", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        batch_select(window, "issues-code", "redundant-override", cx);
+        let issues = app.read_with(cx, |app, _| app.issues.clone().unwrap());
+        let rows = issues.read_with(cx, |view, cx| view.table().read(cx).dump(cx).1);
+        assert!(!rows.is_empty());
+        assert!(rows.iter().all(|r| r[0] == "info" && r[1] == "redundant-override"));
+        run_palette(window, "Language: 中文", cx);
+        assert!(
+            issues
+                .read_with(cx, |view, cx| view.table().read(cx).dump(cx).1)
+                .iter()
+                .all(|r| r[4].contains("与继承值完全相同"))
+        );
+        run_palette(window, "Acme 0.2", cx);
+        click(window, "batch-edit", cx);
+        batch_select(window, "batch-operation", "提到父项", cx);
+        click(window, "batch-preview-button", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find("batch-status").label().unwrap().contains("至少选择两个"));
+            assert_eq!(window.find("batch-apply").disabled(), Some(true));
+        })
+        .unwrap();
+        management_input(window, "manage-search", "Acme 0.", cx);
+        click(window, "manage-select-shown", cx);
+        click(window, "batch-preview-button", cx);
+        let rows = batch_rows(&app, cx);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0][3], "父项：已设置此值");
+        click(window, "batch-apply", cx);
+        assert_eq!(
+            app.read_with(cx, |app, cx| app.edits.as_ref().unwrap().read(cx).dirty().len()),
+            2,
+            "unchanged parent is not part of the undo group"
+        );
+        click(window, "batch-undo", cx);
+        assert!(app.read_with(cx, |app, cx| app.edits.as_ref().unwrap().read(cx).dirty().is_empty()));
+    }
+
     fn model_fixture() -> tempfile::TempDir {
         let dir = editable_fixture();
         let manifest = dir.path().join("Acme.json");

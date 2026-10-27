@@ -185,6 +185,17 @@ from the package directory).
   `ModelsView` retains form input across language changes and refreshes, and requires Reset input
   if a reloaded source changed. `is_writing_files` and `unsaved_files` include the model view even
   when hidden; the shared `manage::preview_plan` handles both preset and model confirmations.
+- Redundant overrides / promotion (M14): `redundant-override` is an info-only exact RawValue
+  comparison against the parent's effective value (including schema defaults when loaded). Roots,
+  incomplete chains and (with a schema) keys outside the kind are excluded. The Values view compares
+  against `Edits::effective` of the parent, so unsaved ancestor edits count; promotion into an
+  OrcaFilamentLibrary parent is refused (`PromotionError::SharedLibrary`). Counts at `953509c23f`: 56,926 without schema, 73,253 with
+  schema; `profile_format_stats.py ROOT [schema.json]` independently agrees. Never auto-remove them.
+  `PromotionPlan::with_values` reads current own values for all presets; it requires distinct
+  siblings with the same own value, a complete chain, and a same-vendor parent. It returns the
+  actual parent/child changes separately from unselected descendant impacts. Impact rows must not
+  become edit sessions or writes. `BatchPlan` preserves M11 staleness checks and groups the parent
+  (only if changed) with the children for atomic undo/redo; retain the visible impact count.
 - Localization (M12): `i18n::set_language` switches the process-wide locale and defers an in-place
   refresh of all windows. Never reload profiles or rebase Edits just to translate a view. Preserve
   retained input entities, enum values, selection and undo history; update labels/placeholders and
@@ -240,9 +251,8 @@ from the package directory).
 
 [docs/roadmap.md](docs/roadmap.md) (Chinese) is the roadmap: stages and status, key design decisions
 of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
-M1–M13. Next, in order: M14 redundant overrides / promote to parent,
-M15 macOS app bundle. Git diff is pending (待定) and the OrcaSlicer upgrade check is deferred (暂缓); pending
-and deferred items get no M number until the user decides to do them.
+M1–M14. Next: M15 macOS app bundle. Git diff is pending (待定) and the OrcaSlicer upgrade check is
+deferred (暂缓); pending and deferred items get no M number until the user decides to do them.
 The G-code viewer and OrcaSlicer sync automation are deferred.
 When a stage is finished, move it to "已完成" there with its design decisions, mark it ✅, and update
 the status line in README, all in the stage's own commit (see the commit rule above for the 提交 column).

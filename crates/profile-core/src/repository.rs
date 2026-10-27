@@ -261,6 +261,33 @@ impl Repository {
         traces.into_values().collect()
     }
 
+    /// Reports byte-spelling/shape equality with the parent's effective value, including schema
+    /// defaults when loaded. Roots and incomplete inheritance chains are not candidates.
+    pub fn redundant_overrides(&self, id: PresetId, own: &IndexMap<String, RawValue>) -> Vec<IssueKind> {
+        let Some(parent) = self.preset(id).parent else { return Vec::new() };
+        self.redundant_overrides_against(id, own, |key| self.lookup(parent, key).map(|v| v.value.clone()))
+    }
+
+    /// Like [`Self::redundant_overrides`], with the parent's effective value supplied by the caller
+    /// (e.g. including unsaved edits of the ancestors). With a schema, keys that do not belong to
+    /// the kind are left out: OrcaSlicer drops them, so they are reported as such instead.
+    pub fn redundant_overrides_against(
+        &self,
+        id: PresetId,
+        own: &IndexMap<String, RawValue>,
+        inherited: impl Fn(&str) -> Option<RawValue>,
+    ) -> Vec<IssueKind> {
+        let preset = self.preset(id);
+        if preset.parent.is_none() || self.depth(id).is_none() {
+            return Vec::new();
+        }
+        own.iter()
+            .filter(|(key, _)| self.schema.as_ref().is_none_or(|schema| schema.belongs_to(preset.kind, key)))
+            .filter(|(key, value)| inherited(key).as_ref() == Some(*value))
+            .map(|(key, _)| IssueKind::RedundantOverride { key: key.clone() })
+            .collect()
+    }
+
     /// The schema checks of `params` as the own values of preset `id`; empty without a schema.
     pub fn check_values(&self, id: PresetId, params: &IndexMap<String, RawValue>) -> Vec<IssueKind> {
         let Some(schema) = &self.schema else { return Vec::new() };
@@ -511,6 +538,7 @@ impl Repository {
                 }
             }
             issues.extend(self.check_values(id, &self.preset(id).params));
+            issues.extend(self.redundant_overrides(id, &self.preset(id).params));
             for kind in issues {
                 self.issue(vendor, &path, Some(id), kind);
             }

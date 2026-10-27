@@ -280,7 +280,7 @@ impl BatchView {
         let choices: Vec<_> = Operation::ALL
             .into_iter()
             .enumerate()
-            .filter(|(ix, _)| *ix < 2 || strings)
+            .filter(|(_, op)| !matches!(op, Operation::AddItem | Operation::RemoveItem) || strings)
             .map(|(value, op)| Choice { value, title: op.label().into() })
             .collect();
         self.operation_select.update(cx, |state, cx| {
@@ -297,7 +297,7 @@ impl BatchView {
         self.editor = None;
         self.editor_subscription = None;
         self.draft_dirty = false;
-        if self.operation == Operation::Remove {
+        if matches!(self.operation, Operation::Remove | Operation::Promote) {
             return;
         }
         let Some(schema) = self.catalog.repo.schema() else { return };
@@ -344,7 +344,16 @@ impl BatchView {
                 this.task = None;
                 match result {
                     Ok(plan) if plan.is_current(this.edits.read(cx)) => {
-                        this.status = t!("batch.summary", arg0 = plan.rows().len(), arg1 = plan.changed_count());
+                        this.status = if plan.impact_count() > 0 {
+                            t!(
+                                "promote.summary",
+                                selected = plan.selected_count(),
+                                changed = plan.changed_count(),
+                                affected = plan.impact_count()
+                            )
+                        } else {
+                            t!("batch.summary", arg0 = plan.selected_count(), arg1 = plan.changed_count())
+                        };
                         this.preview.update(cx, |table, cx| {
                             table.delegate_mut().plan = Some(Arc::new(plan));
                             table.refresh(cx);
@@ -469,7 +478,9 @@ impl Render for BatchView {
                         )
                         .children(self.editor.clone())
                         .child(div().text_xs().text_color(cx.theme().muted_foreground).child(
-                            if self.operation == Operation::Remove {
+                            if self.operation == Operation::Promote {
+                                t!("promote.help")
+                            } else if self.operation == Operation::Remove {
                                 t!("batch.remove_help")
                             } else {
                                 t!("batch.array_help")
