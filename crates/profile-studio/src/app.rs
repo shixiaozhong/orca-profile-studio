@@ -28,6 +28,7 @@ use crate::details::{self, Compatibility, severity_color};
 use crate::edits::{Edits, EditsEvent, RefreshConflict};
 use crate::issues::{IssuesEvent, IssuesView};
 use crate::manage::{ManagementEvent, ManagementView};
+use crate::models::ModelsView;
 use crate::palette::{self, AppCommand, Target};
 use crate::settings::{self, ThemePreference};
 use crate::tree::{self as nav, Node, kind_icon};
@@ -95,6 +96,9 @@ pub struct StudioApp {
     /// The values table of the selected preset; created when the Values tab is first shown.
     values: Option<Entity<ValuesView>>,
     management: Option<Entity<ManagementView>>,
+    models: Option<Entity<ModelsView>>,
+    managing_models: bool,
+    _model_events: Option<Subscription>,
     managing: bool,
     batch: Option<Entity<BatchView>>,
     batching: bool,
@@ -205,6 +209,9 @@ impl StudioApp {
             preset_tab: PresetTab::Overview,
             values: None,
             management: None,
+            models: None,
+            managing_models: false,
+            _model_events: None,
             managing: false,
             batch: None,
             batching: false,
@@ -250,9 +257,12 @@ impl StudioApp {
             self.selected = None;
             self.values = None;
             self.management = None;
+            self.models = None;
+            self._model_events = None;
             self.batch = None;
             self._batch_events = None;
             self.managing = false;
+            self.managing_models = false;
             self.batching = false;
             self._management_events = None;
             self.edits = None;
@@ -361,6 +371,9 @@ impl StudioApp {
         if let Some(management) = &self.management {
             management.update(cx, |management, cx| management.refresh(&catalog, window, cx));
         }
+        if let Some(models) = &self.models {
+            models.update(cx, |models, cx| models.refresh(&catalog, window, cx));
+        }
         if let Some(batch) = &self.batch {
             batch.update(cx, |batch, cx| batch.refresh(&catalog, window, cx));
         }
@@ -399,6 +412,9 @@ impl StudioApp {
             }
             if let Some(management) = &self.management {
                 management.update(cx, |view, cx| view.refresh_language(window, cx));
+            }
+            if let Some(models) = &self.models {
+                models.update(cx, |view, cx| view.refresh_language(window, cx));
             }
             if let Some(batch) = &self.batch {
                 batch.update(cx, |view, cx| view.refresh_language(window, cx));
@@ -510,11 +526,17 @@ impl StudioApp {
         }
         presets.sort_unstable();
         presets.dedup();
-        presets.into_iter().map(|index| catalog.repo.root().join(&catalog.repo.presets()[index].path)).collect()
+        let mut files: Vec<_> =
+            presets.into_iter().map(|index| catalog.repo.root().join(&catalog.repo.presets()[index].path)).collect();
+        if let Some(path) = self.models.as_ref().and_then(|models| models.read(cx).unsaved_path(cx)) {
+            files.push(path);
+        }
+        files
     }
 
     pub fn is_writing_files(&self, cx: &App) -> bool {
         self.management.as_ref().is_some_and(|view| view.read(cx).is_applying())
+            || self.models.as_ref().is_some_and(|view| view.read(cx).is_applying())
     }
 
     fn may_leave_during_write(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
@@ -638,8 +660,57 @@ impl StudioApp {
             self.batch = Some(view);
         }
         self.managing = false;
+        self.managing_models = false;
         self.batching = true;
         self.batch.as_ref().unwrap().update(cx, |batch, cx| batch.focus(window, cx));
+        cx.notify();
+    }
+
+    fn open_models(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_writing_files(cx) {
+            return;
+        }
+        // Reopening the retained form must remain possible while it has input.
+        if self.edits.as_ref().is_some_and(|edits| !edits.read(cx).dirty().is_empty())
+            || self.values.as_ref().is_some_and(|values| values.read(cx).has_unapplied_input(cx))
+            || self.batch.as_ref().is_some_and(|batch| !batch.read(cx).unapplied_presets(cx).is_empty())
+        {
+            crate::feedback::window_error(
+                window.window_handle(),
+                "manage-unsaved",
+                t!("app.save_first"),
+                t!("app.save_first_help"),
+                cx,
+            );
+            return;
+        }
+        let LoadState::Ready(catalog) = &self.state else { return };
+        if self.models.is_none() {
+            let initial = match self.selected {
+                Some(Node::Model(ix)) => Some(ix),
+                _ => None,
+            };
+            let vendor = match self.selected {
+                Some(Node::Vendor(ix) | Node::Group(ix, _)) => Some(ix),
+                Some(Node::Preset(ix)) => Some(catalog.repo.presets()[ix].vendor.index()),
+                Some(Node::Model(ix)) => Some(catalog.repo.models()[ix].vendor.index()),
+                None => None,
+            };
+            let models = cx.new(|cx| ModelsView::new(catalog, initial, vendor, window, cx));
+            self._model_events = Some(cx.subscribe_in(&models, window, |this, _, event, window, cx| {
+                match event {
+                    ManagementEvent::Applied => this.reload(window, cx),
+                    ManagementEvent::Close => this.managing_models = false,
+                    ManagementEvent::Models => {}
+                }
+                cx.notify();
+            }));
+            self.models = Some(models);
+        }
+        self.managing = false;
+        self.batching = false;
+        self.managing_models = true;
+        self.models.as_ref().unwrap().update(cx, |view, cx| view.focus(window, cx));
         cx.notify();
     }
 
@@ -665,6 +736,7 @@ impl StudioApp {
             self._management_events = Some(cx.subscribe_in(&management, window, |this, _, event, window, cx| {
                 match event {
                     ManagementEvent::Applied => this.reload(window, cx),
+                    ManagementEvent::Models => this.open_models(window, cx),
                     ManagementEvent::Close => this.managing = false,
                 }
                 cx.notify();
@@ -672,6 +744,7 @@ impl StudioApp {
             self.management = Some(management);
         }
         self.managing = true;
+        self.managing_models = false;
         self.batching = false;
         cx.notify();
     }
@@ -747,6 +820,11 @@ impl StudioApp {
     }
 
     fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {
+        if self.managing_models
+            && let Some(models) = &self.models
+        {
+            return models.clone().into_any_element();
+        }
         if self.batching
             && let Some(batch) = &self.batch
         {
@@ -879,6 +957,7 @@ impl StudioApp {
 
     fn set_preset_tab(&mut self, tab: PresetTab, window: &mut Window, cx: &mut Context<Self>) {
         self.managing = false;
+        self.managing_models = false;
         self.batching = false;
         self.preset_tab = tab;
         self.sync_values(window, cx);
@@ -940,6 +1019,7 @@ impl StudioApp {
         };
         let reveal = |this: &mut Self, preset: usize, key: &str, window: &mut Window, cx: &mut Context<Self>| {
             this.managing = false;
+            this.managing_models = false;
             this.batching = false;
             this.preset_tab = PresetTab::Values;
             if let Some(values) = this.ensure_values(preset, window, cx) {
@@ -956,9 +1036,11 @@ impl StudioApp {
             Target::Command(AppCommand::ShowValues) => self.set_preset_tab(PresetTab::Values, window, cx),
             Target::Command(AppCommand::ShowIssues) => self.open_issues(window, cx),
             Target::Command(AppCommand::BatchEdit) => self.open_batch(window, cx),
+            Target::Command(AppCommand::ManageModels) => self.open_models(window, cx),
             Target::Command(AppCommand::ManagePresets) => self.open_management(window, cx),
             Target::Preset(preset) => {
                 self.managing = false;
+                self.managing_models = false;
                 self.batching = false;
                 self.select_node(Node::Preset(preset), true, window, cx);
             }
@@ -991,6 +1073,7 @@ impl StudioApp {
 
     fn open_issues(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.managing = false;
+        self.managing_models = false;
         self.batching = false;
         let LoadState::Ready(catalog) = &self.state else { return };
         if self.issues.is_none() {
@@ -2613,6 +2696,218 @@ msgstr "选择打印机"
             assert_eq!(window.find("batch-preview-button").disabled(), Some(true));
         })
         .unwrap();
+    }
+
+    fn model_fixture() -> tempfile::TempDir {
+        let dir = editable_fixture();
+        let manifest = dir.path().join("Acme.json");
+        let mut doc = profile_core::Document::parse(std::fs::read_to_string(&manifest).unwrap()).unwrap();
+        doc.array_insert("machine_model_list", 0, &serde_json::json!({"name":"A", "sub_path":"machine/model.json"}))
+            .unwrap();
+        doc.array_insert("machine_list", 0, &serde_json::json!({"name":"A 0.4", "sub_path":"machine/a.json"})).unwrap();
+        std::fs::write(manifest, doc.text()).unwrap();
+        std::fs::create_dir_all(dir.path().join("Acme/machine")).unwrap();
+        std::fs::write(dir.path().join("Acme/machine/model.json"), r#"{"type":"machine_model", "name":"A", "model_id":"A-ID", "nozzle_diameter":"0.4;0.6", "machine_tech":"FFF", "custom":"keep"}"#).unwrap();
+        std::fs::write(dir.path().join("Acme/machine/a.json"), r#"{"type":"machine","name":"A 0.4","from":"system","instantiation":"true","printer_model":"A","printer_variant":"0.4","nozzle_diameter":["0.4"]}"#).unwrap();
+        dir
+    }
+
+    #[gpui_kit::test]
+    fn model_form_input_without_a_chosen_model_names_a_model_file(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
+        let dir = model_fixture();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        click(window, "manage-presets", cx);
+        click(window, "manage-models", cx);
+        batch_select(window, "models-operation", "Edit or rename model", cx);
+        management_input(window, "models-family", "Family", cx);
+        let unsaved = app.read_with(cx, |app, cx| app.unsaved_files(cx));
+        assert_eq!(unsaved.len(), 1, "{unsaved:?}");
+        assert!(unsaved[0].starts_with(dir.path().canonicalize().unwrap().join("Acme/machine")), "{unsaved:?}");
+    }
+
+    #[gpui_kit::test]
+    fn manages_models_with_create_copy_edit_rename_delete_and_explicit_previews(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
+        let dir = model_fixture();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        click(window, "manage-presets", cx);
+        click(window, "manage-models", cx);
+        management_input(window, "models-name", "B", cx);
+        management_input(window, "models-model_id", "B-ID", cx);
+        click(window, "models-preview", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("manage-preview").label(), Some("2 file changes"));
+            window.press("escape", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert!(!dir.path().join("Acme/machine/B.json").exists());
+        click(window, "models-preview", cx);
+        click(window, "ok", cx);
+        assert_eq!(catalog(&app, cx).repo.models().len(), 2);
+        assert!(app.read_with(cx, |app, cx| app.unsaved_files(cx).is_empty()));
+        batch_select(window, "models-operation", "Copy model", cx);
+        management_input(window, "models-name", "C", cx);
+        management_input(window, "models-model_id", "C-ID", cx);
+        click(window, "models-preview", cx);
+        click(window, "ok", cx);
+        assert_eq!(catalog(&app, cx).repo.models().len(), 3);
+        let file = dir.path().join("Acme/machine/C.json");
+        let before = std::fs::read_to_string(&file).unwrap();
+        management_input(window, "models-family", "Family C", cx);
+        click(window, "models-preview", cx);
+        click(window, "ok", cx);
+        let mut expected = profile_core::Document::parse(before).unwrap();
+        expected.set("family", &profile_core::RawValue::Str("Family C".into()));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), expected.text());
+        management_input(window, "models-name", "D", cx);
+        management_input(window, "models-file_name", "D.json", cx);
+        click(window, "models-preview", cx);
+        click(window, "ok", cx);
+        assert!(!file.exists());
+        assert!(dir.path().join("Acme/machine/D.json").exists());
+        batch_select(window, "models-operation", "Delete model", cx);
+        click(window, "models-preview", cx);
+        click(window, "ok", cx);
+        assert!(!dir.path().join("Acme/machine/D.json").exists());
+        let loaded = catalog(&app, cx);
+        assert_eq!(loaded.repo.models().len(), 2);
+        assert!(!loaded.repo.issues().iter().any(|i| i.severity() >= profile_core::Severity::Error));
+    }
+
+    #[gpui_kit::test]
+    fn model_previews_block_references_removed_variants_and_stale_writes(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
+        let dir = model_fixture();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "Machine models", cx);
+        batch_select(window, "models-source", "model.json", cx);
+        batch_select(window, "models-operation", "Delete model", cx);
+        click(window, "models-preview", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("ok").label(), Some("Back"));
+            window.press("enter", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert!(dir.path().join("Acme/machine/model.json").exists());
+        batch_select(window, "models-operation", "Edit or rename", cx);
+        management_input(window, "models-nozzle_diameter", "0.2", cx);
+        click(window, "models-preview", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("ok").label(), Some("Back"));
+            window.press("escape", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        click(window, "models-reset", cx);
+        management_input(window, "models-name", "Renamed", cx);
+        management_input(window, "models-file_name", "Renamed.json", cx);
+        click(window, "models-preview", cx);
+        let path = dir.path().join("Acme/machine/model.json");
+        let before = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, format!("{before}\n")).unwrap();
+        click(window, "ok", cx);
+        assert!(!dir.path().join("Acme/machine/Renamed.json").exists());
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find("models-status").label().unwrap().contains("changed since the preview"));
+        })
+        .unwrap();
+        std::fs::write(&path, &before).unwrap();
+        click(window, "models-preview", cx);
+        click(window, "ok", cx);
+        let loaded = catalog(&app, cx);
+        let printer = loaded.repo.find(PresetKind::Machine, "A 0.4")[0];
+        assert_eq!(loaded.repo.lookup_scalar(printer, "printer_model"), Some("Renamed"));
+    }
+
+    #[gpui_kit::test]
+    fn model_input_survives_language_reload_and_close_checks(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale_switching();
+        let dir = model_fixture();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "Machine models", cx);
+        batch_select(window, "models-source", "model.json", cx);
+        management_input(window, "models-name", "Draft name", cx);
+        run_palette(window, "Language: 中文", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("models-name").value(), Some("Draft name"));
+            assert_eq!(window.find("models-preview").label(), Some("预览变更…"));
+            window.press("cmd-w", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(cx.windows().len(), 1);
+        click(window, "cancel", cx);
+        let path = dir.path().join("Acme/machine/model.json");
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, text.replace("A-ID", "external-ID")).unwrap();
+        click(window, "reload", cx);
+        assert_eq!(catalog(&app, cx).repo.models()[0].model_id.as_deref(), Some("external-ID"));
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("models-name").value(), Some("Draft name"));
+        })
+        .unwrap();
+        click(window, "models-preview", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find("models-status").label().unwrap().contains("来源机型已变化"));
+        })
+        .unwrap();
+        click(window, "models-reset", cx);
+        assert!(app.read_with(cx, |app, cx| app.unsaved_files(cx).is_empty()));
+        cx.simulate_window_resize(window.into(), size(px(960.), px(720.)));
+        cx.update(|cx| gpui_kit::component::Theme::update(cx, |t| t.font_size = px(20.)));
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            for id in ["models-preview", "models-reset", "models-close"] {
+                let bounds = window.find(id).bounds();
+                assert!(bounds.right() <= px(960.) && bounds.bottom() <= px(720.), "{id}: {bounds:?}");
+            }
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn model_writes_finish_before_quit_close_reload_and_folder_switch(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
+        let dir = model_fixture();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        run_palette(window, "Machine models", cx);
+        management_input(window, "models-name", "Protected", cx);
+        management_input(window, "models-model_id", "P-ID", cx);
+        click(window, "models-preview", cx);
+        let generation = app.read_with(cx, |app, _| app.load_generation);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.click("ok", cx);
+            assert!(app.read(cx).is_writing_files(cx));
+            window.press("cmd-w", cx);
+            window.click("open", cx);
+            window.click("reload", cx);
+            window.press("cmd-q", cx);
+            assert_eq!(app.read(cx).load_generation, generation);
+        })
+        .unwrap();
+        assert_eq!(cx.windows().len(), 1);
+        assert!(!cx.did_prompt_for_paths());
+        let mut visual = gpui_kit::VisualTestContext::from_window(window.into(), cx);
+        assert!(!visual.simulate_close());
+        cx.run_until_parked();
+        assert!(dir.path().join("Acme/machine/Protected.json").exists());
+        assert!(!app.read_with(cx, |app, cx| app.is_writing_files(cx)));
     }
 
     fn management_fixture() -> tempfile::TempDir {

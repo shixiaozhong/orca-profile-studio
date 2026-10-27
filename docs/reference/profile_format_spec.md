@@ -132,6 +132,20 @@ resources/profiles/
 
 ---
 
+### 4.1 机型资源查找与工作台检查
+
+以下规则于 M13 对照当前检出的 C++ 源码确认；资源不是机型 JSON 的旁置文件，而是相对于厂商资源目录。
+
+- `PresetUtils::system_printer_bed_model` / `system_printer_bed_texture`（`src/libslic3r/Preset.cpp:4195`）：先查 `<data_dir>/vendor/<Vendor>/<字段值>`，不存在时使用 `<resources_dir>/profiles/<Vendor>/<字段值>`。
+- `PresetUtils::system_printer_hotend_model`（同文件 `4219`）：先走同样两级查找，仍不存在或字段为空时回退 `<resources_dir>/profiles/hotend.stl`。
+- 设置向导封面（`src/slic3r/GUI/WebGuideDialog.cpp:1312`，`WebPresetDialog.cpp` 有相同规则）：以 `machine_model_list` 中的名称拼接 `<Model>_cover.png`，先查 `<resources_dir>/profiles/<Vendor>/`，再回退 `<resources_dir>/web/image/printer/`。Plater 侧栏缩略图另有基于预设名和占位图的显示逻辑，不据此判断机型是否可加载。
+
+工作台只管理用户打开的 profiles 副本，不读取或改写 OrcaSlicer 的用户数据目录。因此 M13 对副本中缺失的资源给出预览提醒，说明可能的回退位置，不把它报告为新的全仓库加载错误，也不生成、复制、重命名或删除资源文件。资源字段需是厂商目录内的相对路径。
+
+M13 表单接受普通分号列表，去除元素首尾空白再保存；暂不接收 C 风格引号/转义。此限制只属于编辑入口，不改变本节记录的 OrcaSlicer 加载语义。
+
+---
+
 ## 5. 预设文件（process / filament / machine）
 
 ### 5.1 元信息字段

@@ -42,6 +42,7 @@ impl Operation {
 pub enum ManagementEvent {
     Applied,
     Close,
+    Models,
 }
 
 pub struct ManagementView {
@@ -287,60 +288,15 @@ impl ManagementView {
         let Some(plan) = self.plan.clone() else { return };
         let view = cx.entity();
         let generation = self.generation;
-        let destructive = self.operation == Operation::Delete;
-        window.open_alert_dialog(cx, move |dialog, window, cx| {
-            let mut content = v_flex().gap_2();
-            for notice in plan.notices() {
-                let color = if notice.is_blocking() { cx.theme().danger } else { cx.theme().warning };
-                content = content.child(div().text_color(color).child(format!(
-                    "{}: {}",
-                    if notice.is_blocking() { t!("manage.blocked") } else { t!("manage.review") },
-                    notice.message()
-                )));
-            }
-            for change in plan.changes() {
-                let action = match (change.before(), change.after()) {
-                    (None, Some(_)) => t!("manage.create"),
-                    (Some(_), None) => t!("manage.delete_file"),
-                    _ => t!("manage.update"),
-                };
-                content = content.child(div().child(format!("{action} {}", change.path().display())));
-                for line in change_summary(change.before(), change.after()) {
-                    content = content.child(div().pl_3().text_sm().child(line));
+        preview_plan(plan, self.operation == Operation::Delete, window, cx, move |plan, window, cx| {
+            view.update(cx, |view, cx| {
+                if view.generation == generation {
+                    view.apply(plan, window, cx);
+                } else {
+                    view.status = Some(t!("manage.stale"));
+                    cx.notify();
                 }
-            }
-            let view = view.clone();
-            let plan = plan.clone();
-            let ready = plan.is_ready();
-            dialog
-                .title(if ready { t!("manage.confirm") } else { t!("manage.resolve") })
-                .width(px(760.))
-                .confirm()
-                .description(if ready { t!("manage.confirm_help") } else { t!("manage.blocked_help") })
-                .child(
-                    div()
-                        .id("manage-preview")
-                        .test_support()
-                        .aria_label(t!("manage.file_count", arg0 = plan.changes().count()))
-                        .max_h(window.viewport_size().height * 0.5)
-                        .overflow_y_scroll()
-                        .child(content),
-                )
-                .ok_text(if ready { t!("manage.apply") } else { t!("manage.back") })
-                .ok_variant(if ready && destructive { ButtonVariant::Danger } else { ButtonVariant::Primary })
-                .on_ok(move |_, window, cx| {
-                    if ready {
-                        view.update(cx, |view, cx| {
-                            if view.generation == generation {
-                                view.apply(plan.clone(), window, cx);
-                            } else {
-                                view.status = Some(t!("manage.stale"));
-                                cx.notify();
-                            }
-                        });
-                    }
-                    true
-                })
+            });
         });
     }
 
@@ -377,6 +333,64 @@ impl ManagementView {
         }));
         cx.notify();
     }
+}
+
+/// Shared file-level preview for preset and machine-model transactions.
+pub fn preview_plan(
+    plan: Arc<ManagementPlan>,
+    destructive: bool,
+    window: &mut Window,
+    cx: &mut App,
+    on_apply: impl Fn(Arc<ManagementPlan>, &mut Window, &mut App) + 'static,
+) {
+    let on_apply = std::rc::Rc::new(on_apply);
+    window.open_alert_dialog(cx, move |dialog, window, cx| {
+        let mut content = v_flex().gap_2();
+        for notice in plan.notices() {
+            let color = if notice.is_blocking() { cx.theme().danger } else { cx.theme().warning };
+            content = content.child(div().text_color(color).child(format!(
+                "{}: {}",
+                if notice.is_blocking() { t!("manage.blocked") } else { t!("manage.review") },
+                notice.message()
+            )));
+        }
+        for change in plan.changes() {
+            let action = match (change.before(), change.after()) {
+                (None, Some(_)) => t!("manage.create"),
+                (Some(_), None) => t!("manage.delete_file"),
+                _ => t!("manage.update"),
+            };
+            content = content.child(div().child(format!("{action} {}", change.path().display())));
+            for line in change_summary(change.before(), change.after()) {
+                content = content.child(div().pl_3().text_sm().child(line));
+            }
+        }
+        let on_apply = on_apply.clone();
+        let plan = plan.clone();
+        let ready = plan.is_ready();
+        dialog
+            .title(if ready { t!("manage.confirm") } else { t!("manage.resolve") })
+            .width(px(760.))
+            .confirm()
+            .description(if ready { t!("manage.confirm_help") } else { t!("manage.blocked_help") })
+            .child(
+                div()
+                    .id("manage-preview")
+                    .test_support()
+                    .aria_label(t!("manage.file_count", arg0 = plan.changes().count()))
+                    .max_h(window.viewport_size().height * 0.5)
+                    .overflow_y_scroll()
+                    .child(content),
+            )
+            .ok_text(if ready { t!("manage.apply") } else { t!("manage.back") })
+            .ok_variant(if ready && destructive { ButtonVariant::Danger } else { ButtonVariant::Primary })
+            .on_ok(move |_, window, cx| {
+                if ready {
+                    on_apply(plan.clone(), window, cx);
+                }
+                true
+            })
+    });
 }
 
 fn parse_overrides(text: &str) -> Result<BTreeMap<String, RawValue>, String> {
@@ -546,7 +560,14 @@ impl Render for ManagementView {
                             .small()
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(ManagementEvent::Close))),
                     )
-                    .child(div().text_lg().child(t!("common.manage_presets"))),
+                    .child(div().text_lg().child(t!("common.manage_presets")))
+                    .child(
+                        Button::new("manage-models")
+                            .small()
+                            .label(t!("models.title"))
+                            .disabled(self.busy)
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(ManagementEvent::Models))),
+                    ),
             )
             .child(div().h(rems(17.)).max_h(relative(0.45)).flex_shrink_0().child(self.picker.clone()))
             .child(div().id("manage-form").test_support().flex_1().min_h_0().overflow_y_scroll().child(form))

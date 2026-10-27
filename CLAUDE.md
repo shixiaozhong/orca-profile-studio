@@ -173,6 +173,18 @@ from the package directory).
   `ValueEditor` is shared by Values and Batch; `save::confirm` is the common save preview/commit.
   Batch Apply only changes sessions; Save keeps M3's per-file/partial-success semantics. Include
   unapplied batch input in window/open/quit protection, even while the batch view is hidden.
+- Machine-model management (M13): `ModelDraft` / `ModelPlan` in core `manage/models.rs` own model
+  fields and references, then reuse `ManagementPlan` for validation and file transactions. Model
+  names are vendor-scoped manifest identities, distinct from `model_id`; rename only rewrites own
+  `printer_model` values in that vendor and leaves inheriting children untouched. Deletion and
+  removed variants with machine references block writing. Resource existence is a preview notice,
+  not a new repository Issue; see format spec 4.1 for OrcaSlicer's fallback paths. Never copy assets.
+  The form edits `default_materials_text` (file order), not the sorted `default_materials`; a cleared
+  field removes its key; new or copied models need a `model_id`; a rename notes a cover image that
+  still carries the old name.
+  `ModelsView` retains form input across language changes and refreshes, and requires Reset input
+  if a reloaded source changed. `is_writing_files` and `unsaved_files` include the model view even
+  when hidden; the shared `manage::preview_plan` handles both preset and model confirmations.
 - Localization (M12): `i18n::set_language` switches the process-wide locale and defers an in-place
   refresh of all windows. Never reload profiles or rebase Edits just to translate a view. Preserve
   retained input entities, enum values, selection and undo history; update labels/placeholders and
@@ -226,10 +238,10 @@ from the package directory).
 
 [docs/roadmap.md](docs/roadmap.md) (Chinese) is the roadmap: stages and status, key design decisions
 of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
-M1–M12. Next, in order: M13 machine models, M14 redundant overrides / promote to parent,
+M1–M13. Next, in order: M14 redundant overrides / promote to parent,
 M15 macOS app bundle. Git diff is pending (待定) and the OrcaSlicer upgrade check is deferred (暂缓); pending
 and deferred items get no M number until the user decides to do them.
-Promoting shared values to a parent, the G-code viewer and OrcaSlicer sync automation are deferred.
+The G-code viewer and OrcaSlicer sync automation are deferred.
 When a stage is finished, move it to "已完成" there with its design decisions, mark it ✅, and update
 the status line in README, all in the stage's own commit (see the commit rule above for the 提交 column).
 The user committing a stage is its acceptance: there is no separate "awaiting validation" status.

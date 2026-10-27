@@ -103,7 +103,7 @@ pub struct Vendor {
 }
 
 /// A `machine_model` file: describes a printer model and its nozzle variants. Not a preset.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct MachineModel {
     pub vendor: VendorId,
     /// The name used in `machine_model_list`; `printer_model` of machine presets refers to it.
@@ -117,7 +117,10 @@ pub struct MachineModel {
     pub bed_model: Option<String>,
     pub bed_texture: Option<String>,
     pub hotend_model: Option<String>,
+    /// Sorted and de-duplicated, as OrcaSlicer reads them.
     pub default_materials: Vec<String>,
+    /// `default_materials` as written in the file, so editing keeps its order.
+    pub default_materials_text: Option<String>,
     pub path: PathBuf,
     /// Keys OrcaSlicer does not read into `VendorProfile::PrinterModel`.
     pub extra: IndexMap<String, serde_json::Value>,

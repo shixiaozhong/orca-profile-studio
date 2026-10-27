@@ -1166,3 +1166,48 @@ mode.advanced:
 mode.develop:
   en: develop
   zh-CN: 开发
+models.title:
+  en: Machine models
+  zh-CN: 机型管理
+models.new:
+  en: New model
+  zh-CN: 新建机型
+models.copy:
+  en: Copy model
+  zh-CN: 复制机型
+models.edit:
+  en: Edit or rename model
+  zh-CN: 修改或重命名机型
+models.delete:
+  en: Delete model
+  zh-CN: 删除机型
+models.select:
+  en: Source model
+  zh-CN: 来源机型
+models.name:
+  en: Model name (printer_model)
+  zh-CN: 机型名称（printer_model）
+models.materials:
+  en: Default materials (semicolon-separated)
+  zh-CN: 默认耗材（用分号分隔）
+models.help:
+  en: "The model name is the printer_model reference. Nozzle variants and default materials use plain semicolon-separated lists. A rename updates machine references in this vendor. Resources are checked, never copied."
+  zh-CN: "机型名称是 printer_model 引用的名称。喷嘴规格和默认耗材用分号分隔。重命名会更新此厂商的机器引用。资源文件只检查，不复制。"
+models.delete_help:
+  en: "Deletion is blocked while machine presets reference this model. The model file and its manifest entry are removed; resource files are kept."
+  zh-CN: "还有机器预设引用此机型时不能删除。删除只移除机型文件和清单条目，资源文件保留。"
+models.reset_first:
+  en: Apply or reset the current form before choosing another model or operation.
+  zh-CN: 请先应用或重置当前输入，再选择其他机型或操作。
+models.choose_vendor:
+  en: Choose a vendor first.
+  zh-CN: 请先选择厂商。
+models.choose_model:
+  en: Choose a source model first.
+  zh-CN: 请先选择来源机型。
+models.applied:
+  en: Model changes were written. Refreshing profiles.
+  zh-CN: 机型变更已写入，正在刷新预设。
+models.source_changed:
+  en: The source model changed during Reload. Your input is kept; reset the form before creating another preview.
+  zh-CN: 重新加载时来源机型已变化。输入已保留，请重置表单后再生成预览。

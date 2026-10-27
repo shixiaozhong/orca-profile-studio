@@ -27,7 +27,9 @@ pub use diff::{DiffError, KeyDiff};
 pub use document::{Document, DocumentError};
 pub use edit::{Change, EditSession, SaveError};
 pub use issue::{Issue, IssueKind, Severity};
-pub use manage::{FileChange, ManageError, ManagementPlan, NameRule, PlanNotice, PresetDraft, preset_file_name};
+pub use manage::{
+    FileChange, ManageError, ManagementPlan, ModelDraft, ModelPlan, NameRule, PlanNotice, PresetDraft, preset_file_name,
+};
 pub use model::{MachineModel, Preset, PresetId, PresetKind, PresetMeta, RawValue, Vendor, VendorId, derived_alias};
 pub use po::Translations;
 pub use repository::{FILAMENT_LIBRARY, KeyTrace, LoadError, Origin, Repository, ResolvedValue};

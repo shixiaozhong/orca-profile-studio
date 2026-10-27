@@ -402,6 +402,7 @@ impl Repository {
                         materials.sort();
                         materials.dedup();
                         model.default_materials = materials;
+                        model.default_materials_text = text;
                     }
                     _ => {
                         model.extra.insert(key, value);

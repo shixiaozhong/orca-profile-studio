@@ -16,6 +16,7 @@ mod issue_text;
 mod issues;
 mod lifecycle;
 mod manage;
+mod models;
 mod palette;
 mod preset_picker;
 mod save;

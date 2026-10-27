@@ -1,8 +1,10 @@
 //! Previewed, validated changes to preset identity and vendor manifests.
 
+mod models;
 #[cfg(test)]
 mod tests;
 mod transaction;
+pub use models::{ModelDraft, ModelPlan};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};

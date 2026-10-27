@@ -18,6 +18,7 @@ pub enum AppCommand {
     ShowValues,
     ShowIssues,
     ManagePresets,
+    ManageModels,
     BatchEdit,
     NewWindow,
     Theme(ThemePreference),
@@ -25,7 +26,7 @@ pub enum AppCommand {
 }
 
 impl AppCommand {
-    const ALL: [AppCommand; 14] = [
+    const ALL: [AppCommand; 15] = [
         AppCommand::Language(LanguagePreference::System),
         AppCommand::Language(LanguagePreference::English),
         AppCommand::Language(LanguagePreference::Chinese),
@@ -35,6 +36,7 @@ impl AppCommand {
         AppCommand::ShowValues,
         AppCommand::ShowIssues,
         AppCommand::ManagePresets,
+        AppCommand::ManageModels,
         AppCommand::BatchEdit,
         AppCommand::NewWindow,
         AppCommand::Theme(ThemePreference::System),
@@ -51,6 +53,7 @@ impl AppCommand {
             AppCommand::ShowValues => t!("palette.values"),
             AppCommand::ShowIssues => t!("palette.issues"),
             AppCommand::BatchEdit => t!("common.batch_edit"),
+            AppCommand::ManageModels => t!("models.title"),
             AppCommand::ManagePresets => t!("common.manage_presets"),
             AppCommand::NewWindow => t!("palette.new_window"),
             AppCommand::Theme(theme) => t!("palette.theme", arg0 = theme.label()),
@@ -65,6 +68,7 @@ impl AppCommand {
             AppCommand::ShowValues => IconName::Table,
             AppCommand::ShowIssues => IconName::TriangleAlert,
             AppCommand::ManagePresets => IconName::Files,
+            AppCommand::ManageModels => IconName::Printer,
             AppCommand::BatchEdit => IconName::SlidersHorizontal,
             AppCommand::NewWindow => IconName::AppWindow,
             AppCommand::Theme(_) => IconName::Palette,
@@ -80,6 +84,7 @@ impl AppCommand {
             | AppCommand::Open
             | AppCommand::ShowIssues
             | AppCommand::BatchEdit
+            | AppCommand::ManageModels
             | AppCommand::ManagePresets
             | AppCommand::NewWindow
             | AppCommand::Theme(_)
