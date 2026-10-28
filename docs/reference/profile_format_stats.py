@@ -1,15 +1,22 @@
 """Simulate Orca's system-profile loading rules over resources/profiles and print statistics.
 
 Reference implementation for docs/reference/profile_format_spec.md.
-Usage: python3 -I docs/reference/profile_format_stats.py resources/profiles [schema.json]
+Usage: python3 -I docs/reference/profile_format_stats.py resources/profiles [schema.json] [--check]
 The optional schema supplies defaults for redundant-override detection only.
+--check fails when counts differ from the real-data regression tests' baseline.
 """
+import argparse
 import collections
 import json
 import os
 import sys
 
-ROOT = sys.argv[1]
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("profiles")
+parser.add_argument("schema", nargs="?")
+parser.add_argument("--check", action="store_true")
+args = parser.parse_args()
+ROOT = args.profiles
 LIB = "OrcaFilamentLibrary"
 SECTIONS = [("machine_model_list", "machine_model"), ("process_list", "process"),
             ("filament_list", "filament"), ("machine_list", "machine")]
@@ -57,7 +64,7 @@ def lib_manifest(vdir):
     return items
 
 
-defaults = load(sys.argv[2])["default_presets"] if len(sys.argv) > 2 else {}
+defaults = load(args.schema)["default_presets"] if args.schema else {}
 library_values = {}
 
 vendors = sorted(f[:-5] for f in os.listdir(ROOT) if f.endswith(".json") and f != "blacklist.json")
@@ -217,3 +224,42 @@ for k, lst in sorted(issues.items()):
     print(f"{k}: {len(lst)}")
     for x in lst[:6]:
         print("   ", x)
+
+if args.check:
+    # Independent baseline matching crates/profile-core/tests/orca_profiles.rs.
+    # Do not derive expected values from the Rust program or the input data.
+    expected = {
+        "vendors": 57,
+        "counts": {
+            "files_machine_model": 326,
+            "files_process": 2523, "process_inst_true": 2156, "process_inst_false": 367,
+            "files_filament": 3637, "filament_inst_true": 2916, "filament_inst_false": 721,
+            "files_machine": 935, "machine_inst_true": 796, "machine_inst_false": 139,
+            "inherits_from_library": 65, "process_with_condition": 95,
+        },
+        "depths": {0: 31, 1: 585, 2: 1843, 3: 2725, 4: 623, 5: 56, 6: 5},
+        "value_shapes": {"string": 113725, "array_len1": 74880, "array_lenN": 8861},
+        "keys": {"process": 333, "filament": 180, "machine": 162},
+        "bom": 2,
+        "dangling": 581,
+        "duplicates": 10,
+        "issues": {
+            "list_name_vs_file_name": 6,
+            "orphan_json_not_in_manifest": 457,
+            "redundant_override": 73253 if args.schema else 56926,
+        },
+    }
+    actual = {
+        "vendors": len(vendors), "counts": dict(st), "depths": dict(depths),
+        "value_shapes": dict(value_shapes), "keys": {k: len(s) for k, s in keys_by_type.items()},
+        "bom": len(bom), "dangling": len(dangling), "duplicates": len(dups),
+        "issues": {k: len(v) for k, v in issues.items() if v},
+    }
+    failed = False
+    for key, value in expected.items():
+        if actual[key] != value:
+            print(f"FAIL {key}: expected {value!r}, got {actual[key]!r}", file=sys.stderr)
+            failed = True
+    if failed:
+        sys.exit(1)
+    print("Reference regression counts match.")

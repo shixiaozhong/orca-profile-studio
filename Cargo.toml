@@ -5,7 +5,7 @@ members = ["crates/profile-core", "crates/profile-tool", "crates/profile-studio"
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 
 [workspace.dependencies]
 profile-core = { path = "crates/profile-core" }

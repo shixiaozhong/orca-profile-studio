@@ -1,10 +1,12 @@
 # orca-profile-studio
 
+[![CI](https://github.com/shixiaozhong/orca-profile-studio/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/shixiaozhong/orca-profile-studio/actions/workflows/ci.yml)
+
 OrcaSlicer 系统配置文件（`resources/profiles`）的浏览、校验与编辑工具，也是一个 GPUI 练手项目。
 
 > 这是个人维护的非官方工具，与 OrcaSlicer 项目、SoftFever 和 Snapmaker 均无隶属关系，也未获得它们的认可。内嵌的 `crates/profile-core/schema/schema.json` 导出自 OrcaSlicer 源码，适用 OrcaSlicer 的 GNU AGPL v3 许可，来源说明见 [crates/profile-core/schema/README.md](crates/profile-core/schema/README.md)。本项目其余代码尚未选定 license。
 
-目前完成了 M0 到 M14：
+目前完成了 M0 到 M15：
 - M0：不依赖界面的 core 库，加一个命令行工具；
 - M0.5：从 OrcaSlicer 导出的配置项 schema，用来校验参数值、补全默认值；
 - M1：用 gpui-kit 写的桌面浏览器；
@@ -20,7 +22,8 @@ OrcaSlicer 系统配置文件（`resources/profiles`）的浏览、校验与编�
 - M11：批量设置或删除键、追加或移除字符串数组元素，逐预设预览，整组撤销和重做；
 - M12：中英文界面、配置项术语和问题描述、中文搜索，以及保留编辑状态的语言切换；
 - M13：机型的新建、复制、修改、重命名和删除，同步厂商清单与机器预设引用；
-- M14：检测与继承值相同的覆盖值，将兄弟预设的共同值提到父项，预览所有受影响子孙。
+- M14：检测与继承值相同的覆盖值，将兄弟预设的共同值提到父项，预览所有受影响子孙；
+- M15：GitHub Actions 持续集成，在 Linux 和 macOS 上跑格式、lint、全部测试和真实数据回归。
 
 ## 结构
 
@@ -185,12 +188,35 @@ cargo run --release -p profile-tool -- compat "0.07mm DETAIL @CORE One 0.25"
 
 ## 测试
 
+需要 Rust 1.95 或更新版本（GPUI 使用了 1.95 才稳定的 `std::hint::cold_path`）。
+
 ```bash
-cargo test
+cargo fmt --all --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
 ```
 
 `crates/profile-core/tests/orca_profiles.rs` 是针对真实数据的回归测试。它会读取 `ORCA_PROFILES_DIR` 指定的目录，没有设置时使用和本仓库同级的 `../OrcaSlicer` 目录；两者都找不到就跳过。测试里的期望数字对应 OrcaSlicer `953509c23f` 的配置数据，数据变化后需要同步更新。`ORCA_PROFILES_DIR` 写相对路径时，按仓库根目录解析。
 
+### 持续集成
+
+[CI workflow](.github/workflows/ci.yml) 在推送到 `main`、提交 PR 和手动触发时运行：
+
+- **Linux（Ubuntu 24.04）**：格式检查，`profile-core` / `profile-tool` 的 clippy 和测试。
+- **macOS 15**：整个 workspace 的 clippy 和测试，包括 headless 界面测试。
+- **最低 Rust 版本**：两平台都从 `Cargo.toml` 读取 `rust-version`，用该版本检查对应包的全部 targets。
+- **真实数据回归**：两平台的测试任务都从公开 OrcaSlicer fork 稀疏检出锁定提交的 profiles 和中文翻译，先检查数据存在及提交与内嵌 schema 一致，再设置 `ORCA_PROFILES_DIR` 运行测试，避免缺数据时静默跳过。
+- **独立统计核对**：Python 参考脚本分别在不带 schema 和带 schema 时检查固定统计数字；不一致时退出码为 1。它不覆盖 Rust 的 schema 值校验。
+
+所有构建、lint 和测试均使用 `--locked`；Action 固定到提交 SHA，按系统和工具链缓存依赖，锁定的 OrcaSlicer 数据按 `ORCA_COMMIT` 缓存。只取消 PR 上被新推送取代的运行，`main` 上的每个提交都有自己的结果。CI 只读仓库，不推送或发布产物。数据提交集中在 workflow 的 `ORCA_COMMIT`，升级数据时也要更新 Rust 测试、Python 的 `--check` 基线及内嵌 schema。
+
+本地运行同样的 Python 检查：
+
+```bash
+python3 -I docs/reference/profile_format_stats.py ../OrcaSlicer/resources/profiles --check
+python3 -I docs/reference/profile_format_stats.py ../OrcaSlicer/resources/profiles crates/profile-core/schema/schema.json --check
+```
+
 ## 路线图
 
-已完成 M0 到 M14。接下来是 M15 持续集成、M16 打包成 macOS 应用并做好跨平台准备、M17 Windows 版；和 Git 对比暂时待定。各阶段的范围、关键设计决定、依赖和完成标准见 [docs/roadmap.md](docs/roadmap.md)。
+已完成 M0 到 M15。接下来是 M16 打包成 macOS 应用并做好跨平台准备、M17 Windows 版；和 Git 对比暂时待定。各阶段的范围、关键设计决定、依赖和完成标准见 [docs/roadmap.md](docs/roadmap.md)。

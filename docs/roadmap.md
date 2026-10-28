@@ -24,7 +24,7 @@ OrcaSlicer 的加载语义以 [profile_format_spec.md](reference/profile_format_
 | M12 | ✅ | 中英文界面、配置项术语与问题描述、中文搜索、所有窗口同步切换 | `f1a898c` |
 | M13 | ✅ | 新建、复制、修改、重命名、删除机型，同步清单与机器引用 | `95359a7` |
 | M14 | ✅ | 冗余覆盖值 info 检测、提到父项、未选子孙影响预览与整组撤销 | `7edab54` |
-| M15 | 计划中 | 持续集成：GitHub Actions 上跑格式、lint、全部测试和真实数据回归 | |
+| M15 | ✅ | 持续集成：GitHub Actions 上跑格式、lint、全部测试和真实数据回归 | 待补 |
 | M16 | 计划中 | 打包成可双击启动的 macOS 应用，为 Windows 做好跨平台准备 | |
 | M17 | 计划中 | Windows 版：在 Windows 上编译、测试并打包成免安装 zip | |
 | — | 待定 | 和 Git 对比：工作区相对 HEAD 改了哪些预设、哪些键 | |
@@ -379,32 +379,25 @@ M0.5 排在 M1 之后才做，编号沿用最初的规划。
 
 **使用**：在批量编辑中按厂商和名称筛选兄弟预设，勾选后选键和“提到父项”，检查预览中父项及未选子孙的前后值，再 Apply batch、Save。检查多余覆盖值时，在问题面板将严重程度设为“所有级别”，选择 `redundant-override`。移除覆盖会让子项跟随后续父项修改，因此工具只提示，由用户决定是否操作。
 
+### M15：持续集成（GitHub Actions）
+
+**范围**：仓库公开在 [shixiaozhong/orca-profile-studio](https://github.com/shixiaozhong/orca-profile-studio)，公开仓库使用 GitHub 的标准机器不限分钟数。`.github/workflows/ci.yml` 在推送到 `main`、PR 和手动触发时运行格式、lint、全部测试和真实数据回归。
+
+**关键设计决定**
+
+- **两平台分工**：Linux（Ubuntu 24.04）跑格式检查和 `profile-core` / `profile-tool` 的 clippy（`-D warnings`）与测试；macOS 15 跑整个 workspace 的 clippy 和测试，包括 headless 界面测试。studio 的界面测试依赖 macOS，不在 Linux 上跑。
+- **真实数据一定参与**：从公开的 [shixiaozhong/OrcaSlicer](https://github.com/shixiaozhong/OrcaSlicer) 用部分克隆和 sparse checkout 只取锁定提交的 `resources/profiles` 和 `localization/i18n/zh_CN`（约 81 MB，不下载约 1 GB 的完整仓库），按 `ORCA_COMMIT` 缓存。跑测试前先检查数据存在、提交正确、且与 `schema.json` 的 `source_commit` 一致，缺数据时直接失败，不会让真实数据测试悄悄跳过。锁定的提交只写在 workflow 的 `ORCA_COMMIT` 一处，升级数据时与 Rust 回归、Python 基线和 schema 一起改。
+- **独立统计核对**：`profile_format_stats.py --check` 用脚本内的固定基线核对统计，不从 Rust 程序或输入数据推导期望值；CI 在不带和带 schema 两种模式下各跑一次，不一致时退出码为 1。
+- **最低 Rust 版本按实测修正为 1.95**：原声明的 1.88 编译不了现有依赖（serde-saphyr / smol_str 要求 1.89，GPUI 的 `std::hint::cold_path` 要求 1.95）。保留依赖版本、改声明；MSRV 任务从 `Cargo.toml` 读取版本，在两平台上 `cargo check` 全部 targets，避免两处数字漂移。
+- **可复现、只读**：所有构建、lint 和测试都用 `--locked`；第三方 Action 固定到提交 SHA（已核对与版本标签一致）；依赖按系统和工具链缓存。CI 只读仓库（`contents: read`，不保留凭据），不推送也不发布产物。只取消 PR 上被新推送取代的运行，`main` 上的每个提交都有自己的结果。Windows 的编译和测试在 M17 加入。
+
+**验证**：本地在独立稀疏检出的锁定数据上，156 个 Rust 测试和两套 Python 统计通过；Rust 1.95 的 workspace 全 targets 检查通过。临时副本中加入孤立文件、指定缺失的数据目录或制造格式错误时，相关检查都返回失败。GitHub 托管机器上的首次运行在推送后查看。
+
 ---
 
 ## 后续阶段
 
-M0–M14 已完成。接下来依次是 M15：持续集成；M16：打包成 macOS 应用并做好跨平台准备；M17：Windows 版。「和 Git 对比」暂时待定，OrcaSlicer 升级检查自动化仍在「暂缓」；它们都不占用阶段编号。
-
-### M15：持续集成（GitHub Actions）
-
-**场景**：仓库已公开在 [shixiaozhong/orca-profile-studio](https://github.com/shixiaozhong/orca-profile-studio)，公开仓库使用 GitHub 的标准机器不限分钟数。每次推送和 PR 自动跑格式、lint 和全部测试，包括 macOS 上的界面测试和真实数据回归。
-
-**范围**
-- 新增 `.github/workflows/ci.yml`，在推送到 `main`、PR 和手动触发时运行：
-  - **Linux**：`cargo fmt --check`，以及 `profile-core` / `profile-tool` 的 clippy 和测试（studio 依赖 macOS 的界面测试，不在 Linux 上跑）；
-  - **macOS**：整个 workspace 的 clippy 和 `cargo test --workspace`，包括 headless 界面测试；
-  - **真实数据回归**：从公开的 [shixiaozhong/OrcaSlicer](https://github.com/shixiaozhong/OrcaSlicer) 用部分克隆和 sparse checkout 只取锁定提交 `953509c23f` 的 `resources/profiles` 和 `localization/i18n/zh_CN`（约 81 MB，不下载整个约 1 GB 的仓库），设置 `ORCA_PROFILES_DIR` 后跑回归测试，并用 `profile_format_stats.py` 交叉核对统计数字。
-- README 加上 CI 状态徽章。
-
-**设计要点**
-- 一律 `--locked`，使用仓库里的 `Cargo.lock`；工具链用 stable，另加一个用 `rust-version`（1.88）做 `cargo check` 的步骤，确保最低版本仍能编译。
-- 依赖缓存用固定版本的 Action（例如 `Swatinem/rust-cache`），所有第三方 Action 都固定到具体版本。
-- 锁定的 OrcaSlicer 提交写在一处（例如 workflow 的环境变量），升级 OrcaSlicer 数据时和回归数字一起改。
-- CI 只读：不推送、不发布产物；Windows 的编译和测试在 M17 加入。
-
-**依赖**：无。
-
-**完成标准**：推送后 CI 在 Linux 和 macOS 上都通过；真实数据回归在 CI 里实际运行（不是跳过）；故意制造一个格式或测试错误时 CI 失败；README 写明 CI 包含哪些检查。
+M0–M15 已完成。接下来依次是 M16：打包成 macOS 应用并做好跨平台准备；M17：Windows 版。「和 Git 对比」暂时待定，OrcaSlicer 升级检查自动化仍在「暂缓」；它们都不占用阶段编号。
 
 ### M16：打包成 macOS 应用，做好跨平台准备
 

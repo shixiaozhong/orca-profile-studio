@@ -66,7 +66,8 @@ from the package directory).
 - `crates/profile-core/tests/orca_profiles.rs` asserts exact counts for OrcaSlicer commit
   `953509c23f`. When the profile data changes, update the numbers deliberately; the reference
   script `docs/reference/profile_format_stats.py` must agree (it does not cover the schema checks,
-  whose counts only live in the `schema_*` tests).
+  whose counts only live in the `schema_*` tests). Its `--check` flag asserts the independent
+  baseline and exits nonzero on drift; CI runs it both with and without the bundled schema.
 
 ## Schema (M0.5)
 
@@ -246,14 +247,15 @@ from the package directory).
   roadmap's 提交 cell as `待补`, and fill it with the short hash (`git log --grep '(M10)'`) in
   the next commit that edits the roadmap anyway.
 - `Cargo.toml` deliberately has no `license` field; the user has not chosen one.
-- `rust-version = "1.88"` makes Cargo pick older dependency versions; the local toolchain is 1.97.
+- `rust-version = "1.95"` matches GPUI's use of `std::hint::cold_path`; CI checks the locked workspace
+  on Linux and macOS. serde-saphyr and smol_str already require 1.89. The local toolchain is 1.97.
 
 ## Roadmap
 
 [docs/roadmap.md](docs/roadmap.md) (Chinese) is the roadmap: stages and status, key design decisions
 of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
-M1–M14. Next: M15 CI on GitHub Actions (Linux and macOS, real-data regression from a sparse
-checkout of the public OrcaSlicer fork at the pinned commit), then M16 macOS app bundle plus
+M1–M15 (M15: CI on GitHub Actions, Linux and macOS, real-data regression from a cached sparse
+checkout of the public OrcaSlicer fork at the pinned commit). Next: M16 macOS app bundle plus
 cross-platform prep (secondary- key bindings, per-platform settings path, `/` in manifest
 sub_paths), then M17 Windows build and portable zip (CI Windows job plus the user's own machine). Git diff is pending (待定) and the OrcaSlicer upgrade check is
 deferred (暂缓); pending and deferred items get no M number until the user decides to do them.
