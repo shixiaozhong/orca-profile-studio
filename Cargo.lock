@@ -5370,6 +5370,7 @@ name = "profile-studio"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "indexmap",
  "profile-core",
  "regex",
  "rust-i18n",

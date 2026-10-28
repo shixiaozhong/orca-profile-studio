@@ -2,14 +2,11 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
-use profile_core::{
-    Issue, Origin, PresetId, PresetKind, RawValue, Repository, Schema, SearchIndex, Severity, Stats, Verdict,
-};
+use profile_core::{Issue, Origin, PresetId, PresetKind, RawValue, Repository, SearchIndex, Severity, Stats, Verdict};
 
 #[derive(Parser)]
 #[command(name = "profile-tool", version, about = "Inspect and validate OrcaSlicer system profiles")]
@@ -17,12 +14,6 @@ struct Cli {
     /// OrcaSlicer's `resources/profiles` directory
     #[arg(long, short, env = "ORCA_PROFILES_DIR", global = true)]
     profiles: Option<PathBuf>,
-    /// Option schema exported from OrcaSlicer; defaults to the bundled one
-    #[arg(long, global = true, conflicts_with = "no_schema")]
-    schema: Option<PathBuf>,
-    /// Load without a schema: skip value checks and built-in defaults
-    #[arg(long, global = true)]
-    no_schema: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -55,9 +46,6 @@ enum Command {
         /// Only show keys containing this text
         #[arg(long)]
         key: Option<String>,
-        /// Also show keys no file in the chain sets (schema defaults)
-        #[arg(long)]
-        defaults: bool,
     },
     /// List the printers a filament or process is compatible with, or the presets a printer accepts
     Compat {
@@ -133,28 +121,15 @@ fn run(cli: Cli) -> Result<ExitCode> {
     let Some(dir) = cli.profiles else {
         bail!("pass --profiles <DIR> or set ORCA_PROFILES_DIR");
     };
-    let schema = match (&cli.schema, cli.no_schema) {
-        (_, true) => None,
-        (Some(path), false) => {
-            Some(Arc::new(Schema::load(path).with_context(|| format!("loading schema {}", path.display()))?))
-        }
-        (None, false) => Some(Schema::bundled()),
-    };
     let started = Instant::now();
-    let repo = match schema {
-        Some(schema) => Repository::load_with_schema(&dir, schema),
-        None => Repository::load(&dir),
-    }
-    .with_context(|| format!("loading {}", dir.display()))?;
+    let repo = Repository::load(&dir).with_context(|| format!("loading {}", dir.display()))?;
     let elapsed = started.elapsed();
     match cli.command {
         Command::Stats => print_stats(&repo, elapsed),
         Command::Check { min, fail_on, vendor, limit } => {
             return Ok(check(&repo, min.into(), fail_on.into(), vendor.as_deref(), limit));
         }
-        Command::Resolve { name, kind, key, defaults } => {
-            resolve(&repo, &name, kind.map(Into::into), key.as_deref(), defaults)?
-        }
+        Command::Resolve { name, kind, key } => resolve(&repo, &name, kind.map(Into::into), key.as_deref())?,
         Command::Search { query, limit } => search(&repo, &query, limit),
         Command::Compat { name, kind } => compat(&repo, &name, kind.map(Into::into))?,
         Command::CompatCheck { table, limit } => return compat_check(&repo, &table, limit),
@@ -165,10 +140,6 @@ fn run(cli: Cli) -> Result<ExitCode> {
 fn print_stats(repo: &Repository, elapsed: Duration) {
     let stats = Stats::collect(repo);
     println!("loaded {} in {:.0?}", repo.root().display(), elapsed);
-    match repo.schema() {
-        Some(schema) => println!("schema: {} options, OrcaSlicer {}", schema.options.len(), schema.source_commit),
-        None => println!("schema: none, values are not checked"),
-    }
     println!("vendors: {}   machine models: {}", stats.vendors, stats.machine_models);
     println!();
     println!("{:<10}{:>8}{:>12}{:>11}{:>8}", "kind", "files", "selectable", "templates", "keys");
@@ -378,7 +349,7 @@ fn search(repo: &Repository, query: &str, limit: usize) {
     }
     println!("\noptions ({}):", results.total_options);
     for hit in &results.options {
-        println!("  {:<40} {}", hit.key, hit.label);
+        println!("  {}", hit.key);
     }
     println!("\nvalues ({}):", results.total_values);
     for hit in &results.values {
@@ -386,13 +357,7 @@ fn search(repo: &Repository, query: &str, limit: usize) {
     }
 }
 
-fn resolve(
-    repo: &Repository,
-    name: &str,
-    kind: Option<PresetKind>,
-    key_filter: Option<&str>,
-    defaults: bool,
-) -> Result<()> {
+fn resolve(repo: &Repository, name: &str, kind: Option<PresetKind>, key_filter: Option<&str>) -> Result<()> {
     let kinds = kind.map_or(PresetKind::ALL.to_vec(), |kind| vec![kind]);
     let matches: Vec<PresetId> = kinds.iter().flat_map(|&kind| repo.find(kind, name).iter().copied()).collect();
     if matches.is_empty() {
@@ -417,12 +382,12 @@ fn resolve(
         if position > 0 {
             println!("\n{}\n", "-".repeat(72));
         }
-        print_preset(repo, id, key_filter, defaults);
+        print_preset(repo, id, key_filter);
     }
     Ok(())
 }
 
-fn print_preset(repo: &Repository, id: PresetId, key_filter: Option<&str>, defaults: bool) {
+fn print_preset(repo: &Repository, id: PresetId, key_filter: Option<&str>) {
     let preset = repo.preset(id);
     let selectable = if repo.is_selectable(id) { "selectable" } else { "template" };
     println!("{}", preset.name());
@@ -448,18 +413,12 @@ fn print_preset(repo: &Repository, id: PresetId, key_filter: Option<&str>, defau
     }
 
     let values = repo.resolve(id);
-    let shown: Vec<_> = values
-        .iter()
-        .filter(|(key, _)| key_filter.is_none_or(|filter| key.contains(filter)))
-        .filter(|(_, resolved)| defaults || resolved.origin != Origin::Default)
-        .collect();
+    let shown: Vec<_> = values.iter().filter(|(key, _)| key_filter.is_none_or(|filter| key.contains(filter))).collect();
     let width = shown.iter().map(|(key, _)| key.len()).max().unwrap_or(0).min(40);
-    println!("\nvalues ({} of {} keys; [n] = set by chain entry n, [d] = schema default):", shown.len(), values.len());
+    println!("\nvalues ({} of {} keys; [n] = set by chain entry n):", shown.len(), values.len());
     for (key, resolved) in shown {
-        let layer = match resolved.origin {
-            Origin::Preset(origin) => chain.iter().position(|&link| link == origin).unwrap_or(0).to_string(),
-            Origin::Default => "d".to_owned(),
-        };
+        let Origin::Preset(origin) = resolved.origin;
+        let layer = chain.iter().position(|&link| link == origin).unwrap_or(0);
         println!("  {key:<width$}  [{layer}] {}", format_value(resolved.value));
     }
 }

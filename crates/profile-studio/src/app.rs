@@ -3,7 +3,6 @@
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariant};
@@ -20,7 +19,7 @@ use gpui_kit::component::{
 use gpui_kit::component::{IndexPath, Theme, WindowExt as _};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use profile_core::{Repository, Schema, Severity};
+use profile_core::Severity;
 
 use crate::batch::{BatchEvent, BatchView};
 use crate::catalog::Catalog;
@@ -102,8 +101,6 @@ pub struct StudioApp {
     managing: bool,
     batch: Option<Entity<BatchView>>,
     batching: bool,
-    /// The missing-translation reason last shown, so refreshes after saving do not repeat it.
-    translation_notice: Option<String>,
     _batch_events: Option<Subscription>,
     _management_events: Option<Subscription>,
     /// Unsaved edits of the loaded profiles.
@@ -215,7 +212,6 @@ impl StudioApp {
             managing: false,
             batch: None,
             batching: false,
-            translation_notice: None,
             _batch_events: None,
             _management_events: None,
             edits: None,
@@ -277,12 +273,7 @@ impl StudioApp {
 
         let job = cx.background_executor().spawn({
             let dir = dir.clone();
-            async move {
-                let started = Instant::now();
-                Repository::load_with_schema(&dir, Schema::bundled())
-                    .map(|repo| Catalog::new(repo, started.elapsed()))
-                    .map_err(|err| err.to_string())
-            }
+            async move { Catalog::load(&dir) }
         });
         self.load_task = Some(cx.spawn_in(window, async move |this, cx| {
             let result = job.await;
@@ -335,7 +326,6 @@ impl StudioApp {
             }
             Err(err) => LoadState::Failed(dir, err),
         };
-        self.report_translation_warning(window, cx);
         if matches!(self.state, LoadState::Ready(_)) && settings::get(cx).issues_open {
             self.open_issues(window, cx);
         }
@@ -394,7 +384,6 @@ impl StudioApp {
                 tree.reveal_item(&id, ScrollStrategy::Center, cx);
             }
         });
-        self.report_translation_warning(window, cx);
         self.sync_values(window, cx);
         let query = self.palette.as_ref().map(|palette| palette.read(cx).query(cx)).unwrap_or_default();
         self.refresh_palette(&query, cx);
@@ -430,28 +419,8 @@ impl StudioApp {
             });
             let query = self.palette.as_ref().map(|p| p.read(cx).query(cx)).unwrap_or_default();
             self.refresh_palette(&query, cx);
-            // An explicit switch to Chinese shows the notice again, even if it was dismissed before.
-            self.translation_notice = None;
-            self.report_translation_warning(window, cx);
         }
         cx.notify();
-    }
-
-    fn report_translation_warning(&mut self, window: &Window, cx: &mut App) {
-        if crate::i18n::is_chinese()
-            && let LoadState::Ready(catalog) = &self.state
-            && let Some(reason) = &catalog.translation_warning
-            && self.translation_notice.as_ref() != Some(reason)
-        {
-            self.translation_notice = Some(reason.clone());
-            crate::feedback::window_error(
-                window.window_handle(),
-                "translations-missing",
-                t!("localization.missing_title"),
-                t!("localization.missing_help", reason = reason),
-                cx,
-            );
-        }
     }
 
     fn choose_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1398,8 +1367,8 @@ mod tests {
         cx.update_window(window.into(), |_, window, _| {
             assert_eq!(window.find(printer_row).selected(), Some(true));
             assert_eq!(window.find("details-title").label(), Some("Snapmaker U1 (0.4 nozzle)"));
-            // Highlighted values are labelled with the schema's option labels.
-            assert_eq!(window.find("value-nozzle_diameter").label(), Some("Nozzle diameter"));
+            // Highlighted values are labelled with their keys.
+            assert_eq!(window.find("value-nozzle_diameter").label(), Some("nozzle_diameter"));
         })
         .unwrap();
     }
@@ -1435,38 +1404,38 @@ mod tests {
         .unwrap();
         cx.run_until_parked();
         let rows = dump(cx);
-        let keys: Vec<&str> = rows.iter().map(|row| row[2].as_str()).collect();
+        let keys: Vec<&str> = rows.iter().map(|row| row[0].as_str()).collect();
         assert!(keys.iter().all(|key| key.contains("nozzle_temperature")), "{keys:?}");
         let position = keys.iter().position(|&key| key == "nozzle_temperature").expect("the key is listed");
-        assert_eq!(rows[position][4], "this file");
+        assert_eq!(rows[position][2], "this file");
 
         cx.update_window(window.into(), |_, window, cx| window.click(("row", position), cx)).unwrap();
         cx.run_until_parked();
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
             assert_eq!(window.find("value-detail").label(), Some("nozzle_temperature"));
-            assert_eq!(window.find(("layer", 0usize)).label(), Some("this file: 270 ℃"));
-            // One line per layer that sets the key, ending with the schema default.
+            assert_eq!(window.find(("layer", 0usize)).label(), Some("this file: 270"));
+            // One line per layer that sets the key.
             let trace = repo.trace(abs).into_iter().find(|trace| trace.key == "nozzle_temperature").unwrap();
-            assert!(trace.layers.len() >= 2, "the preset overrides at least the schema default");
-            let last = window.find(("layer", trace.layers.len() - 1)).label().unwrap().to_owned();
-            assert!(last.starts_with("default: "), "{last}");
+            assert!(window.try_find(("layer", trace.layers.len() - 1)).is_some());
             assert!(window.try_find(("layer", trace.layers.len())).is_none());
         })
         .unwrap();
 
-        // A key set by no file in the chain disappears when defaults are hidden.
+        // Inherited keys disappear when only this file's values are shown.
         cx.update_window(window.into(), |_, window, cx| {
             window.click("values-search", cx);
             window.press("cmd-a", cx);
-            window.input("filament_tower_interface_print_temp", cx);
+            window.press("backspace", cx);
         })
         .unwrap();
         cx.run_until_parked();
-        assert_eq!(dump(cx).iter().map(|row| row[4].as_str()).collect::<Vec<_>>(), ["default"]);
-        cx.update_window(window.into(), |_, window, cx| window.click("hide-defaults", cx)).unwrap();
+        assert!(dump(cx).iter().any(|row| row[2] != "this file"));
+        cx.update_window(window.into(), |_, window, cx| window.click("only-this-file", cx)).unwrap();
         cx.run_until_parked();
-        assert!(dump(cx).is_empty());
+        let own = dump(cx);
+        assert_eq!(own.len(), repo.preset(abs).params.len());
+        assert!(own.iter().all(|row| row[2] == "this file"));
     }
 
     const CHILD: &str = "{\n    \"type\": \"process\",\n    \"name\": \"Acme 0.2\",\n    \"inherits\": \"fdm_process_common\",\n    \"from\": \"system\",\n    \"instantiation\": \"true\",\n    \"wall_loops\": \"2\",\n    \"enable_support\": \"0\"\n}";
@@ -1520,7 +1489,7 @@ mod tests {
     fn first_row(app: &Entity<StudioApp>, cx: &mut TestAppContext) -> (String, String, String) {
         let values = app.read_with(cx, |app, _| app.values.clone()).unwrap();
         let rows = values.read_with(cx, |values, cx| values.table().read(cx).dump(cx).1);
-        (rows[0][2].clone(), rows[0][3].clone(), rows[0][4].clone())
+        (rows[0][0].clone(), rows[0][1].clone(), rows[0][2].clone())
     }
 
     #[gpui_kit::test]
@@ -1566,9 +1535,9 @@ mod tests {
         click(window, "redo", cx);
         assert_eq!(first_row(&app, cx).1, "3");
 
-        // Toggle a bool, and override a value the template sets.
+        // Change a flag as text, and override a value the template sets.
         find_key(window, "enable_support", cx);
-        click(window, "value-bool", cx);
+        enter_value(window, "1", cx);
         assert_eq!(first_row(&app, cx).1, "1");
         find_key(window, "sparse_infill_density", cx);
         assert_eq!(first_row(&app, cx).2, "[1] fdm_process_common");
@@ -1662,7 +1631,6 @@ mod tests {
         enter_value(window, "25%", cx);
         run_palette(window, "Acme 0.2", cx);
         find_key(window, "sparse_infill_density", cx);
-        click(window, "hide-defaults", cx);
         let values = app.read_with(cx, |app, _| app.values.clone().unwrap());
         click(window, "save", cx);
         cx.update_window(window.into(), |_, window, cx| {
@@ -1695,7 +1663,7 @@ mod tests {
         });
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
-            assert_eq!(window.find("hide-defaults").checked(), Some(true));
+            assert_eq!(window.find("values-search").value(), Some("sparse_infill_density"));
             assert_eq!(window.find("value-detail").label(), Some("sparse_infill_density"));
         })
         .unwrap();
@@ -1821,7 +1789,7 @@ mod tests {
             "OrcaFilamentLibrary/filament/base.json",
             r#"{
             "type":"filament","name":"Library PLA","from":"system","instantiation":"true","filament_id":"PLA",
-            "nozzle_temperature":["5000"],"compatible_printers_condition":"false"
+            "nozzle_temperature":["5000"],"compatible_printers_condition":"nozzle_diameter[0] =="
         }"#,
         );
         write(
@@ -1855,7 +1823,7 @@ mod tests {
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
             window.click("issues-search", cx);
-            window.input("nozzle_temperature", cx);
+            window.input("compatible_printers_condition", cx);
         })
         .unwrap();
         cx.run_until_parked();
@@ -1875,10 +1843,10 @@ mod tests {
         click(window, "ok", cx);
         app.read_with(cx, |app, cx| {
             let rows = app.values.as_ref().unwrap().read(cx).table().read(cx).dump(cx).1;
-            assert_eq!(rows.iter().find(|row| row[2] == "nozzle_temperature").unwrap()[3], "210 ℃");
+            assert_eq!(rows.iter().find(|row| row[0] == "nozzle_temperature").unwrap()[1], "210");
         });
         let fresh = catalog(&app, cx);
-        assert!(fresh.repo.issues().len() < old.repo.issues().len(), "saved value removes the range warning");
+        assert!(fresh.repo.issues().len() < old.repo.issues().len(), "saved condition removes the parse error");
         assert_eq!(fresh.search.search("nozzle_temperature 210", 10).values.len(), 1);
         app.read_with(cx, |app, _| assert_eq!(app.compatibility.as_ref().unwrap().printers, ["A 0.4 nozzle"]));
         run_palette(window, "show preset overview", cx);
@@ -1891,11 +1859,11 @@ mod tests {
         app.read_with(cx, |app, cx| {
             assert_eq!(app.issues.as_ref(), Some(&issues));
             let rows = app.issues.as_ref().unwrap().read(cx).table().read(cx).dump(cx).1;
-            assert!(rows.is_empty(), "the previous range warning is gone");
+            assert!(rows.is_empty(), "the previous condition error is gone");
         });
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
-            assert_eq!(window.find("issues-search").value(), Some("nozzle_temperature"));
+            assert_eq!(window.find("issues-search").value(), Some("compatible_printers_condition"));
         })
         .unwrap();
     }
@@ -2024,7 +1992,7 @@ mod tests {
             app.values.clone().unwrap()
         });
         let rows = |cx: &mut TestAppContext| values.read_with(cx, |values, cx| values.table().read(cx).dump(cx).1);
-        assert_eq!(rows(cx).iter().map(|row| row[2].as_str()).collect::<Vec<_>>(), ["wall_loops"]);
+        assert_eq!(rows(cx).iter().map(|row| row[0].as_str()).collect::<Vec<_>>(), ["wall_loops"]);
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
             assert_eq!(window.find("value-detail").label(), Some("wall_loops"));
@@ -2033,7 +2001,7 @@ mod tests {
 
         // An option, shown in the selected preset.
         run_palette(window, "enable_support", cx);
-        assert_eq!(rows(cx)[0][2], "enable_support");
+        assert_eq!(rows(cx)[0][0], "enable_support");
 
         // Escape closes the palette without doing anything.
         cx.update_window(window.into(), |_, window, cx| window.press("cmd-k", cx)).unwrap();
@@ -2075,7 +2043,7 @@ mod tests {
         })
         .unwrap();
         cx.run_until_parked();
-        cx.update_window(window.into(), |_, window, cx| window.input("item-unparsable", cx)).unwrap();
+        cx.update_window(window.into(), |_, window, cx| window.input("dangling-compatible-printer", cx)).unwrap();
         cx.run_until_parked();
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
@@ -2085,8 +2053,10 @@ mod tests {
         .unwrap();
         cx.run_until_parked();
         let filtered = rows(cx);
-        assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0][1], "item-unparsable");
+        let dangling = repo.issues().iter().filter(|issue| issue.kind.code() == "dangling-compatible-printer").count();
+        assert!(dangling > 0);
+        assert_eq!(filtered.len(), dangling);
+        assert!(filtered.iter().all(|row| row[1] == "dangling-compatible-printer"));
 
         // Selecting the row shows the preset and the key, without leaving the list.
         cx.update_window(window.into(), |_, window, cx| {
@@ -2095,14 +2065,17 @@ mod tests {
         })
         .unwrap();
         cx.run_until_parked();
-        let asa = repo.find(PresetKind::Filament, "Bambu ASA @BBL X1 0.6 nozzle")[0];
         app.read_with(cx, |app, _| {
-            assert_eq!(app.selected, Some(Node::Preset(asa.index())));
+            let Some(Node::Preset(preset)) = app.selected else { panic!("a preset is selected") };
+            let id = repo.presets()[preset].id;
+            assert!(
+                repo.issues().iter().any(|i| i.preset == Some(id) && i.kind.code() == "dangling-compatible-printer")
+            );
             assert_eq!(app.preset_tab, PresetTab::Values);
         });
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
-            assert_eq!(window.find("value-detail").label(), Some("textured_plate_temp_initial_layer"));
+            assert_eq!(window.find("value-detail").label(), Some("compatible_printers"));
         })
         .unwrap();
 
@@ -2205,31 +2178,13 @@ mod tests {
         assert_eq!(cx.update(|cx| cx.windows().len()), 2);
     }
 
+    /// The batch fixture under `resources/profiles`, so a settings file can sit outside it.
     fn localized_fixture() -> (tempfile::TempDir, PathBuf) {
         let source = batch_fixture();
         let dir = tempfile::tempdir().unwrap();
         let profiles = dir.path().join("resources/profiles");
         std::fs::create_dir_all(profiles.parent().unwrap()).unwrap();
         std::fs::rename(source.path(), &profiles).unwrap();
-        let translations = dir.path().join("localization/i18n/zh_CN");
-        std::fs::create_dir_all(&translations).unwrap();
-        std::fs::write(
-            translations.join("Fixture_zh_CN.po"),
-            r#"
-msgid "Wall loops"
-msgstr "墙层数"
-
-msgid "Walls"
-msgstr "墙"
-
-msgid "Classic"
-msgstr "经典"
-
-msgid "Select printers"
-msgstr "选择打印机"
-"#,
-        )
-        .unwrap();
         (dir, profiles)
     }
 
@@ -2267,10 +2222,8 @@ msgstr "选择打印机"
         .unwrap();
         let values = app.read_with(cx, |app, _| app.values.clone().unwrap());
         let (headers, rows) = values.read_with(cx, |view, cx| view.table().read(cx).dump(cx));
-        assert_eq!(headers[1], "配置项");
-        assert_eq!(rows[0][1], "墙层数");
-        assert_eq!(rows[0][3], "2");
-        assert_eq!(rows[0][4], "本文件");
+        assert_eq!(headers, ["键名", "值", "来源"]);
+        assert_eq!(rows[0], ["wall_loops", "2", "本文件"]);
         click(window, "apply", cx);
         click(window, "save", cx);
         cx.update_window(window.into(), |_, window, cx| {
@@ -2281,14 +2234,6 @@ msgstr "选择打印机"
         })
         .unwrap();
         cx.run_until_parked();
-        let results = catalog(&app, cx).search.search("墙层数", 10);
-        assert!(results.options.iter().any(|hit| hit.key == "wall_loops"));
-        run_palette(window, "墙层数", cx);
-        assert_eq!(first_row(&app, cx).0, "wall_loops");
-        assert!(
-            crate::issue_text::issue(&profile_core::IssueKind::UnknownKey { key: "custom_key".into() })
-                .contains("不是 OrcaSlicer 配置项")
-        );
         run_palette(window, "语言 English", cx);
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
@@ -2374,15 +2319,6 @@ msgstr "选择打印机"
             assert_eq!(window.find("batch-edit").label(), Some("批量编辑"));
         })
         .unwrap();
-        let loaded = catalog(&app, cx);
-        let kind = crate::value_editor::EditorKind::for_option(loaded.repo.schema().unwrap().option("wall_generator"))
-            .translated(&loaded);
-        if let crate::value_editor::EditorKind::Enum(choices) = kind {
-            use gpui_kit::component::select::SelectItem as _;
-            assert!(choices.iter().any(|choice| choice.value() == "classic" && choice.title().as_ref() == "经典"));
-        } else {
-            panic!("wall_generator is an enum");
-        }
         run_palette(window, "Acme 0.2", cx);
         run_palette(window, "显示预设参数", cx);
         find_key(window, "wall_loops", cx);
@@ -2390,7 +2326,7 @@ msgstr "选择打印机"
         click(window, "apply", cx);
         click(window, "compare-with", cx);
         choose_comparison(window, "fdm_process_common", cx);
-        management_input(window, "compare-search", "墙层数", cx);
+        management_input(window, "compare-search", "wall_loops", cx);
         cx.update_window(window.into(), |_, window, cx| window.click(("row", 0usize), cx)).unwrap();
         cx.run_until_parked();
         run_palette(window, "语言 English", cx);
@@ -2398,16 +2334,15 @@ msgstr "选择打印机"
         let comparison = values.read_with(cx, |v, _| v.comparison().clone());
         let rows = comparison.read_with(cx, |v, cx| v.table().read(cx).dump(cx).1);
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0][1], "Wall loops");
-        assert_eq!((rows[0][3].as_str(), rows[0][4].as_str()), ("4", "2"));
+        assert_eq!(rows[0][..4], ["wall_loops", "4", "2", "this file"]);
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
-            assert_eq!(window.find("compare-search").value(), Some("墙层数"));
+            assert_eq!(window.find("compare-search").value(), Some("wall_loops"));
             assert_eq!(window.find("compare-detail").label(), Some("wall_loops"));
         })
         .unwrap();
         run_palette(window, "Language: 中文", cx);
-        assert_eq!(comparison.read_with(cx, |v, cx| v.table().read(cx).dump(cx).1[0][1].clone()), "墙层数");
+        assert_eq!(comparison.read_with(cx, |v, cx| v.table().read(cx).dump(cx).1[0][3].clone()), "本文件");
     }
 
     #[gpui_kit::test]
@@ -2426,12 +2361,12 @@ msgstr "选择打印机"
     }
 
     #[gpui_kit::test]
-    fn chinese_falls_back_without_a_catalog_and_localizes_issue_rows(cx: &mut TestAppContext) {
+    fn chinese_localizes_value_and_issue_rows(cx: &mut TestAppContext) {
         let _locale = crate::i18n::test_locale_switching();
         let dir = editable_fixture();
         let file = dir.path().join("Acme/process/Acme 0.2.json");
         let mut doc = profile_core::Document::parse(std::fs::read_to_string(&file).unwrap()).unwrap();
-        doc.set("unknown_fixture_key", &profile_core::RawValue::Str("1".into()));
+        doc.set("compatible_printers", &profile_core::RawValue::List(vec!["Gone printer".into()]));
         std::fs::write(file, doc.text()).unwrap();
         let (window, app) = open(cx, dir.path().to_path_buf());
         cx.run_until_parked();
@@ -2441,28 +2376,14 @@ msgstr "选择打印机"
         run_palette(window, "show issues", cx);
         run_palette(window, "Language: 中文", cx);
         let values = app.read_with(cx, |app, _| app.values.clone().unwrap());
-        assert_eq!(values.read_with(cx, |v, cx| v.table().read(cx).dump(cx).1[0][1].clone()), "Wall loops");
-        cx.update_window(window.into(), |_, window, cx| {
-            window.render_frame(cx);
-            assert!(window.find("dismiss-error").visible());
-        })
-        .unwrap();
-        click(window, "dismiss-error", cx);
-        // Once dismissed, a refresh (here: Reload; saving takes the same path) does not bring it back.
-        cx.run_until_parked();
-        cx.executor().advance_clock(std::time::Duration::from_secs(3));
-        cx.run_until_parked();
-        let shown = |cx: &mut TestAppContext| {
-            cx.update_window(window.into(), |_, window, cx| window.notifications(cx).len()).unwrap()
-        };
-        assert_eq!(shown(cx), 0);
-        click(window, "reload", cx);
-        cx.run_until_parked();
-        assert_eq!(shown(cx), 0, "the missing-translation notice is not repeated after a refresh");
+        assert_eq!(values.read_with(cx, |v, cx| v.table().read(cx).dump(cx).1[0][2].clone()), "本文件");
+        // Without OrcaSlicer's translation files there is nothing to report missing.
+        let shown = cx.update_window(window.into(), |_, window, cx| window.notifications(cx).len()).unwrap();
+        assert_eq!(shown, 0);
 
         let issues = app.read_with(cx, |app, _| app.issues.clone().unwrap());
         let rows = issues.read_with(cx, |v, cx| v.table().read(cx).dump(cx).1);
-        assert!(rows.iter().any(|row| row[4].contains("不是 OrcaSlicer 配置项")));
+        assert!(rows.iter().any(|row| row[4].contains("不是可选打印机")), "{rows:?}");
         assert!(rows.iter().all(|row| ["警告", "错误", "致命错误"].contains(&row[0].as_str())));
         run_palette(window, "语言 English", cx);
         let rows = issues.read_with(cx, |v, cx| v.table().read(cx).dump(cx).1);
@@ -2596,7 +2517,7 @@ msgstr "选择打印机"
         batch_select(window, "batch-operation", "Set value", cx);
         let unsaved = |cx: &mut TestAppContext| app.read_with(cx, |app, cx| app.unsaved_files(cx).len());
         assert_eq!(unsaved(cx), 0, "choosing a key or an operation is not unsaved input");
-        // The untouched input holds the first selected preset's value (3), not the schema default (2).
+        // The untouched input holds the first selected preset's value (3), not another preset's value (2).
         click(window, "batch-preview-button", cx);
         let rows = batch_rows(&app, cx);
         assert_eq!(rows[0][3], "Unchanged (skipped)", "{rows:?}");
@@ -2616,7 +2537,7 @@ msgstr "选择打印机"
         cx.run_until_parked();
         click(window, "batch-edit", cx);
         click(window, "manage-select-shown", cx);
-        batch_select(window, "batch-key", "Select printers", cx);
+        batch_select(window, "batch-key", "compatible_printers", cx);
         batch_select(window, "batch-operation", "Add item", cx);
         management_input(window, "value-input", "New printer", cx);
         click(window, "batch-preview-button", cx);
@@ -2649,7 +2570,7 @@ msgstr "选择打印机"
         }
         batch_select(window, "batch-operation", "Remove key", cx);
         click(window, "batch-preview-button", cx);
-        assert!(batch_rows(&app, cx).iter().all(|r| r[2].ends_with("default")));
+        assert!(batch_rows(&app, cx).iter().all(|r| r[2] == "(unset)"));
         click(window, "batch-apply", cx);
         click(window, "batch-undo", cx);
         assert!(app.read_with(cx, |app, cx| app.edits.as_ref().unwrap().read(cx).dirty().is_empty()));
@@ -2665,7 +2586,8 @@ msgstr "选择打印机"
         click(window, "manage-select-shown", cx);
         management_input(window, "value-input", "invalid", cx);
         click(window, "batch-preview-button", cx);
-        assert!(batch_rows(&app, cx).iter().all(|r| r[4].contains("fatal")));
+        // Values are not checked against OrcaSlicer's option types: any text is a valid edit.
+        assert!(batch_rows(&app, cx).iter().all(|r| r[3] == "Will change" && r[4].is_empty()));
         management_input(window, "value-input", "4", cx);
         assert!(batch_rows(&app, cx).is_empty());
         cx.simulate_window_resize(window.into(), size(px(960.), px(720.)));
@@ -3254,7 +3176,15 @@ msgstr "选择打印机"
         click(window, "manage-presets", cx);
         assert!(!app.read_with(cx, |app, _| app.managing));
         assert_eq!(first_row(&app, cx).1, "6");
-        click(window, "undo", cx);
+        // The "save first" notice can cover the toolbar buttons, so undo from the keyboard.
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.click(("row", 0usize), cx);
+            window.press("cmd-z", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(first_row(&app, cx).1, "2");
         click(window, "manage-presets", cx);
         management_input(window, "manage-model", "A", cx);
         cx.update_window(window.into(), |_, window, cx| {
@@ -3350,28 +3280,17 @@ msgstr "选择打印机"
     }
 
     #[gpui_kit::test]
-    fn enum_editor_and_keyboard_save_follow_focus_and_confirmation(cx: &mut TestAppContext) {
+    fn override_and_keyboard_save_follow_focus_and_confirmation(cx: &mut TestAppContext) {
         let _locale = crate::i18n::test_locale();
         let dir = editable_fixture();
         let (window, app) = open(cx, dir.path().to_path_buf());
         cx.run_until_parked();
         run_palette(window, "Acme 0.2", cx);
         run_palette(window, "show preset values", cx);
-        find_key(window, "wall_generator", cx);
+        find_key(window, "sparse_infill_density", cx);
         click(window, "override", cx);
-        cx.update_window(window.into(), |_, window, cx| {
-            window.render_frame(cx);
-            window.within("value-enum").click("input", cx);
-        })
-        .unwrap();
-        cx.run_until_parked();
-        cx.update_window(window.into(), |_, window, cx| {
-            window.press("down", cx);
-            window.press("enter", cx);
-        })
-        .unwrap();
-        cx.run_until_parked();
-        assert_eq!(first_row(&app, cx).1, "classic");
+        enter_value(window, "20%", cx);
+        assert_eq!(first_row(&app, cx).1, "20%");
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
             window.click(("row", 0usize), cx);
@@ -3379,10 +3298,10 @@ msgstr "选择打印机"
         })
         .unwrap();
         cx.run_until_parked();
-        assert_eq!(first_row(&app, cx).1, "arachne");
+        assert_eq!(first_row(&app, cx), ("sparse_infill_density".into(), "15%".into(), "this file (edited)".into()));
         cx.update_window(window.into(), |_, window, cx| window.press("cmd-shift-z", cx)).unwrap();
         cx.run_until_parked();
-        assert_eq!(first_row(&app, cx).1, "classic");
+        assert_eq!(first_row(&app, cx).1, "20%");
         cx.update_window(window.into(), |_, window, cx| window.press("cmd-s", cx)).unwrap();
         cx.run_until_parked();
         cx.update_window(window.into(), |_, window, cx| {
@@ -3400,7 +3319,7 @@ msgstr "选择打印机"
         cx.run_until_parked();
         let loaded = catalog(&app, cx);
         let child = loaded.repo.find(PresetKind::Process, "Acme 0.2")[0];
-        assert_eq!(loaded.repo.lookup_scalar(child, "wall_generator"), Some("classic"));
+        assert_eq!(loaded.repo.lookup_scalar(child, "sparse_infill_density"), Some("20%"));
         app.read_with(cx, |app, cx| assert!(app.edits.as_ref().unwrap().read(cx).dirty().is_empty()));
     }
 
@@ -3755,11 +3674,9 @@ msgstr "选择打印机"
         let compare = values.read_with(cx, |values, _| values.comparison().clone());
         let dump = |cx: &mut TestAppContext| compare.read_with(cx, |view, cx| view.table().read(cx).dump(cx).1);
         let rows = dump(cx);
-        let wall = rows.iter().find(|row| row[2] == "wall_loops").expect("edited wall count differs");
-        assert_eq!(
-            (wall[3].as_str(), wall[4].as_str(), wall[5].as_str(), wall[6].as_str()),
-            ("4", "2", "this file", "default")
-        );
+        let wall = rows.iter().find(|row| row[0] == "wall_loops").expect("edited wall count differs");
+        // The template does not set the key, so its side is missing rather than a default.
+        assert_eq!(wall[1..], ["4", "(missing)", "this file", "—"]);
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
             assert!(window.find("compare-left-title").label().unwrap().contains("unsaved changes"));
@@ -3775,7 +3692,7 @@ msgstr "选择打印机"
             window.render_frame(cx);
             assert_eq!(window.find("compare-detail").label(), Some("wall_loops"));
             assert_eq!(window.find(("Left", 0usize)).label(), Some("this file: 4"));
-            assert_eq!(window.find(("Right", 0usize)).label(), Some("default: 2"));
+            assert!(window.try_find(("Right", 0usize)).is_none());
         })
         .unwrap();
         // Editing the other side refreshes an open comparison, including the empty-results case.
@@ -3788,11 +3705,11 @@ msgstr "选择打印机"
         assert!(dump(cx).is_empty());
         click(window, "only-differences", cx);
         assert_eq!(dump(cx).len(), 1);
-        assert_eq!(dump(cx)[0][6], "this file");
+        assert_eq!(dump(cx)[0][4], "this file");
         click(window, "reload", cx);
         assert_eq!(dump(cx).len(), 1, "comparison filter and visibility survive refresh");
-        assert_eq!(dump(cx)[0][3], "4");
-        assert_eq!(dump(cx)[0][4], "4");
+        assert_eq!(dump(cx)[0][1], "4");
+        assert_eq!(dump(cx)[0][2], "4");
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
             assert_eq!(window.find("compare-detail").label(), Some("wall_loops"));
@@ -3829,9 +3746,9 @@ msgstr "选择打印机"
         let compare = values.read_with(cx, |values, _| values.comparison().clone());
         let rows = compare.read_with(cx, |view, cx| view.table().read(cx).dump(cx).1);
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0][2], "compatible_printers");
-        assert!(rows[0][3].contains("0.2 nozzle"));
-        assert!(rows[0][4].contains("0.4 nozzle"));
+        assert_eq!(rows[0][0], "compatible_printers");
+        assert!(rows[0][1].contains("0.2 nozzle"));
+        assert!(rows[0][2].contains("0.4 nozzle"));
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
             window.click(("row", 0usize), cx);
@@ -3843,15 +3760,15 @@ msgstr "选择打印机"
         // Sorting keeps the selected key and its detail aligned, even when its row index changes.
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
-            window.click(("icon-sort", 2usize), cx);
+            window.click(("icon-sort", 0usize), cx);
         })
         .unwrap();
         cx.run_until_parked();
         compare.read_with(cx, |view, cx| {
             let table = view.table().read(cx);
             let rows = table.dump(cx).1;
-            assert!(rows.windows(2).all(|pair| pair[0][2].to_lowercase() >= pair[1][2].to_lowercase()));
-            assert_eq!(rows[table.selected_row().unwrap()][2], "compatible_printers");
+            assert!(rows.windows(2).all(|pair| pair[0][0].to_lowercase() >= pair[1][0].to_lowercase()));
+            assert_eq!(rows[table.selected_row().unwrap()][0], "compatible_printers");
         });
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);

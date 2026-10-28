@@ -2,16 +2,15 @@
 //!
 //! Set `ORCA_PROFILES_DIR`, or keep OrcaSlicer next to this repository; otherwise the tests
 //! are skipped. The expected numbers describe the profiles of OrcaSlicer commit `953509c23f`
-//! and need updating when the profile data changes. The `schema_*` tests use the bundled
-//! schema, generated from the same commit.
+//! and need updating when the profile data changes.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use profile_core::{
-    IssueKind, KindStats, ManagementPlan, Origin, PresetDraft, PresetKind, RawValue, Repository, Schema, SearchIndex,
-    Severity, Stats, Verdict,
+    IssueKind, KindStats, ManagementPlan, Origin, PresetDraft, PresetKind, Repository, SearchIndex, Severity, Stats,
+    Verdict,
 };
 
 fn profiles_dir() -> Option<PathBuf> {
@@ -30,7 +29,7 @@ fn profiles_dir() -> Option<PathBuf> {
 
 #[test]
 fn management_preview_handles_real_profiles_without_writing_the_checkout() {
-    let Some(repo) = repo_with_schema() else { return };
+    let Some(repo) = repo() else { return };
     let source = repo
         .presets()
         .iter()
@@ -38,7 +37,10 @@ fn management_preview_handles_real_profiles_without_writing_the_checkout() {
             preset.kind == PresetKind::Process
                 && repo.vendor(preset.vendor).name == "Snapmaker"
                 && repo.is_selectable(preset.id)
-                && repo.check_values(preset.id, &preset.params).iter().all(|issue| issue.severity() < Severity::Error)
+                && repo
+                    .issues()
+                    .iter()
+                    .all(|issue| issue.preset != Some(preset.id) || issue.severity() < Severity::Error)
         })
         .expect("a valid Snapmaker process");
     let name = "M10 readonly preview process";
@@ -60,14 +62,6 @@ fn management_preview_handles_real_profiles_without_writing_the_checkout() {
 fn repo() -> Option<&'static Repository> {
     static REPO: OnceLock<Option<Repository>> = OnceLock::new();
     REPO.get_or_init(|| Some(Repository::load(profiles_dir()?).expect("profiles directory loads"))).as_ref()
-}
-
-fn repo_with_schema() -> Option<&'static Repository> {
-    static REPO: OnceLock<Option<Repository>> = OnceLock::new();
-    REPO.get_or_init(|| {
-        Some(Repository::load_with_schema(profiles_dir()?, Schema::bundled()).expect("profiles directory loads"))
-    })
-    .as_ref()
 }
 
 fn kind_stats(files: usize, selectable: usize, templates: usize, distinct_keys: usize) -> KindStats {
@@ -114,7 +108,7 @@ fn reports_known_data_problems() {
     assert_eq!(count("utf8-bom"), 2);
     assert_eq!(count("list-name-mismatch"), 6);
     assert_eq!(count("unexpected-from"), 97);
-    // Independently matched by profile_format_stats.py (without schema defaults).
+    // Independently matched by profile_format_stats.py.
     assert_eq!(count("redundant-override"), 56926);
 
     let forgotten = Path::new("Snapmaker/process/0.24 Standard @Snapmaker (0.8 nozzle).json");
@@ -142,57 +136,8 @@ fn resolves_snapmaker_filament_chain() {
 }
 
 #[test]
-fn schema_matches_orca_definitions() {
-    let schema = Schema::bundled();
-    assert_eq!(schema.source_commit, "953509c23f");
-    assert_eq!(schema.options.len(), 699);
-    let sizes: Vec<usize> = PresetKind::ALL.into_iter().map(|kind| schema.default_preset(kind).values.len()).collect();
-    assert_eq!(sizes, [332, 111, 135]);
-}
-
-#[test]
-fn schema_checks_report_known_value_problems() {
-    let Some(repo) = repo_with_schema() else { return };
-    let fatal: Vec<_> = repo.issues().iter().filter(|issue| issue.severity() == Severity::Fatal).collect();
-    assert!(fatal.is_empty(), "fatal issues: {fatal:#?}");
-
-    let stats = Stats::collect(repo);
-    let count = |code| stats.issues_by_code.get(code).copied().unwrap_or(0);
-    // profile_format_stats.py ROOT schema.json supplies the same default layer.
-    assert_eq!(count("redundant-override"), 73253);
-    assert_eq!(count("unknown-key"), 2288);
-    assert_eq!(count("obsolete-key"), 2764);
-    assert_eq!(count("renamed-key"), 805);
-    assert_eq!(count("key-not-for-kind"), 0);
-    assert_eq!(count("scalar-given-list"), 137);
-    assert_eq!(count("value-trailing-text"), 214);
-    assert_eq!(count("item-unparsable"), 1);
-    assert_eq!(count("value-substituted"), 0);
-    assert_eq!(count("value-out-of-range"), 0);
-
-    let bad_temperature = Path::new("BBL/filament/Bambu ASA @BBL X1 0.6 nozzle.json");
-    assert!(repo.issues().iter().any(|issue| issue.path == bad_temperature
-        && issue.kind
-            == IssueKind::ItemUnparsable { key: "textured_plate_temp_initial_layer".into(), item: "V".into() }));
-}
-
-#[test]
-fn schema_defaults_fill_unset_keys() {
-    let Some(repo) = repo_with_schema() else { return };
-    let &[id] = repo.find(PresetKind::Filament, "Generic ABS @U1 0.2 nozzle") else {
-        panic!("exactly one preset with this name");
-    };
-    let resolved = repo.lookup(id, "filament_tower_interface_print_temp").expect("every filament option resolves");
-    assert_eq!(resolved.origin, Origin::Default);
-    assert_eq!(resolved.value, &RawValue::List(vec!["-1".into()]));
-    let values = repo.resolve(id);
-    let defaults = &repo.schema().unwrap().default_preset(PresetKind::Filament).values;
-    assert!(defaults.keys().all(|key| values.contains_key(key.as_str())));
-}
-
-#[test]
 fn compares_snapmaker_abs_nozzle_variants() {
-    let Some(repo) = repo_with_schema() else { return };
+    let Some(repo) = repo() else { return };
     let left = repo.find(PresetKind::Filament, "Generic ABS @U1 0.2 nozzle")[0];
     // The 0.4 nozzle variant is named "Generic ABS", without a nozzle suffix.
     let right = repo
@@ -215,13 +160,13 @@ fn compares_snapmaker_abs_nozzle_variants() {
 
 #[test]
 fn search_finds_presets_options_and_values() {
-    let Some(repo) = repo_with_schema() else { return };
+    let Some(repo) = repo() else { return };
     let index = SearchIndex::build(repo);
     let abs = repo.find(PresetKind::Filament, "Generic ABS @U1 0.2 nozzle")[0];
 
     let results = index.search("generic abs @u1 0.2", 5);
     assert_eq!(results.presets.first(), Some(&abs));
-    let results = index.search("wall loops", 5);
+    let results = index.search("wall_loops", 5);
     assert_eq!(results.options.first().map(|hit| hit.key.as_str()), Some("wall_loops"));
     // Where is 270 set as a nozzle temperature?
     let results = index.search("nozzle_temperature 270", usize::MAX);
@@ -229,11 +174,11 @@ fn search_finds_presets_options_and_values() {
     assert_eq!(results.total_values, results.values.len());
 }
 
-/// A baseline of the compatibility rules on real data. Not yet cross-checked against OrcaSlicer,
-/// which needs a compatibility table exported from it.
+/// A baseline of the compatibility rules on real data, with condition variables typed by their
+/// text (the profiles carry no option types).
 #[test]
 fn compatibility_follows_conditions_lists_and_library_exclusion() {
-    let Some(repo) = repo_with_schema() else { return };
+    let Some(repo) = repo() else { return };
     let index = repo.compatibility();
     let one = |kind, name| repo.find(kind, name)[0];
     let names = |preset| {

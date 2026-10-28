@@ -197,12 +197,6 @@ batch.redo:
 common.save:
   en: "Save…"
   zh-CN: "保存…"
-values.range:
-  en: " · range %{arg0}–%{arg1}"
-  zh-CN: " · 范围 %{arg0}–%{arg1}"
-values.enum_values:
-  en: " · one of %{arg0}"
-  zh-CN: " · 可选值：%{arg0}"
 values.count:
   en: "%{shown} of %{total} keys"
   zh-CN: "显示 %{shown} / %{total} 个键"
@@ -218,27 +212,6 @@ common.values:
 common.this_file:
   en: "this file"
   zh-CN: "本文件"
-common.default:
-  en: "default"
-  zh-CN: "默认值"
-common.other:
-  en: "Other"
-  zh-CN: "其他"
-values.not_option:
-  en: "not an OrcaSlicer option"
-  zh-CN: "不是 OrcaSlicer 配置项"
-values.no_schema:
-  en: "no schema loaded"
-  zh-CN: "未加载 schema"
-common.not_in_schema:
-  en: "Not in schema"
-  zh-CN: "不在 schema 中"
-common.category:
-  en: "Category"
-  zh-CN: "类别"
-common.option:
-  en: "Option"
-  zh-CN: "配置项"
 common.value:
   en: "Value"
   zh-CN: "值"
@@ -251,9 +224,6 @@ values.filter:
 values.filter_label:
   en: "Filter values"
   zh-CN: "筛选参数"
-values.hide_defaults:
-  en: "Hide defaults"
-  zh-CN: "隐藏默认值"
 values.only_own:
   en: "Only this file"
   zh-CN: "仅本文件"
@@ -467,9 +437,6 @@ compare.note:
 editor.value:
   en: "Value for %{arg0}"
   zh-CN: "%{arg0} 的值"
-editor.enabled:
-  en: "Enabled"
-  zh-CN: "启用"
 common.apply:
   en: "Apply"
   zh-CN: "应用"
@@ -701,9 +668,6 @@ batch.remove_item:
 batch.stale_baseline:
   en: "Edits changed after this preview. Preview again."
   zh-CN: "生成预览后编辑已变化，请重新预览。"
-batch.schema_required:
-  en: "A schema is required for batch editing."
-  zh-CN: "批量编辑需要加载 schema。"
 batch.select_required:
   en: "Select at least one preset."
   zh-CN: "请至少选择一个预设。"
@@ -713,9 +677,6 @@ batch.invalid_key:
 batch.same_kind:
   en: "Select presets of one kind."
   zh-CN: "请选择同一类型的预设。"
-batch.string_array:
-  en: "Item operations are available only for string arrays."
-  zh-CN: "元素操作仅适用于字符串数组。"
 batch.value_required:
   en: "Enter a value first."
   zh-CN: "请先输入值。"
@@ -884,9 +845,6 @@ details.own_count:
 details.chain_count:
   en: "Set by the chain"
   zh-CN: "继承链设置"
-details.default_count:
-  en: "Schema defaults"
-  zh-CN: "Schema 默认值"
 issue.file_unreadable:
   en: "cannot load file: %{reason}"
   zh-CN: "无法加载文件：%{reason}"
@@ -932,45 +890,6 @@ issue.variant_unknown:
 issue.dangling_printer:
   en: "`compatible_printers` names %{printer}, which is not a selectable printer"
   zh-CN: "`compatible_printers` 中的 %{printer} 不是可选打印机"
-issue.obsolete:
-  en: "`%{key}` is obsolete; OrcaSlicer ignores it"
-  zh-CN: "`%{key}` 已废弃，OrcaSlicer 会忽略它"
-issue.renamed:
-  en: "`%{key}` is a legacy name of `%{current}`"
-  zh-CN: "`%{key}` 是 `%{current}` 的旧名称"
-issue.unknown:
-  en: "`%{key}` is not an OrcaSlicer option; it is ignored"
-  zh-CN: "`%{key}` 不是 OrcaSlicer 配置项，会被忽略"
-issue.wrong_kind_removed:
-  en: "`%{key}` does not belong to this preset type; OrcaSlicer removes it"
-  zh-CN: "`%{key}` 不属于此预设类型，OrcaSlicer 会移除它"
-issue.wrong_kind_kept:
-  en: "`%{key}` does not belong to this preset type; OrcaSlicer keeps it without a report"
-  zh-CN: "`%{key}` 不属于此预设类型，OrcaSlicer 会保留它且不报告"
-issue.scalar_equal:
-  en: "`%{key}` is a single value but written as a list of equal items"
-  zh-CN: "`%{key}` 是标量，却写成了各元素相同的列表"
-issue.scalar_list:
-  en: "`%{key}` is a single value but written as a list; the items are joined with commas"
-  zh-CN: "`%{key}` 是标量，却写成了列表；元素会用逗号连接"
-issue.nil:
-  en: "`%{key}` cannot be nil; the nil item is skipped"
-  zh-CN: "`%{key}` 不允许 nil；nil 元素会被跳过"
-issue.unparsable:
-  en: "`%{key}`: %{value} cannot be parsed; OrcaSlicer rejects the file"
-  zh-CN: "`%{key}`：无法解析 %{value}，OrcaSlicer 会拒绝加载此文件"
-issue.item_unparsable:
-  en: "`%{key}`: item %{item} cannot be parsed and is read as 0"
-  zh-CN: "`%{key}`：无法解析元素 %{item}，将按 0 读取"
-issue.substituted:
-  en: "`%{key}`: %{value} is not a valid value; OrcaSlicer uses the default"
-  zh-CN: "`%{key}`：%{value} 不是有效值，OrcaSlicer 会使用默认值"
-issue.trailing:
-  en: "`%{key}`: %{value} has text after the number, which is ignored"
-  zh-CN: "`%{key}`：%{value} 的数字后有多余文本，会被忽略"
-issue.range:
-  en: "`%{key}`: %{value} is outside the GUI range [%{arg0}, %{arg1}]"
-  zh-CN: "`%{key}`：%{value} 超出了界面范围 [%{arg0}, %{arg1}]"
 issue.condition_invalid:
   en: "`%{key}` cannot be parsed (%{message}); OrcaSlicer treats it as compatible with everything"
   zh-CN: "无法解析 `%{key}`（%{message}）；OrcaSlicer 将其视为兼容所有预设"
@@ -1022,12 +941,6 @@ kind.filament:
 kind.process:
   en: process
   zh-CN: 工艺
-localization.missing_title:
-  en: Chinese option translations unavailable
-  zh-CN: 无法读取配置项的中文翻译
-localization.missing_help:
-  en: "Option labels will use English. Check the OrcaSlicer checkout or ORCA_LOCALIZATION_DIR, then Reload. %{reason}"
-  zh-CN: "配置项名称将显示英文。请检查 OrcaSlicer 目录或 ORCA_LOCALIZATION_DIR，然后重新加载。%{reason}"
 app.conflict_help:
   en: "Restore these files and retry Reload to keep their edits and history, or discard their edits and history to use the disk versions. Other edits are kept."
   zh-CN: "恢复这些文件并重新加载可保留编辑和历史记录；也可以放弃这些文件的编辑与历史，使用磁盘版本。其他编辑会保留。"
@@ -1133,18 +1046,12 @@ details.selectable:
 details.template:
   en: template
   zh-CN: 模板
-details.default_suffix:
-  en: "  (default)"
-  zh-CN: "  （默认值）"
 values.edited_source:
   en: "%{source} (edited)"
   zh-CN: "%{source}（已修改）"
 values.truncated:
   en: "%{text}… (%{count} chars)"
   zh-CN: "%{text}…（%{count} 个字符）"
-values.nullable:
-  en: " · nullable"
-  zh-CN: " · 允许空值"
 history.undo.one:
   en: "Undid a batch change in %{count} preset."
   zh-CN: "已撤销 %{count} 个预设的批量修改。"
@@ -1157,15 +1064,6 @@ history.redo.one:
 history.redo.other:
   en: "Redid a batch change in %{count} presets."
   zh-CN: "已重做 %{count} 个预设的批量修改。"
-mode.simple:
-  en: simple
-  zh-CN: 基础
-mode.advanced:
-  en: advanced
-  zh-CN: 高级
-mode.develop:
-  en: develop
-  zh-CN: 开发
 models.title:
   en: Machine models
   zh-CN: 机型管理

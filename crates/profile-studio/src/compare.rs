@@ -35,14 +35,9 @@ impl SelectItem for PresetChoice {
 
 struct DiffRow {
     key: String,
-    category: String,
-    /// Whether the schema defines the key; rows outside it sort last.
-    in_schema: bool,
-    label: String,
     left: Vec<Layer>,
     right: Vec<Layer>,
     different: bool,
-    search_labels: String,
 }
 
 impl DiffRow {
@@ -50,12 +45,10 @@ impl DiffRow {
         let value = |layers: &[Layer]| layers.first().map_or_else(|| t!("common.missing"), |layer| layer.value.clone());
         let source = |layers: &[Layer]| layers.first().map_or_else(|| "—".into(), |layer| layer.source.label());
         match column {
-            0 => self.category.clone(),
-            1 => self.label.clone(),
-            2 => self.key.clone(),
-            3 => value(&self.left),
-            4 => value(&self.right),
-            5 => source(&self.left),
+            0 => self.key.clone(),
+            1 => value(&self.left),
+            2 => value(&self.right),
+            3 => source(&self.left),
             _ => source(&self.right),
         }
     }
@@ -75,21 +68,16 @@ fn build_rows(catalog: &Catalog, edits: &Edits, left: usize, right: usize) -> Ve
     let left_id = repo.presets()[left].id;
     let right_id = repo.presets()[right].id;
     let own = |index: usize| edits.session(index).map_or(&repo.presets()[index].params, |session| session.params());
-    let layers = |id: PresetId, trace: Option<KeyTrace<'_>>, unit: &str| {
+    let layers = |id: PresetId, trace: Option<KeyTrace<'_>>| {
         let chain = repo.chain(id);
         trace
             .into_iter()
             .flat_map(|trace| trace.layers)
             .map(|layer| {
-                let source = match layer.origin {
-                    Origin::Default => Source::Default,
-                    Origin::Preset(link) => Source::Chain(
-                        chain.iter().position(|&entry| entry == link).expect("source belongs to chain"),
-                        repo.preset(link).name().to_owned(),
-                    ),
-                };
-                let value = crate::details::with_unit(display_value(layer.value), layer.value, unit);
-                Layer { source, value }
+                let Origin::Preset(link) = layer.origin;
+                let depth = chain.iter().position(|&entry| entry == link).expect("source belongs to chain");
+                let source = Source { depth, name: repo.preset(link).name().to_owned() };
+                Layer { source, value: display_value(layer.value) }
             })
             .collect()
     };
@@ -99,37 +87,21 @@ fn build_rows(catalog: &Catalog, edits: &Edits, left: usize, right: usize) -> Ve
         .into_iter()
         .map(|diff| {
             let different = diff.is_different();
-            let option = repo.schema().and_then(|schema| schema.option(diff.key));
-            let unit = catalog.translate(option.map_or("", |option| option.sidetext.as_str()));
             DiffRow {
                 key: diff.key.to_owned(),
-                category: option
-                    .map_or(t!("common.not_in_schema"), |option| {
-                        if option.category.is_empty() {
-                            t!("common.other")
-                        } else {
-                            catalog.translate(&option.category)
-                        }
-                    })
-                    .to_owned(),
-                in_schema: option.is_some(),
-                label: catalog.translate(option.map_or(diff.key, |option| option.display_label())),
-                left: layers(left_id, diff.left, &unit),
-                right: layers(right_id, diff.right, &unit),
+                left: layers(left_id, diff.left),
+                right: layers(right_id, diff.right),
                 different,
-                search_labels: catalog.search_labels(option),
             }
         })
         .collect();
-    rows.sort_by_key(|row| (!row.in_schema, row.category.clone(), row.label.to_lowercase(), row.key.clone()));
+    rows.sort_by(|a, b| a.key.cmp(&b.key));
     rows
 }
 
-fn columns() -> [(&'static str, String, f32); 7] {
+fn columns() -> [(&'static str, String, f32); 5] {
     [
-        ("category", t!("common.category"), 130.),
-        ("label", t!("common.option"), 190.),
-        ("key", t!("common.key"), 200.),
+        ("key", t!("common.key"), 260.),
         ("left", t!("compare.left_value"), 200.),
         ("right", t!("compare.right_value"), 200.),
         ("left-source", t!("compare.left_source"), 180.),
@@ -157,12 +129,7 @@ impl DiffDelegate {
             .rows
             .iter()
             .enumerate()
-            .filter(|(_, row)| {
-                (!only_differences || row.different)
-                    && [&row.key, &row.label, &row.category, &row.search_labels]
-                        .iter()
-                        .any(|text| text.to_lowercase().contains(&query))
-            })
+            .filter(|(_, row)| (!only_differences || row.different) && row.key.to_lowercase().contains(&query))
             .map(|(index, _)| index)
             .collect();
         self.sort_visible();
@@ -233,7 +200,7 @@ impl TableDelegate for DiffDelegate {
         div()
             .min_w_0()
             .truncate()
-            .when(row.different && matches!(column, 3 | 4), |cell| cell.text_color(cx.theme().warning).font_semibold())
+            .when(row.different && matches!(column, 1 | 2), |cell| cell.text_color(cx.theme().warning).font_semibold())
             .child(row.cell(column).replace('\n', " ⏎ "))
     }
     fn cell_text(&self, row: usize, column: usize, _: &App) -> String {

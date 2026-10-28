@@ -1,9 +1,6 @@
-//! Locale selection and read-only OrcaSlicer terminology. Locale changes never reload profile data.
+//! Locale selection for the app's own text. Locale changes never reload profile data.
 use gpui_kit::App;
-use profile_core::Translations;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -39,7 +36,7 @@ fn detected_locale() -> Option<String> {
 }
 
 #[cfg(test)]
-pub static TEST_SYSTEM_LOCALE: Mutex<String> = Mutex::new(String::new());
+pub static TEST_SYSTEM_LOCALE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 
 fn system_locale(locale: Option<&str>) -> &'static str {
     if locale.is_some_and(|s| s.split(['-', '_']).next().is_some_and(|s| s.eq_ignore_ascii_case("zh"))) {
@@ -74,39 +71,6 @@ pub fn set_language(language: LanguagePreference, cx: &mut App) {
         cx.refresh_windows();
     });
 }
-
-/// The catalog of the OrcaSlicer checkout. Every repository load asks for it, so the parsed file
-/// is kept until its path, size or modification time changes.
-pub fn load_translations(profiles: &Path, override_dir: Option<PathBuf>) -> Result<Arc<Translations>, String> {
-    let dir = override_dir.map(|dir| dir.join("zh_CN")).unwrap_or_else(|| {
-        profiles.parent().and_then(Path::parent).unwrap_or(profiles).join("localization/i18n/zh_CN")
-    });
-    let mut paths = std::fs::read_dir(&dir)
-        .map_err(|err| format!("{}: {err}", dir.display()))?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.file_name().is_some_and(|name| name.to_string_lossy().ends_with("_zh_CN.po")))
-        .collect::<Vec<_>>();
-    paths.sort();
-    if paths.len() != 1 {
-        return Err(format!("{}: expected one *_zh_CN.po file, found {}", dir.display(), paths.len()));
-    }
-    let path = paths.swap_remove(0);
-    let meta = std::fs::metadata(&path).map_err(|err| format!("{}: {err}", path.display()))?;
-    let stamp = (path.clone(), meta.len(), meta.modified().ok());
-    static CACHE: Mutex<Option<(CatalogStamp, Arc<Translations>)>> = Mutex::new(None);
-    let mut cache = CACHE.lock().unwrap_or_else(|err| err.into_inner());
-    if let Some((cached, translations)) = cache.as_ref()
-        && *cached == stamp
-    {
-        return Ok(translations.clone());
-    }
-    let translations = Arc::new(Translations::load(&path).map_err(|err| format!("{}: {err}", path.display()))?);
-    *cache = Some((stamp, translations.clone()));
-    Ok(translations)
-}
-
-type CatalogStamp = (PathBuf, u64, Option<std::time::SystemTime>);
 
 /// The locale is process-wide; tests that switch it exclude every other test.
 #[cfg(test)]
@@ -162,21 +126,13 @@ pub fn history_message(redo: bool, count: usize) -> String {
     }
 }
 
-pub fn mode(mode: profile_core::OptionMode) -> String {
-    match mode {
-        profile_core::OptionMode::Simple => t!("mode.simple"),
-        profile_core::OptionMode::Advanced => t!("mode.advanced"),
-        profile_core::OptionMode::Develop => t!("mode.develop"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{LanguagePreference, load_translations, system_locale};
+    use super::{LanguagePreference, system_locale};
     use std::{collections::BTreeSet, fs, path::Path};
 
     #[test]
-    fn resolves_system_languages_and_reports_missing_or_ambiguous_catalogs() {
+    fn resolves_system_languages() {
         let _locale = super::test_locale();
         for locale in ["zh_CN", "zh-Hans-CN", "zh-TW", "ZH-hk"] {
             assert_eq!(system_locale(Some(locale)), "zh-CN");
@@ -184,28 +140,6 @@ mod tests {
         assert_eq!(system_locale(Some("en-US")), "en");
         assert_eq!(system_locale(None), "en");
         assert_eq!(LanguagePreference::English.locale(), "en");
-        let dir = tempfile::tempdir().unwrap();
-        let profiles = dir.path().join("resources/profiles");
-        let translations = dir.path().join("localization/i18n/zh_CN");
-        fs::create_dir_all(&profiles).unwrap();
-        assert!(load_translations(&profiles, None).is_err());
-        fs::create_dir_all(&translations).unwrap();
-        fs::write(translations.join("Example_zh_CN.po"), "msgid \"Wall loops\"\nmsgstr \"墙层数\"\n").unwrap();
-        assert_eq!(load_translations(&profiles, None).unwrap().get("Wall loops"), Some("墙层数"));
-        // Reloading the same unchanged file reuses the parsed catalog; a changed file is read again.
-        let first = load_translations(&profiles, None).unwrap();
-        assert!(std::sync::Arc::ptr_eq(&first, &load_translations(&profiles, None).unwrap()));
-        fs::write(translations.join("Example_zh_CN.po"), "msgid \"Wall loops\"\nmsgstr \"外墙层数\"\n").unwrap();
-        assert_eq!(load_translations(&profiles, None).unwrap().get("Wall loops"), Some("外墙层数"));
-        fs::write(translations.join("Example_zh_CN.po"), "msgid \"Wall loops\"\nmsgstr \"墙层数\"\n").unwrap();
-        assert_eq!(
-            load_translations(Path::new("/unrelated/profiles"), Some(dir.path().join("localization/i18n")))
-                .unwrap()
-                .get("Wall loops"),
-            Some("墙层数")
-        );
-        fs::write(translations.join("Other_zh_CN.po"), "").unwrap();
-        assert!(load_translations(&profiles, None).is_err());
     }
 
     #[test]

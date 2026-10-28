@@ -11,7 +11,6 @@ orca-profile-studio browses, validates and edits OrcaSlicer's system profiles
 ```
 crates/
 ├── profile-core/    # loading, inheritance resolution, validation; no GUI dependencies
-│   └── schema/      # schema.json exported from OrcaSlicer (bundled via include_str!)
 ├── profile-tool/    # CLI: stats / check / resolve
 └── profile-studio/  # gpui-kit desktop app
 docs/roadmap.md      # roadmap: stages, design decisions, done criteria
@@ -57,31 +56,24 @@ from the package directory).
   source is OrcaFilamentLibrary's filaments.
 - Lookups use the preset's own `name`, not the manifest entry name or file name.
 - UTF-8 BOM is tolerated (nlohmann::json skips it; serde_json does not) but reported.
-- `Repository::load` works without a schema; `load_with_schema` (used by the CLI and the app, with
-  `Schema::bundled()`) also checks every value (`check.rs`) and resolves unset keys to the kind's
-  default preset (`Origin::Default`).
+- No schema (M16): the project analyses profile files only. It has no option types, defaults,
+  labels or value checks from OrcaSlicer's sources; a key no file in the chain sets has no value.
+  Never add files exported or copied from OrcaSlicer (schema, `.po` translations) to this repository.
 - Loading never aborts: every deviation is an `Issue` with a `Severity`:
   `Fatal` = OrcaSlicer would refuse to load the whole vendor, `Error` = OrcaSlicer logs and continues,
   `Warning` = loads but is probably unintended, `Info` = informational.
 - `crates/profile-core/tests/orca_profiles.rs` asserts exact counts for OrcaSlicer commit
   `953509c23f`. When the profile data changes, update the numbers deliberately; the reference
-  script `docs/reference/profile_format_stats.py` must agree (it does not cover the schema checks,
-  whose counts only live in the `schema_*` tests). Its `--check` flag asserts the independent
-  baseline and exits nonzero on drift; CI runs it both with and without the bundled schema.
+  script `docs/reference/profile_format_stats.py` must agree. Its `--check` flag asserts the
+  independent baseline and exits nonzero on drift; CI runs it.
 
-## Schema (M0.5)
+## Compatibility cross-check (M6)
 
-- Exporter: `src/dev-utils/Snapmaker_Orca_schema_export.cpp` in the OrcaSlicer repo, branch
-  `personal/schema-export`, CMake target `Snapmaker_Orca_schema_export` (under `ORCA_TOOLS`, next
-  to the profile validator). It writes every `ConfigOptionDef`, the three default presets
-  (`PresetBundle` constructor) and the `Preset::*_options()` lists. Regenerate with:
-  ```bash
-  cmake --build ../OrcaSlicer/build/vscode-arm64 --target Snapmaker_Orca_schema_export
-  ../OrcaSlicer/build/vscode-arm64/src/Snapmaker_Orca_schema_export.app/Contents/MacOS/Snapmaker_Orca_schema_export \
-      -o crates/profile-core/schema/schema.json --commit $(git -C ../OrcaSlicer rev-parse --short=10 HEAD)
-  ```
-  A new target needs a CMake reconfigure (`cmake -S ../OrcaSlicer -B ../OrcaSlicer/build/vscode-arm64`).
-- Compatibility cross-check (M6): `Snapmaker_Orca_compat_export` on the same branch loads the system
+- Condition variables are typed from their text (M16): an integer is an int, a number (a trailing
+  `%` allowed) a double, anything else a string; an unset variable is an empty string, and an
+  unindexed list whose items are all equal reads as that item.
+- `Snapmaker_Orca_compat_export` in the OrcaSlicer repo (branch `personal/schema-export`, CMake target
+  under `ORCA_TOOLS`; a new target needs `cmake -S ../OrcaSlicer -B ../OrcaSlicer/build/vscode-arm64`) loads the system
   profiles the way the GUI does (temporary data_dir with a `system` symlink, nothing is written into
   the checkout) and exports OrcaSlicer's own `is_compatible_with_printer` verdicts. Compare with:
   ```bash
@@ -90,15 +82,8 @@ from the package directory).
       --profiles ../OrcaSlicer/resources/profiles -o /tmp/compat.json --commit $(git -C ../OrcaSlicer rev-parse --short=10 HEAD)
   cargo run --release -p profile-tool -- compat-check /tmp/compat.json
   ```
-  At OrcaSlicer `953509c23f` there are 0 differences. The table (~700 KB) is not committed.
-- "Which keys belong to a kind" = keys of that kind's default preset (what `remove_invalid_keys`
-  checks against), not `option_lists`.
-- `legacy.rs` ports `PrintConfigDef::handle_legacy` by hand (rules are code, not data); keep it in
-  sync when regenerating. Unknown keys are silently dropped by OrcaSlicer, so they are warnings.
-- Severities follow what the C++ loader does with `EnableSystemSilent` (the GUI's rule): scalar
-  numbers that do not parse → `Fatal` (vendor fails); bad enum/bool → `Error` (silently replaced by
-  the default); unparsable vector items → `Error` (read as 0); trailing text, `nil` in a
-  non-nullable vector, GUI min/max → `Warning`.
+  After M16 there are 0 differences (OrcaSlicer `ba538f3bc1`, whose profiles equal `953509c23f`).
+  The table (~700 KB) is not committed.
 
 ## GPUI / gpui-kit notes (learned the hard way)
 
@@ -187,11 +172,11 @@ from the package directory).
   if a reloaded source changed. `is_writing_files` and `unsaved_files` include the model view even
   when hidden; the shared `manage::preview_plan` handles both preset and model confirmations.
 - Redundant overrides / promotion (M14): `redundant-override` is an info-only exact RawValue
-  comparison against the parent's effective value (including schema defaults when loaded). Roots,
-  incomplete chains and (with a schema) keys outside the kind are excluded. The Values view compares
+  comparison against the parent's effective value. Roots and incomplete chains are excluded. The
+  Values view and the batch preview's new-issue column compare
   against `Edits::effective` of the parent, so unsaved ancestor edits count; promotion into an
-  OrcaFilamentLibrary parent is refused (`PromotionError::SharedLibrary`). Counts at `953509c23f`: 56,926 without schema, 73,253 with
-  schema; `profile_format_stats.py ROOT [schema.json]` independently agrees. Never auto-remove them.
+  OrcaFilamentLibrary parent is refused (`PromotionError::SharedLibrary`). Count at `953509c23f`: 56,926;
+  `profile_format_stats.py ROOT` independently agrees. Never auto-remove them.
   `PromotionPlan::with_values` reads current own values for all presets; it requires distinct
   siblings with the same own value, a complete chain, and a same-vendor parent. It returns the
   actual parent/child changes separately from unselected descendant impacts. Impact rows must not
@@ -201,16 +186,13 @@ from the package directory).
   refresh of all windows. Never reload profiles or rebase Edits just to translate a view. Preserve
   retained input entities, enum values, selection and undo history; update labels/placeholders and
   table headers in handlers, not render. Batch previews invalidate without clearing typed input.
-  `Catalog` reads one `*_zh_CN.po` from `<profiles>/../../localization/i18n/zh_CN`, or from
-  `$ORCA_LOCALIZATION_DIR/zh_CN`; no translation files are copied from OrcaSlicer. Missing entries
-  fall back to English. `issue_text` exhaustively translates IssueKind for UI only; core/CLI stay
+  Only the app's own UI text is translated; option names are always the raw keys (M16 removed the
+  `.po` reading). `issue_text` exhaustively translates IssueKind for UI only; core/CLI stay
   English. The locale is process-wide: UI tests that only read English text hold
   `i18n::test_locale()` (shared, runs in parallel); tests that switch language hold
   `i18n::test_locale_switching()` (exclusive, restores English). The System preference uses the same
   startup path in tests; `i18n::TEST_SYSTEM_LOCALE` pins the detected OS locale (English unless a
-  test sets it). Keep temporary PO files inside test fixtures. The parsed catalog is cached by path,
-  size and mtime; the missing-catalog notice is shown once per reason per window. Translation completeness and
-  placeholder parity are checked against literal `t!` keys in the app sources.
+  test sets it). Translation completeness and placeholder parity are checked against literal `t!` keys in the app sources.
 - Saving writes into the profiles directory, i.e. the OrcaSlicer checkout. UI tests that save use a
   temporary fixture (`editable_fixture` in `app.rs`), never the real profiles.
 - App preferences live in the `SettingsStore` global (`settings.rs`), saved on every change to
@@ -252,25 +234,23 @@ from the package directory).
 
 [docs/roadmap.md](docs/roadmap.md) (Chinese) is the roadmap: stages and status, key design decisions
 of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
-M1–M15 (M15: CI on GitHub Actions, Linux and macOS, real-data regression from a cached sparse
-checkout of the public OrcaSlicer fork at the pinned commit). Next: M16 optional capabilities (no bundled
-schema.json; `--schema` / `ORCA_SCHEMA` / a studio capabilities panel; full functionality from
-profiles alone), then M17 schema generation from 4 OrcaSlicer source files (Rust, in core; CI regains
-the schema regression), then M18 macOS app bundle plus
+M1–M16 (M15: CI on GitHub Actions, Linux and macOS, real-data regression from a cached sparse
+checkout of the public OrcaSlicer fork at the pinned commit; M16: schema removed, profiles only).
+Next: M17 macOS app bundle plus
 cross-platform prep (secondary- key bindings, per-platform settings path, `/` in manifest
-sub_paths), then M19 Windows build and portable zip (CI Windows job plus the user's own machine). Git diff is pending (待定) and the OrcaSlicer upgrade check is
+sub_paths), then M18 Windows build and portable zip (CI Windows job plus the user's own machine). Git diff is pending (待定) and the OrcaSlicer upgrade check is
 deferred (暂缓); pending and deferred items get no M number until the user decides to do them.
 The G-code viewer and OrcaSlicer sync automation are deferred.
 When a stage is finished, move it to "已完成" there with its design decisions, mark it ✅, and update
 the status line in README, all in the stage's own commit (see the commit rule above for the 提交 column).
 The user committing a stage is its acceptance: there is no separate "awaiting validation" status.
 
-Changing the exporter is work in another repository (`../OrcaSlicer`); confirm with the user first.
+Changing the compat exporter is work in another repository (`../OrcaSlicer`); confirm with the user first.
 
 ## Working with the user
 
 - The user is a C++ developer on Snapmaker's OrcaSlicer fork and writes in Chinese; reply in Chinese.
 - Do not fix, or offer to fix, OrcaSlicer's profile data (`../OrcaSlicer/resources/profiles`), even
   when the checks find real bugs there; report findings only.
-- Any change in the OrcaSlicer repository (e.g. the schema exporter) needs the user's confirmation
+- Any change in the OrcaSlicer repository (e.g. the compat exporter) needs the user's confirmation
   first. The exporter lives on its own branch, `personal/schema-export`.

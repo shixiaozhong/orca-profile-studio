@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 profile-core.workspace = true
+indexmap.workspace = true
 gpui-kit.workspace = true
 serde.workspace = true
 serde_json.workspace = true

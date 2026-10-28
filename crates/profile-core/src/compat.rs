@@ -9,7 +9,6 @@ use std::collections::{HashMap, HashSet};
 use crate::condition::{Condition, ConditionError, Value, Variable};
 use crate::model::{PresetId, PresetKind, RawValue};
 use crate::repository::{FILAMENT_LIBRARY, Repository};
-use crate::schema::OptionType;
 
 /// Why a preset is or is not compatible with a printer or process.
 #[derive(Debug, Clone, PartialEq)]
@@ -157,7 +156,7 @@ impl CompatibilityIndex {
     }
 }
 
-/// A variable of the target preset's configuration, typed by the schema, plus the
+/// A variable of the target preset's configuration, typed by its text, plus the
 /// `printer_preset` and `num_extruders` OrcaSlicer adds for printers.
 fn variable(repo: &Repository, target: PresetId, name: &str) -> Option<Variable> {
     let preset = repo.preset(target);
@@ -174,43 +173,34 @@ fn variable(repo: &Repository, target: PresetId, name: &str) -> Option<Variable>
             _ => {}
         }
     }
-    variable_from(repo, name, repo.lookup(target, name)?.value)
+    match repo.lookup(target, name) {
+        Some(resolved) => variable_from(resolved.value),
+        // No file in the chain sets the key; OrcaSlicer would use its default, which the profiles
+        // do not contain. Most defaults that conditions test (`printer_notes`, …) are empty strings.
+        None => Some(Variable::Scalar(Value::Str(String::new()))),
+    }
 }
 
-/// Types a configuration value by the schema.
-fn variable_from(repo: &Repository, name: &str, raw: &RawValue) -> Option<Variable> {
-    let type_ = repo.schema().and_then(|schema| schema.option(name)).map_or(OptionType::String, |option| option.type_);
-    let element = type_.element();
-    Some(if type_.is_vector() {
-        let items: Vec<String> = match raw {
-            RawValue::List(items) => items.clone(),
-            RawValue::Str(text) if type_ == OptionType::Strings => vec![text.clone()],
-            RawValue::Str(text) => text.split(',').map(|item| item.trim().to_owned()).collect(),
-        };
-        Variable::Vector(items.iter().map(|item| typed(element, item)).collect())
-    } else {
-        let text = match raw {
-            RawValue::Str(text) => text.as_str(),
-            RawValue::List(items) => items.first().map_or("", String::as_str),
-        };
-        Variable::Scalar(typed(type_, text))
+/// Types a configuration value by its text: profiles carry no option types, so integers,
+/// decimals (also `15%`) and strings are told apart by how they are written.
+fn variable_from(raw: &RawValue) -> Option<Variable> {
+    Some(match raw {
+        RawValue::List(items) => Variable::Vector(items.iter().map(|item| typed(item)).collect()),
+        RawValue::Str(text) => Variable::Scalar(typed(text)),
     })
 }
 
-fn typed(type_: OptionType, text: &str) -> Value {
-    let number = || text.trim().trim_end_matches('%').trim().parse::<f64>().ok();
-    match type_ {
-        OptionType::Bool => match text {
-            "1" => Value::Bool(true),
-            "0" => Value::Bool(false),
-            _ => Value::Str(text.to_owned()),
-        },
-        OptionType::Int => text.trim().parse().map(Value::Int).unwrap_or_else(|_| Value::Str(text.to_owned())),
-        OptionType::Float | OptionType::Percent | OptionType::FloatOrPercent => {
-            number().map(Value::Double).unwrap_or_else(|| Value::Str(text.to_owned()))
-        }
-        _ => Value::Str(text.to_owned()),
+fn typed(text: &str) -> Value {
+    let trimmed = text.trim();
+    if let Ok(int) = trimmed.parse::<i64>() {
+        return Value::Int(int);
     }
+    trimmed
+        .trim_end_matches('%')
+        .trim()
+        .parse::<f64>()
+        .map(Value::Double)
+        .unwrap_or_else(|_| Value::Str(text.to_owned()))
 }
 
 #[cfg(test)]
@@ -220,7 +210,6 @@ mod tests {
     use super::Verdict;
     use crate::model::PresetKind;
     use crate::repository::Repository;
-    use crate::schema::Schema;
 
     /// A library PLA, a vendor PLA with the same alias for printer "A 0.4", and processes
     /// selecting printers by list or by condition.
@@ -280,9 +269,9 @@ mod tests {
         write(
             "Acme/process/broken.json",
             r#"{ "type": "process", "name": "broken", "instantiation": "true",
-                "compatible_printers_condition": "nozzle_diameter == 0.4" }"#,
+                "compatible_printers_condition": "nozzle_diameter[5] == 0.4" }"#,
         );
-        let repo = Repository::load_with_schema(dir.path(), Schema::bundled()).unwrap();
+        let repo = Repository::load(dir.path()).unwrap();
         (dir, repo)
     }
 

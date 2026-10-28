@@ -39,36 +39,6 @@ pub fn issue(issue: &IssueKind) -> String {
         DanglingCompatiblePrinter { printer } => {
             t!("issue.dangling_printer", printer = format!("{printer:?}"))
         }
-        ObsoleteKey { key } => t!("issue.obsolete", key = key),
-        RenamedKey { key, current } => t!("issue.renamed", key = key, current = current),
-        UnknownKey { key } => t!("issue.unknown", key = key),
-        KeyNotForKind { key, reported: true } => {
-            t!("issue.wrong_kind_removed", key = key)
-        }
-        KeyNotForKind { key, reported: false } => {
-            t!("issue.wrong_kind_kept", key = key)
-        }
-        ScalarGivenList { key, collapsed: true } => {
-            t!("issue.scalar_equal", key = key)
-        }
-        ScalarGivenList { key, collapsed: false } => {
-            t!("issue.scalar_list", key = key)
-        }
-        NilNotNullable { key } => t!("issue.nil", key = key),
-        ValueUnparsable { key, value } => {
-            t!("issue.unparsable", key = key, value = format!("{value:?}"))
-        }
-        ItemUnparsable { key, item } => t!("issue.item_unparsable", key = key, item = format!("{item:?}")),
-        ValueSubstituted { key, value } => {
-            t!("issue.substituted", key = key, value = format!("{value:?}"))
-        }
-        ValueTrailingText { key, value } => {
-            t!("issue.trailing", key = key, value = format!("{value:?}"))
-        }
-        ValueOutOfRange { key, value, min, max } => {
-            let bound = |bound: &Option<i64>| bound.map_or_else(|| "-".to_owned(), |bound| bound.to_string());
-            t!("issue.range", key = key, value = value, arg0 = bound(min), arg1 = bound(max))
-        }
         ConditionInvalid { key, message } => {
             t!("issue.condition_invalid", key = key, message = message)
         }

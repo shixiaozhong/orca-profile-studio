@@ -3,7 +3,7 @@ use crate::batch_plan::{BatchPlan, Operation};
 use crate::catalog::Catalog;
 use crate::edits::Edits;
 use crate::preset_picker::{Choice, PresetPicker};
-use crate::value_editor::{EditorKind, EnumChoice, ValueEditor, ValueEditorEvent};
+use crate::value_editor::{ValueEditor, ValueEditorEvent};
 use crate::values::{RedoEdit, SaveEdits, UndoEdit};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectState};
@@ -13,7 +13,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use profile_core::{OptionType, PresetId, PresetKind, RawValue};
+use profile_core::{PresetId, PresetKind, RawValue};
 use std::sync::Arc;
 
 pub struct PreviewTable {
@@ -106,7 +106,7 @@ pub struct BatchView {
     selected: Vec<PresetId>,
     kind: PresetKind,
     key: String,
-    key_select: Entity<SelectState<SearchableVec<EnumChoice>>>,
+    key_select: Entity<SelectState<SearchableVec<String>>>,
     operation: Operation,
     operation_select: Entity<SelectState<SearchableVec<Choice>>>,
     editor: Option<Entity<ValueEditor>>,
@@ -134,9 +134,8 @@ impl BatchView {
         });
         let kind = picker.read(cx).kind();
         let selected = picker.read(cx).selected(cx);
-        let key_select = cx.new(|cx| {
-            SelectState::new(SearchableVec::new(Vec::<EnumChoice>::new()), None, window, cx).searchable(true)
-        });
+        let key_select =
+            cx.new(|cx| SelectState::new(SearchableVec::new(Vec::<String>::new()), None, window, cx).searchable(true));
         let operation_select =
             cx.new(|cx| SelectState::new(SearchableVec::new(Vec::<Choice>::new()), None, window, cx).searchable(true));
         let preview = cx.new(|cx| TableState::new(PreviewTable { plan: None }, window, cx));
@@ -157,19 +156,15 @@ impl BatchView {
                     }
                 }
             }),
-            cx.subscribe_in(
-                &key_select,
-                window,
-                |this, _, event: &SelectEvent<SearchableVec<EnumChoice>>, window, cx| {
-                    if let SelectEvent::Confirm(Some(key)) = event
-                        && *key != this.key
-                    {
-                        this.key = key.clone();
-                        this.operation = Operation::Set;
-                        this.reset_operation(window, cx);
-                    }
-                },
-            ),
+            cx.subscribe_in(&key_select, window, |this, _, event: &SelectEvent<SearchableVec<String>>, window, cx| {
+                if let SelectEvent::Confirm(Some(key)) = event
+                    && *key != this.key
+                {
+                    this.key = key.clone();
+                    this.operation = Operation::Set;
+                    this.reset_operation(window, cx);
+                }
+            }),
             cx.subscribe_in(
                 &operation_select,
                 window,
@@ -182,7 +177,11 @@ impl BatchView {
                     }
                 },
             ),
-            cx.observe(edits, |this, _, cx| this.invalidate(cx)),
+            cx.observe_in(edits, window, |this, _, window, cx| {
+                this.update_key_choices(window, cx);
+                this.update_operation_choices(window, cx);
+                this.invalidate(cx);
+            }),
         ];
         let mut view = Self {
             catalog: catalog.clone(),
@@ -222,8 +221,10 @@ impl BatchView {
         self.picker.update(cx, |picker, cx| picker.refresh_language(window, cx));
         self.update_key_choices(window, cx);
         self.update_operation_choices(window, cx);
-        if let Some(editor) = &self.editor {
-            editor.update(cx, |editor, cx| editor.refresh_language(&self.catalog, window, cx));
+        if self.operation == Operation::Set
+            && let Some(editor) = &self.editor
+        {
+            editor.update(cx, |_, cx| cx.notify());
         }
         self.invalidate(cx);
     }
@@ -232,6 +233,15 @@ impl BatchView {
         self.catalog = catalog.clone();
         self.picker.update(cx, |picker, cx| picker.refresh(catalog, window, cx));
         self.selected = self.picker.read(cx).selected(cx);
+        self.update_key_choices(window, cx);
+        self.update_operation_choices(window, cx);
+        if !self.draft_dirty {
+            self.reset_editor(window, cx);
+        } else if self.operation == Operation::Set
+            && let Some(editor) = &self.editor
+        {
+            editor.update(cx, |_, cx| cx.notify());
+        }
         self.invalidate(cx);
     }
     fn invalidate(&mut self, cx: &mut Context<Self>) {
@@ -247,21 +257,25 @@ impl BatchView {
         cx.notify();
     }
     fn update_key_choices(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(schema) = self.catalog.repo.schema() else { return };
-        let mut keys = schema.default_preset(self.kind).values.keys().cloned().collect::<Vec<_>>();
-        keys.sort();
+        // The keys that presets of this kind set, including unsaved edits.
+        let mut keys: Vec<String> = self
+            .catalog
+            .repo
+            .presets()
+            .iter()
+            .filter(|p| p.kind == self.kind)
+            .flat_map(|p| self.edits.read(cx).session(p.id.index()).map_or(&p.params, |s| s.params()).keys().cloned())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        if !keys.contains(&self.key) && self.draft_dirty {
+            keys.push(self.key.clone());
+        }
         if !keys.contains(&self.key) {
             self.key = keys.iter().find(|k| k.as_str() == "wall_loops").or(keys.first()).cloned().unwrap_or_default();
         }
-        let choices: Vec<_> = keys
-            .into_iter()
-            .map(|key| {
-                let label = self.catalog.translate(schema.option(&key).map_or(key.as_str(), |o| o.display_label()));
-                EnumChoice::new(key.clone(), format!("{label} — {key}"))
-            })
-            .collect();
         self.key_select.update(cx, |state, cx| {
-            state.set_items(SearchableVec::new(choices), window, cx);
+            state.set_items(SearchableVec::new(keys), window, cx);
             state.set_selected_value(&self.key, window, cx);
         });
     }
@@ -271,16 +285,16 @@ impl BatchView {
         self.reset_operation(window, cx);
     }
     fn update_operation_choices(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let strings = self
-            .catalog
-            .repo
-            .schema()
-            .and_then(|s| s.option(&self.key))
-            .is_some_and(|o| o.type_ == OptionType::Strings);
+        // Item operations apply to array values; any preset of the kind may hold one.
+        let strings = self.catalog.repo.presets().iter().filter(|p| p.kind == self.kind).any(|p| {
+            self.edits.read(cx).effective(p.id.index(), &self.key).is_some_and(|(v, _)| matches!(v, RawValue::List(_)))
+        });
         let choices: Vec<_> = Operation::ALL
             .into_iter()
             .enumerate()
-            .filter(|(_, op)| !matches!(op, Operation::AddItem | Operation::RemoveItem) || strings)
+            .filter(|(_, op)| {
+                !matches!(op, Operation::AddItem | Operation::RemoveItem) || strings || *op == self.operation
+            })
             .map(|(value, op)| Choice { value, title: op.label().into() })
             .collect();
         self.operation_select.update(cx, |state, cx| {
@@ -300,20 +314,23 @@ impl BatchView {
         if matches!(self.operation, Operation::Remove | Operation::Promote) {
             return;
         }
-        let Some(schema) = self.catalog.repo.schema() else { return };
-        let Some(default) = schema.default_preset(self.kind).values.get(&self.key) else { return };
-        let (kind, source) = if matches!(self.operation, Operation::AddItem | Operation::RemoveItem) {
-            (EditorKind::Text, RawValue::Str(String::new()))
+        let source = if matches!(self.operation, Operation::AddItem | Operation::RemoveItem) {
+            RawValue::Str(String::new())
         } else {
-            // Start from the first selected preset's current value, not the schema default: an
-            // untouched Preview then shows what would change instead of a mass reset to defaults.
-            let current = self.selected.first().and_then(|id| self.edits.read(cx).effective(id.index(), &self.key));
-            (
-                EditorKind::for_option(schema.option(&self.key)).translated(&self.catalog),
-                current.map_or_else(|| default.clone(), |(v, _)| v),
-            )
+            // Start from the first selected preset's current value: an untouched Preview then shows
+            // what would change. Without one, take the value of any preset of the kind.
+            let edits = self.edits.read(cx);
+            let current = self.selected.first().and_then(|id| edits.effective(id.index(), &self.key)).or_else(|| {
+                self.catalog
+                    .repo
+                    .presets()
+                    .iter()
+                    .filter(|p| p.kind == self.kind)
+                    .find_map(|p| edits.effective(p.id.index(), &self.key))
+            });
+            current.map_or_else(|| RawValue::Str(String::new()), |(v, _)| v)
         };
-        let editor = cx.new(|cx| ValueEditor::new(self.key.clone(), kind, source, false, window, cx));
+        let editor = cx.new(|cx| ValueEditor::new(self.key.clone(), source, false, window, cx));
         self.editor_subscription = Some(cx.subscribe(&editor, |this, _, event: &ValueEditorEvent, cx| {
             if matches!(event, ValueEditorEvent::Changed) {
                 this.draft_dirty = true;

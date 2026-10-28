@@ -353,7 +353,7 @@ fn resource_notices(files: &mut ManagementPlan, vendor: &str, name: &str, doc: &
 #[cfg(test)]
 mod tests {
     use super::{ModelDraft, ModelPlan};
-    use crate::{Document, PresetKind, Repository, Schema, Severity};
+    use crate::{Document, PresetKind, Repository, Severity};
     use std::fs;
 
     fn fixture() -> (tempfile::TempDir, Repository) {
@@ -373,7 +373,7 @@ mod tests {
         (dir, repo)
     }
     fn load(path: &std::path::Path) -> Repository {
-        Repository::load_with_schema(path, Schema::bundled()).unwrap()
+        Repository::load(path).unwrap()
     }
     fn clean(repo: &Repository) {
         assert!(!repo.issues().iter().any(|i| i.severity() >= Severity::Error), "{:?}", repo.issues());

@@ -183,7 +183,7 @@ impl Edits {
                 return Some((value.clone(), source));
             }
         }
-        repo.schema()?.default_preset(info.kind).values.get(key).map(|v| (v.clone(), t!("common.default")))
+        None
     }
 
     pub fn is_dirty(&self, preset: usize) -> bool {

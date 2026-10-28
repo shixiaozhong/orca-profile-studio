@@ -6,7 +6,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use profile_core::{Origin, PresetKind, RawValue, Severity};
+use profile_core::{PresetKind, RawValue, Severity};
 
 use crate::catalog::Catalog;
 use crate::tree::{Group, Node, kind_icon};
@@ -234,35 +234,13 @@ pub fn render_preset(catalog: &Catalog, index: usize, compatibility: Option<&Com
         PresetKind::Process => &["layer_height", "compatible_printers", "compatible_printers_condition"],
     };
     let resolved = repo.resolve(id);
-    let from_defaults = resolved.values().filter(|resolved| resolved.origin == Origin::Default).count();
-    let mut values = section(t!("common.values"), cx)
+    let values = section(t!("common.values"), cx)
         .child(field(t!("details.own_count"), preset.params.len().to_string(), cx))
-        .child(field(t!("details.chain_count"), (resolved.len() - from_defaults).to_string(), cx));
-    if repo.schema().is_some() {
-        values = values.child(field(t!("details.default_count"), from_defaults.to_string(), cx));
-    }
-    let values = values.children(highlights.iter().map(|&key| {
-        let option = repo.schema().and_then(|schema| schema.option(key));
-        let label = catalog.translate(option.map_or(key, |option| option.display_label()));
-        let value = resolved.get(key).map_or_else(
-            || "—".to_owned(),
-            |resolved| {
-                let mut text = with_unit(
-                    format_value(resolved.value),
-                    resolved.value,
-                    &catalog.translate(option.map_or("", |option| option.sidetext.as_str())),
-                );
-                if resolved.origin == Origin::Default {
-                    text.push_str(&t!("details.default_suffix"));
-                }
-                text
-            },
-        );
-        field(label.clone(), value, cx)
-            .id(SharedString::from(format!("value-{key}")))
-            .test_support()
-            .aria_label(label.to_owned())
-    }));
+        .child(field(t!("details.chain_count"), resolved.len().to_string(), cx))
+        .children(highlights.iter().map(|&key| {
+            let value = resolved.get(key).map_or_else(|| "—".to_owned(), |resolved| format_value(resolved.value));
+            field(key, value, cx).id(SharedString::from(format!("value-{key}"))).test_support().aria_label(key)
+        }));
 
     let issues: Vec<_> = catalog.issues_of(index).collect();
     let issue_list = section(t!("details.issue_count", arg0 = issues.len()), cx).children(issues.iter().map(|issue| {
@@ -367,34 +345,5 @@ pub fn format_value(value: &RawValue) -> String {
     match value {
         RawValue::Str(text) => text.clone(),
         RawValue::List(items) => items.join(", "),
-    }
-}
-
-/// Percent values already carry their unit; preserve that spelling without adding a second `%`.
-pub fn with_unit(text: String, value: &RawValue, unit: &str) -> String {
-    let has_percent = |value: &str| value.trim_end().ends_with('%');
-    let percent_encoded = unit == "%"
-        && match value {
-            RawValue::Str(value) => has_percent(value),
-            RawValue::List(values) => !values.is_empty() && values.iter().all(|value| has_percent(value)),
-        };
-    if unit.is_empty() || percent_encoded { text } else { format!("{text} {unit}") }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{format_value, with_unit};
-    use profile_core::RawValue;
-
-    #[test]
-    fn units_preserve_encoded_percentages_and_array_shape() {
-        let _locale = crate::i18n::test_locale();
-        let percent = RawValue::Str("15%".into());
-        assert_eq!(with_unit(format_value(&percent), &percent, "%"), "15%");
-        let list = RawValue::List(vec!["10%".into(), "20%".into()]);
-        assert_eq!(with_unit("[\"10%\",\"20%\"]".into(), &list, "%"), "[\"10%\",\"20%\"]");
-        let temperature = RawValue::Str("210".into());
-        assert_eq!(with_unit(format_value(&temperature), &temperature, "℃"), "210 ℃");
-        assert_eq!(with_unit("15".into(), &RawValue::Str("15".into()), "%"), "15 %");
     }
 }

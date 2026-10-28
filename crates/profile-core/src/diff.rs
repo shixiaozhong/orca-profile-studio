@@ -64,9 +64,9 @@ impl Repository {
 mod tests {
     use std::fs;
 
-    use crate::{EditSession, Origin, PresetKind, RawValue, Repository, Schema};
+    use crate::{EditSession, PresetKind, RawValue, Repository};
 
-    fn fixture(schema: bool) -> (tempfile::TempDir, Repository) {
+    fn fixture() -> (tempfile::TempDir, Repository) {
         let dir = tempfile::tempdir().unwrap();
         for vendor in ["A", "B"] {
             fs::create_dir_all(dir.path().join(vendor)).unwrap();
@@ -97,18 +97,13 @@ mod tests {
             fs::write(dir.path().join(vendor).join("filament.json"), r#"{"name":"filament","type":"filament"}"#)
                 .unwrap();
         }
-        let repo = if schema {
-            Repository::load_with_schema(dir.path(), Schema::bundled())
-        } else {
-            Repository::load(dir.path())
-        }
-        .unwrap();
+        let repo = Repository::load(dir.path()).unwrap();
         (dir, repo)
     }
 
     #[test]
     fn compares_union_arrays_and_origins_across_vendors() {
-        let (_dir, repo) = fixture(false);
+        let (_dir, repo) = fixture();
         let ids = repo.find(PresetKind::Process, "child");
         let rows = repo.diff(ids[0], ids[1]).unwrap();
         let row = |key| rows.iter().find(|row| row.key == key).unwrap();
@@ -130,8 +125,8 @@ mod tests {
     }
 
     #[test]
-    fn includes_defaults_and_both_edit_sessions_without_mutating_repository() {
-        let (_dir, repo) = fixture(true);
+    fn includes_both_edit_sessions_without_mutating_repository() {
+        let (_dir, repo) = fixture();
         let ids = repo.find(PresetKind::Process, "child");
         let mut left = EditSession::new(&repo, ids[0]);
         let mut right = EditSession::new(&repo, ids[1]);
@@ -144,9 +139,8 @@ mod tests {
         assert_eq!(row.right.as_ref().unwrap().effective().value.as_scalar(), Some("5"));
         assert!(row.is_different());
         assert!(!rows.iter().any(|row| row.key == "right_only"));
-        let default = rows.iter().find(|row| row.key == "layer_height").unwrap();
-        assert!(!default.is_different());
-        assert_eq!(default.left.as_ref().unwrap().effective().origin, Origin::Default);
+        // Keys no file sets are absent: their defaults live in OrcaSlicer's sources.
+        assert!(!rows.iter().any(|row| row.key == "layer_height"));
         assert_eq!(repo.lookup_scalar(ids[0], "wall_loops"), Some("2"));
         left.set("wall_loops", None);
         right.set("wall_loops", None);

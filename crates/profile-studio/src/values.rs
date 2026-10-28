@@ -16,9 +16,8 @@ use profile_core::{Origin, RawValue, Severity};
 
 use crate::catalog::Catalog;
 use crate::compare::CompareView;
-use crate::details::{format_value, severity_color, with_unit};
+use crate::details::{format_value, severity_color};
 use crate::edits::Edits;
-pub use crate::value_editor::EditorKind;
 use crate::value_editor::{ValueEditor, ValueEditorEvent};
 
 actions!(values, [UndoEdit, RedoEdit, SaveEdits]);
@@ -33,20 +32,19 @@ pub fn init(cx: &mut App) {
     ]);
 }
 
-/// Where a value comes from, ordered from the preset itself down to the schema defaults.
+/// The preset of the inheritance chain a value comes from, ordered from the preset itself up.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Source {
-    /// Position in the chain (0 = the preset itself) and the name of that preset.
-    Chain(usize, String),
-    Default,
+pub struct Source {
+    /// Position in the chain (0 = the preset itself).
+    pub depth: usize,
+    pub name: String,
 }
 
 impl Source {
     pub fn label(&self) -> String {
-        match self {
-            Source::Chain(0, _) => t!("common.this_file"),
-            Source::Chain(depth, name) => format!("[{depth}] {name}"),
-            Source::Default => t!("common.default"),
+        match self.depth {
+            0 => t!("common.this_file"),
+            depth => format!("[{depth}] {}", self.name),
         }
     }
 }
@@ -61,15 +59,6 @@ pub struct Layer {
 #[derive(Debug, Clone)]
 pub struct ValueRow {
     pub key: String,
-    pub label: String,
-    pub category: String,
-    /// Whether the schema defines the key; rows outside it sort last.
-    pub in_schema: bool,
-    pub tooltip: String,
-    /// Original labels remain searchable when the display language changes.
-    pub search_labels: String,
-    /// Type, default and limits from the schema, or a note that the key is not an option.
-    pub definition: String,
     /// Nearest first; the first layer is the effective value.
     pub layers: Vec<Layer>,
     pub issues: Vec<(Severity, String)>,
@@ -79,7 +68,6 @@ pub struct ValueRow {
     pub own: Option<RawValue>,
     /// Differs from the saved file.
     pub modified: bool,
-    pub editor: EditorKind,
 }
 
 impl ValueRow {
@@ -95,7 +83,7 @@ impl ValueRow {
         self.issues.iter().map(|(severity, _)| *severity).max()
     }
 
-    /// Whether removing the own value leaves an inherited or default value.
+    /// Whether removing the own value leaves an inherited value.
     pub fn inherits(&self) -> bool {
         self.layers.iter().any(|layer| !is_own(&layer.source))
     }
@@ -107,79 +95,34 @@ impl ValueRow {
 }
 
 fn is_own(source: &Source) -> bool {
-    matches!(source, Source::Chain(0, _))
+    source.depth == 0
 }
 
-/// Builds the rows of a preset with its edited values, sorted by category and label.
+/// Builds the rows of a preset with its edited values, sorted by key.
 pub fn build_rows(catalog: &Catalog, edits: &Edits, preset: usize) -> Vec<ValueRow> {
     let repo = &catalog.repo;
     let id = repo.presets()[preset].id;
     let chain = repo.chain(id);
-    let schema = repo.schema();
     let own = edits.session(preset).map_or(&repo.preset(id).params, |session| session.params());
-    let mut issues = repo.check_values(id, own);
     // Compare with what the parent inherits now, including unsaved edits of the ancestors.
-    if let Some(parent) = repo.preset(id).parent {
-        issues.extend(
-            repo.redundant_overrides_against(id, own, |key| {
-                edits.effective(parent.index(), key).map(|(value, _)| value)
-            }),
-        );
-    }
+    let issues = repo.preset(id).parent.map_or_else(Vec::new, |parent| {
+        repo.redundant_overrides_against(id, own, |key| edits.effective(parent.index(), key).map(|(value, _)| value))
+    });
 
     let mut rows: Vec<ValueRow> = repo
         .trace_with(id, own)
         .into_iter()
         .map(|trace| {
-            let option = schema.and_then(|schema| schema.option(trace.key));
-            let unit = catalog.translate(option.map_or("", |option| option.sidetext.as_str()));
             let layers = trace
                 .layers
                 .iter()
                 .map(|layer| {
-                    let source = match layer.origin {
-                        Origin::Preset(link) => {
-                            let depth = chain.iter().position(|&entry| entry == link).unwrap_or(0);
-                            Source::Chain(depth, repo.preset(link).name().to_owned())
-                        }
-                        Origin::Default => Source::Default,
-                    };
-                    let value = with_unit(format_value(layer.value), layer.value, &unit);
-                    Layer { source, value }
+                    let Origin::Preset(link) = layer.origin;
+                    let depth = chain.iter().position(|&entry| entry == link).unwrap_or(0);
+                    let source = Source { depth, name: repo.preset(link).name().to_owned() };
+                    Layer { source, value: format_value(layer.value) }
                 })
                 .collect();
-            let (label, category, tooltip, definition) = match option {
-                Some(option) => {
-                    let mut definition = format!("{} · {}", option.type_, crate::i18n::mode(option.mode));
-                    if option.nullable {
-                        definition.push_str(&t!("values.nullable"));
-                    }
-                    if option.min.is_some() || option.max.is_some() {
-                        let bound =
-                            |bound: Option<i64>| bound.map_or_else(|| "…".to_owned(), |bound| bound.to_string());
-                        definition.push_str(&t!("values.range", arg0 = bound(option.min), arg1 = bound(option.max)));
-                    }
-                    if !option.enum_keys.is_empty() {
-                        definition.push_str(&t!("values.enum_values", arg0 = option.enum_keys.join(", ")));
-                    }
-                    let category = if option.category.is_empty() {
-                        t!("common.other")
-                    } else {
-                        catalog.translate(&option.category)
-                    };
-                    (
-                        catalog.translate(option.display_label()),
-                        category,
-                        catalog.translate(&option.tooltip),
-                        definition,
-                    )
-                }
-                None => {
-                    let note = if schema.is_some() { t!("values.not_option") } else { t!("values.no_schema") };
-                    (trace.key.to_owned(), t!("common.not_in_schema"), String::new(), note.to_owned())
-                }
-            };
-            let editor = EditorKind::for_option(option).translated(catalog);
             let key_issues = issues
                 .iter()
                 .filter(|issue| issue.key() == Some(trace.key))
@@ -187,18 +130,11 @@ pub fn build_rows(catalog: &Catalog, edits: &Edits, preset: usize) -> Vec<ValueR
                 .collect();
             ValueRow {
                 key: trace.key.to_owned(),
-                label,
-                category,
-                in_schema: option.is_some(),
-                tooltip,
-                search_labels: catalog.search_labels(option),
-                definition,
                 layers,
                 issues: key_issues,
                 effective: trace.effective().value.clone(),
                 own: own.get(trace.key).cloned(),
                 modified: edits.session(preset).is_some_and(|session| session.is_modified(trace.key)),
-                editor,
             }
         })
         .collect();
@@ -207,47 +143,28 @@ pub fn build_rows(catalog: &Catalog, edits: &Edits, preset: usize) -> Vec<ValueR
 }
 
 fn default_order(a: &ValueRow, b: &ValueRow) -> Ordering {
-    // Keys outside the schema go last.
-    (!a.in_schema, &a.category, a.label.to_lowercase(), &a.key).cmp(&(
-        !b.in_schema,
-        &b.category,
-        b.label.to_lowercase(),
-        &b.key,
-    ))
+    a.key.cmp(&b.key)
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Filter {
-    /// Case-insensitive text matched against key, label and category.
+    /// Case-insensitive text matched against the key.
     pub query: String,
-    pub hide_defaults: bool,
     pub only_this_file: bool,
 }
 
 impl Filter {
     pub fn matches(&self, row: &ValueRow) -> bool {
-        if self.hide_defaults && *row.source() == Source::Default {
-            return false;
-        }
         if self.only_this_file && !is_own(row.source()) {
             return false;
         }
         let query = self.query.trim().to_lowercase();
-        query.is_empty()
-            || [&row.key, &row.label, &row.category, &row.search_labels]
-                .iter()
-                .any(|text| text.to_lowercase().contains(&query))
+        row.key.to_lowercase().contains(&query)
     }
 }
 
-fn columns() -> [(&'static str, String, f32); 5] {
-    [
-        ("category", t!("common.category"), 150.),
-        ("label", t!("common.option"), 220.),
-        ("key", t!("common.key"), 240.),
-        ("value", t!("common.value"), 260.),
-        ("source", t!("common.source"), 200.),
-    ]
+fn columns() -> [(&'static str, String, f32); 3] {
+    [("key", t!("common.key"), 300.), ("value", t!("common.value"), 340.), ("source", t!("common.source"), 220.)]
 }
 
 pub struct ValuesDelegate {
@@ -286,7 +203,7 @@ impl ValuesDelegate {
             Some((col_ix, sort @ (ColumnSort::Ascending | ColumnSort::Descending))) => {
                 self.visible.sort_by(|&a, &b| {
                     let order = match col_ix {
-                        4 => rows[a].source().cmp(rows[b].source()),
+                        2 => rows[a].source().cmp(rows[b].source()),
                         _ => {
                             cell_text(&rows[a], col_ix).to_lowercase().cmp(&cell_text(&rows[b], col_ix).to_lowercase())
                         }
@@ -302,11 +219,9 @@ impl ValuesDelegate {
 
 fn cell_text(row: &ValueRow, col_ix: usize) -> String {
     match col_ix {
-        0 => row.category.clone(),
-        1 => row.label.clone(),
-        2 => row.key.clone(),
+        0 => row.key.clone(),
         // Multi-line values (G-code) are shown on one line in the table.
-        3 => row.value().replace('\n', " ⏎ "),
+        1 => row.value().replace('\n', " ⏎ "),
         _ => row.source_text(),
     }
 }
@@ -341,7 +256,7 @@ impl TableDelegate for ValuesDelegate {
         let muted = cx.theme().muted_foreground;
         let text = div().min_w_0().truncate().child(cell_text(row, col_ix));
         match col_ix {
-            1 => h_flex()
+            0 => h_flex()
                 .gap_1()
                 .min_w_0()
                 .when(row.modified, |cell| {
@@ -353,9 +268,7 @@ impl TableDelegate for ValuesDelegate {
                 })
                 .child(text)
                 .into_any_element(),
-            0 | 2 => text.text_color(muted).into_any_element(),
-            4 if row.modified => text.text_color(cx.theme().primary).into_any_element(),
-            4 if *row.source() == Source::Default => text.text_color(muted).into_any_element(),
+            2 if row.modified => text.text_color(cx.theme().primary).into_any_element(),
             _ => text.into_any_element(),
         }
     }
@@ -451,7 +364,7 @@ impl ValuesView {
         self.rebuild(cx);
         self.sync_editor(window, cx);
         if let Some(editor) = &self.editor {
-            editor.update(cx, |editor, cx| editor.refresh_language(catalog, window, cx));
+            editor.update(cx, |_, cx| cx.notify());
         }
     }
 
@@ -568,7 +481,7 @@ impl ValuesView {
             return;
         }
         let key = row.key.clone();
-        let editor = cx.new(|cx| ValueEditor::new(row.key, row.editor, own, true, window, cx));
+        let editor = cx.new(|cx| ValueEditor::new(row.key, own, true, window, cx));
         self.editor_subscription = Some(cx.subscribe(&editor, move |this, _, event: &ValueEditorEvent, cx| {
             if let ValueEditorEvent::Apply(value) = event {
                 this.set_value(&key, Some(value.clone()), cx);
@@ -601,14 +514,6 @@ impl ValuesView {
                     .prefix(Icon::new(IconName::Search).small())
                     .cleanable(true)
                     .w(rems(15.)),
-            )
-            .child(
-                Checkbox::new("hide-defaults")
-                    .label(t!("values.hide_defaults"))
-                    .checked(self.filter.hide_defaults)
-                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
-                        this.toggle(|filter, checked| filter.hide_defaults = checked, *checked, cx)
-                    })),
             )
             .child(
                 Checkbox::new("only-this-file")
@@ -744,16 +649,10 @@ impl ValuesView {
         let content = v_flex()
             .gap_1()
             .child(
-                h_flex()
-                    .gap_2()
-                    .child(div().font_semibold().child(row.label.clone()))
-                    .child(div().text_color(muted).child(row.key.clone()))
-                    .when(row.modified, |line| {
-                        line.child(div().text_color(cx.theme().primary).child(t!("common.edited")))
-                    }),
+                h_flex().gap_2().child(div().font_semibold().child(row.key.clone())).when(row.modified, |line| {
+                    line.child(div().text_color(cx.theme().primary).child(t!("common.edited")))
+                }),
             )
-            .when(!row.tooltip.is_empty(), |panel| panel.child(div().text_color(muted).child(row.tooltip.clone())))
-            .child(div().text_xs().text_color(muted).child(row.definition.clone()))
             .child(self.render_editor(&row, cx))
             .child(div().pt_1().text_xs().font_semibold().text_color(muted).child(t!("values.layers")))
             .children(row.layers.iter().enumerate().map(|(ix, layer)| {
@@ -855,36 +754,33 @@ impl Render for ValuesView {
 
 #[cfg(test)]
 mod tests {
-    use super::{EditorKind, Filter, Layer, Source, ValueRow};
+    use super::{Filter, Layer, Source, ValueRow};
     use crate::value_editor::shaped;
     use profile_core::RawValue;
 
-    fn row(key: &str, category: &str, source: Source) -> ValueRow {
+    fn source(depth: usize, name: &str) -> Source {
+        Source { depth, name: name.to_owned() }
+    }
+
+    fn row(key: &str, source: Source) -> ValueRow {
         ValueRow {
             key: key.to_owned(),
-            label: key.replace('_', " "),
-            category: category.to_owned(),
-            in_schema: true,
-            tooltip: String::new(),
-            search_labels: String::new(),
-            definition: String::new(),
             layers: vec![Layer { source, value: "1".to_owned() }],
             issues: Vec::new(),
             effective: RawValue::Str("1".into()),
             own: None,
             modified: false,
-            editor: EditorKind::Text,
         }
     }
 
     #[test]
     fn filter_by_text_and_source() {
         let _locale = crate::i18n::test_locale();
-        let own = row("nozzle_temperature", "Temperature", Source::Chain(0, "self".into()));
-        let inherited = row("filament_type", "Basic", Source::Chain(2, "base".into()));
-        let default = row("filament_tower_interface_print_temp", "Other", Source::Default);
+        let own = row("nozzle_temperature", source(0, "self"));
+        let inherited = row("filament_type", source(2, "base"));
+        let other = row("filament_tower_interface_print_temp", source(1, "parent"));
         let shown = |filter: &Filter| {
-            [&own, &inherited, &default]
+            [&own, &inherited, &other]
                 .into_iter()
                 .filter(|row| filter.matches(row))
                 .map(|row| row.key.as_str())
@@ -892,19 +788,17 @@ mod tests {
         };
 
         assert_eq!(shown(&Filter::default()).len(), 3);
-        assert_eq!(shown(&Filter { query: "TEMP".into(), ..Default::default() }), [&own.key, &default.key]);
-        assert_eq!(shown(&Filter { query: "basic".into(), ..Default::default() }), [&inherited.key]);
-        assert_eq!(shown(&Filter { hide_defaults: true, ..Default::default() }), [&own.key, &inherited.key]);
+        assert_eq!(shown(&Filter { query: "TEMP".into(), ..Default::default() }), [&own.key, &other.key]);
+        assert_eq!(shown(&Filter { query: "type".into(), ..Default::default() }), [&inherited.key]);
         assert_eq!(shown(&Filter { only_this_file: true, ..Default::default() }), [&own.key]);
     }
 
     #[test]
     fn sources_order_from_the_preset_down() {
         let _locale = crate::i18n::test_locale();
-        assert!(Source::Chain(0, "z".into()) < Source::Chain(1, "a".into()));
-        assert!(Source::Chain(5, "a".into()) < Source::Default);
-        assert_eq!(Source::Chain(0, "x".into()).label(), "this file");
-        assert_eq!(Source::Chain(2, "base".into()).label(), "[2] base");
+        assert!(source(0, "z") < source(1, "a"));
+        assert_eq!(source(0, "x").label(), "this file");
+        assert_eq!(source(2, "base").label(), "[2] base");
     }
 
     #[test]
@@ -920,9 +814,9 @@ mod tests {
     #[test]
     fn inherits_when_another_layer_sets_the_key() {
         let _locale = crate::i18n::test_locale();
-        let mut own_only = row("x", "Other", Source::Chain(0, "self".into()));
+        let mut own_only = row("x", source(0, "self"));
         assert!(!own_only.inherits());
-        own_only.layers.push(Layer { source: Source::Default, value: "0".into() });
+        own_only.layers.push(Layer { source: source(1, "parent"), value: "0".into() });
         assert!(own_only.inherits());
     }
 }

@@ -204,7 +204,7 @@ JSON 里**只会出现两种值形态**：字符串，或字符串数组。现�
 
 另外有个别特殊值会触发联动改写，例如 `support_type: "hybrid(auto)"` 会同时设置 `support_style`，`wall_infill_order` 的某些取值会设置 `is_infill_first`。
 
-**值的类型信息不在 JSON 里**，定义在 `PrintConfig.cpp` 的 `ConfigOptionDef` 中。本项目用 OrcaSlicer 仓库里的 `src/dev-utils/Snapmaker_Orca_schema_export.cpp` 导出 `schema.json`（见 9.2 和 README）。
+**值的类型信息不在 JSON 里**，定义在 `PrintConfig.cpp` 的 `ConfigOptionDef` 中。本项目从 M16 起不再实现：曾经用 `src/dev-utils/Snapmaker_Orca_schema_export.cpp` 导出 `schema.json` 来复刻上面的旧键名、未知键和值解析规则，现已整体移除，工具只把值当字符串处理（见 README）。本节仍描述 OrcaSlicer 自身的行为。
 
 ### 5.3 加载与继承算法（核心）
 
@@ -313,6 +313,8 @@ printer_notes=~/.*PRINTER_MODEL_COREONE.*/ and nozzle_diameter[0]==0.6
 
 包含正则匹配 `=~`、`and` / `or` / `not`、数组下标和数值比较。新项目第一版可以先只支持这个子集；遇到无法求值的表达式，就把结果显示为「需人工确认」。
 
+OrcaSlicer 按 `ConfigOptionDef` 的类型取变量。本项目没有这份类型信息（M16），改为按值的文本推断：整数按 int，带或不带 `%` 的数字按 double，其余按字符串；没有任何文件设置的变量当作空字符串；不带下标引用的数组如果所有元素相同，读作这个元素。用 `Snapmaker_Orca_compat_export` 对照 OrcaSlicer 自己的 `is_compatible_with_printer`，在 `953509c23f` 的数据上 0 处差异。
+
 ---
 
 ## 7. 不是预设的 JSON 文件
@@ -398,13 +400,12 @@ nlohmann::json 会自动跳过 BOM，所以 Orca 能正常加载；但 **Rust �
 
 ### 8.8 工作台的多余覆盖值提示（M14）
 
-这是一项工作台新增的 info 提示，不是 OrcaSlicer 的加载错误。子预设自己写出的值与其父项的最终值按原始字符串/数组完全相同时，报告 `redundant-override`；字符串与单元素数组、不同数字拼写、数组顺序均不等同。根预设和不完整的继承链不参与比较；有 schema 时，不属于该预设类型的键（OrcaSlicer 会丢弃它们，已另有提示）也不参与比较。有 schema 时，父项未显式设置的键可以来自默认层。
+这是一项工作台新增的 info 提示，不是 OrcaSlicer 的加载错误。子预设自己写出的值与其父项的最终值按原始字符串/数组完全相同时，报告 `redundant-override`；字符串与单元素数组、不同数字拼写、数组顺序均不等同。根预设和不完整的继承链不参与比较；只和继承链上的文件写出的值比较，不含 OrcaSlicer 的类型默认值（本项目没有它们）。
 
-在同一个锁定数据版本上，不带 schema 为 **56,926** 项，带 bundled schema 为 **73,253** 项。独立参考统计：
+在锁定数据版本上共 **56,926** 项。独立参考统计：
 
 ```bash
 python3 -I docs/reference/profile_format_stats.py ../OrcaSlicer/resources/profiles
-python3 -I docs/reference/profile_format_stats.py ../OrcaSlicer/resources/profiles crates/profile-core/schema/schema.json
 ```
 
 该提示不修改文件。删除相同覆盖后，子项会跟随后续的父项变化；是否删除或把兄弟项共同值提到父项由用户决定。
@@ -449,8 +450,8 @@ struct ResolvedPreset {
 ### 9.2 实现建议
 
 1. **严格复刻第 5.3 节的顺序语义**：一个厂商一个上下文，每一类一张 `local` 表，按清单顺序处理，`lib_maps` 是唯一的跨厂商来源。不要按名字全局构建继承图，否则会掩盖「父项排在后面」这一类错误。
-2. **先把值当字符串处理**。类型信息来自一份导出的 `schema.json`：写一个小的 C++ 程序链接 libslic3r，遍历 `print_config_def`，输出每个键的 `type`、`default`、`min`/`max`、枚举值、`label`、`tooltip`、`category`、`mode`、`nullable`，以及 `Preset::print_options()`、`filament_options()`、`printer_options()` 这三个键集合。
-3. **「没有父项」时的基准值**：类型默认配置无法从 JSON 推出，需要在 schema 里一并导出每个键的默认值。
+2. **先把值当字符串处理**。类型信息只在 OrcaSlicer 的 `print_config_def` 里；导出一份 `schema.json` 可以补上类型、默认值、范围和界面文字（本项目在 M0.5 这样做过，M16 起不再实现）。
+3. **「没有父项」时的基准值**：类型默认配置无法从 JSON 推出，只能来自 OrcaSlicer 源码；不使用它时，整条链都没写的键就没有值。
 4. **保存时尽量减小 diff**：保留原有的键顺序、缩进和是否单元素数组的写法，这样提交到 Git 时 diff 最小。可以用 `serde_json` 的 `preserve_order` 特性，或者直接用 `IndexMap`。
 5. 读取时**容忍 BOM**，键名比较**不区分大小写**（和 `boost::iequals` 的行为一致）。
 6. 第一版兼容性计算只实现名单匹配和 6.2 的排除机制；条件表达式第二阶段再做（见 6.4）。

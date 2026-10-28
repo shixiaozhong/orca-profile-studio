@@ -25,10 +25,9 @@ OrcaSlicer 的加载语义以 [profile_format_spec.md](reference/profile_format_
 | M13 | ✅ | 新建、复制、修改、重命名、删除机型，同步清单与机器引用 | `95359a7` |
 | M14 | ✅ | 冗余覆盖值 info 检测、提到父项、未选子孙影响预览与整组撤销 | `7edab54` |
 | M15 | ✅ | 持续集成：GitHub Actions 上跑格式、lint、全部测试和真实数据回归 | `d64af19` |
-| M16 | 计划中 | 可选能力：工具只靠 profile 文件也完整可用，schema 改为外部文件并移出仓库 | |
-| M17 | 计划中 | 从 OrcaSlicer 源码生成 schema：提供 4 个源码文件即可启用，CI 恢复 schema 回归 | |
-| M18 | 计划中 | 打包成可双击启动的 macOS 应用，为 Windows 做好跨平台准备 | |
-| M19 | 计划中 | Windows 版：在 Windows 上编译、测试并打包成免安装 zip | |
+| M16 | ✅ | 移除 schema：工具只分析 profile 文件，删除内嵌的 schema.json 及依赖它的功能 | 待补 |
+| M17 | 计划中 | 打包成可双击启动的 macOS 应用，为 Windows 做好跨平台准备 | |
+| M18 | 计划中 | Windows 版：在 Windows 上编译、测试并打包成免安装 zip | |
 | — | 待定 | 和 Git 对比：工作区相对 HEAD 改了哪些预设、哪些键 | |
 | — | 暂缓 | 2D G-code 分层查看器 | |
 
@@ -62,6 +61,8 @@ M0.5 排在 M1 之后才做，编号沿用最初的规划。
 
 ### M0.5：配置项 schema
 
+> M16 起整体移除：schema、值校验、`handle_legacy` 移植和默认值层都已删除，以下为当时的记录。
+
 **关键设计决定**
 
 - **导出程序放在 OrcaSlicer 仓库里**：`src/dev-utils/Snapmaker_Orca_schema_export.cpp`，在 `personal/schema-export` 分支上。它必须链接 libslic3r 才能遍历 `print_config_def`。生成的 `schema.json` 复制到本仓库的 `crates/profile-core/schema/`，用 `include_str!` 内嵌，文件里记录生成时的 `source_commit`。
@@ -82,6 +83,8 @@ M0.5 排在 M1 之后才做，编号沿用最初的规划。
 
 ### M2：继承链视图
 
+> M16 起没有默认值层，类别 / 名称列改为只显示键名。
+
 **关键设计决定**
 
 - **`Repository::trace(id)`**：对每个键返回继承链上设置过它的所有层，离预设最近的在前，第一层就是最终值。这是界面「来源层」和「被覆盖的值」的数据来源，后续的 M4 对比也可以直接复用。
@@ -96,6 +99,8 @@ M0.5 排在 M1 之后才做，编号沿用最初的规划。
   - 点击触发订阅事件之后，要先 `run_until_parked`，再 `render_frame`，然后才能断言。
 
 ### M3：编辑表单
+
+> M16 起控件只按值的形态选择（单行、每行一项、多行），不再有勾选框和枚举下拉。
 
 **关键设计决定**
 
@@ -134,6 +139,8 @@ M0.5 排在 M1 之后才做，编号沿用最初的规划。
 
 ### M5：全局搜索和命令面板
 
+> M16 起配置项只按键名搜索。
+
 **关键设计决定**
 
 - **线性扫描，不建倒排索引**（`search.rs` 的 `SearchIndex`）：所有预设文件里写的值一共约 25 万个、7.5 MB 文本。索引只存小写副本，加载时在后台和 `Catalog` 一起构建；release 构建下建索引约 37 ms，每次查询 2–3 ms，所以每输入一个字符就同步搜一次，不需要后台查询。
@@ -150,6 +157,8 @@ M0.5 排在 M1 之后才做，编号沿用最初的规划。
 - 命令行也有 `profile-tool search <查询>`，输出三类结果和耗时。
 
 ### M6：校验结果面板和条件表达式
+
+> M16 起条件变量按值的文本推断类型，不再取 schema 默认值；与 OrcaSlicer 的对照仍为 0 处差异。
 
 **关键设计决定**
 
@@ -309,6 +318,8 @@ M0.5 排在 M1 之后才做，编号沿用最初的规划。
 
 ### M11：批量编辑
 
+> M16 起键列表来自 profile 实际写过的键，追加 / 移除元素对所有数组值开放，预览的新增问题列改为多余覆盖值。
+
 **范围**：对同类型的一组预设设置或删除一个键，追加或移除字符串数组的元素。可选的「提到父项」推后，不在本次实现范围内。
 
 **关键设计决定**
@@ -330,6 +341,8 @@ M0.5 排在 M1 之后才做，编号沿用最初的规划。
 5. 只选键和操作、不改输入时关闭窗口，不应出现丢弃确认；改了输入后关闭，应提示未应用的输入。
 
 ### M12：中文界面
+
+> M16 起移除了配置项中文术语（`.po` 读取、中文名称搜索、缺少翻译文件的提示）；界面文字和问题描述的中英文保留。
 
 **关键设计决定**
 
@@ -367,6 +380,8 @@ M0.5 排在 M1 之后才做，编号沿用最初的规划。
 
 ### M14：多余覆盖值检测与提到父项
 
+> M16 起只有不带 schema 的结果（56,926 项），Python 脚本的 schema 参数已删除。
+
 **关键设计决定**
 
 - **按当前编辑判断、不碰共享库**：Values 页的提示按父项当前（含未保存编辑）的最终值判断，避免照提示删除后最终值改变；有 schema 时只比较属于该类型的键。父项在 OrcaFilamentLibrary 时禁止提到父项，因为它被所有厂商的耗材共用。
@@ -383,6 +398,8 @@ M0.5 排在 M1 之后才做，编号沿用最初的规划。
 
 ### M15：持续集成（GitHub Actions）
 
+> M16 起去掉了 schema 相关检查，数据检出只取 `resources/profiles`。
+
 **范围**：仓库公开在 [shixiaozhong/orca-profile-studio](https://github.com/shixiaozhong/orca-profile-studio)，公开仓库使用 GitHub 的标准机器不限分钟数。`.github/workflows/ci.yml` 在推送到 `main`、PR 和手动触发时运行格式、lint、全部测试和真实数据回归。
 
 **关键设计决定**
@@ -391,86 +408,48 @@ M0.5 排在 M1 之后才做，编号沿用最初的规划。
 - **真实数据一定参与**：用普通 git 命令（而不是 `actions/checkout`，OrcaSlicer 树里的 `src/tiff` 子模块条目没有 `.gitmodules` 地址，会让它的收尾步骤失败）从公开的 [shixiaozhong/OrcaSlicer](https://github.com/shixiaozhong/OrcaSlicer) 用部分克隆和 sparse checkout 只取锁定提交的 `resources/profiles` 和 `localization/i18n/zh_CN`（约 81 MB，不下载约 1 GB 的完整仓库），按 `ORCA_COMMIT` 缓存。跑测试前先检查数据存在、提交正确、且与 `schema.json` 的 `source_commit` 一致，缺数据时直接失败，不会让真实数据测试悄悄跳过。锁定的提交只写在 workflow 的 `ORCA_COMMIT` 一处，升级数据时与 Rust 回归、Python 基线和 schema 一起改。
 - **独立统计核对**：`profile_format_stats.py --check` 用脚本内的固定基线核对统计，不从 Rust 程序或输入数据推导期望值；CI 在不带和带 schema 两种模式下各跑一次，不一致时退出码为 1。
 - **最低 Rust 版本按实测修正为 1.95**：原声明的 1.88 编译不了现有依赖（serde-saphyr / smol_str 要求 1.89，GPUI 的 `std::hint::cold_path` 要求 1.95）。保留依赖版本、改声明；MSRV 任务从 `Cargo.toml` 读取版本，在两平台上 `cargo check` 全部 targets，避免两处数字漂移。
-- **可复现、只读**：所有构建、lint 和测试都用 `--locked`；第三方 Action 固定到提交 SHA（已核对与版本标签一致）；依赖按系统和工具链缓存。CI 只读仓库（`contents: read`，不保留凭据），不推送也不发布产物。只取消 PR 上被新推送取代的运行，`main` 上的每个提交都有自己的结果。Windows 的编译和测试在 M19 加入。
+- **可复现、只读**：所有构建、lint 和测试都用 `--locked`；第三方 Action 固定到提交 SHA（已核对与版本标签一致）；依赖按系统和工具链缓存。CI 只读仓库（`contents: read`，不保留凭据），不推送也不发布产物。只取消 PR 上被新推送取代的运行，`main` 上的每个提交都有自己的结果。Windows 的编译和测试在 M18 加入。
 
 **验证**：本地在独立稀疏检出的锁定数据上，156 个 Rust 测试和两套 Python 统计通过；Rust 1.95 的 workspace 全 targets 检查通过。临时副本中加入孤立文件、指定缺失的数据目录或制造格式错误时，相关检查都返回失败。GitHub 托管机器上的首次运行在推送后查看。
 
 ---
 
+### M16：移除 schema
+
+**范围**：`schema.json` 是从 OrcaSlicer 源码导出的配置项"字典"（类型、默认值、取值规则、名称和说明）。把它编译进程序，等于让工具和某个 OrcaSlicer 版本强绑定，导出程序也只在 OrcaSlicer 的本地分支上。讨论过"改为可选的外部文件"和"从 OrcaSlicer 源码生成"之后，用户决定**整个项目不再使用 schema**：工具只分析 profile 文件本身，仓库里不放任何从 OrcaSlicer 导出或复制的文件。
+
+**移除的内容**
+- 数据和代码：`crates/profile-core/schema/`、`schema.rs`、`check.rs`（值校验）、`legacy.rs`（`handle_legacy` 的移植）、`po.rs`（`.po` 读取）；`Repository::load_with_schema` 和 `Origin::Default` 默认值层。
+- 依赖 schema 的问题类型：未知键、过时键、改名键、不属于该类型的键、标量写成数组、`nil`、数值 / 元素解析失败、枚举 / 布尔被替换、多余文本、超出范围，以及对应的 `schema_*` 回归测试和 Python 脚本的 schema 模式。
+- 界面上依赖 schema 的部分：配置项名称、类别、说明、单位和类型说明；勾选框和枚举下拉；"隐藏默认值"筛选；M12 的配置项中文名称和缺少翻译文件的提示。界面本身的中英文不受影响。
+- Codex 先做过一版"可选能力"（外部 schema / `.po`、能力面板、`--schema` / `ORCA_SCHEMA`），没有提交，按这次的决定整体放弃。
+
+**关键设计决定**
+
+- **最终值只算到 profile 文件**：整条继承链都没写的键不出现在 Values、对比和详情里，对比中一侧没有的键显示为"（缺失）"。`Edits::effective` 没有默认值兜底，批量编辑的"删除键"在没有父项提供值时显示为"（未设置）"。
+- **按键名展示**：Values 表只有键、值、来源三列，对比表是键、左右值、左右来源五列，都按键名排序；筛选和命令面板的配置项搜索只匹配键名。详情页的重点值以键名为标签。
+- **编辑控件按值的形态选择**：`ValueEditor` 自己从当前值推断：含换行的文本用多行输入框；其余单个字符串用单行输入框，数组每行一项。布尔和枚举都按普通文本编辑。
+- **批量编辑**：键列表是这一类预设（含未保存编辑）实际写过的键；预设元数据（`name`、`inherits` 等，`PresetMeta::is_key`）不能作为键。追加 / 移除元素对所有数组值开放，遇到不是数组的值时按预设报错。预览的"新增问题"列改为显示新出现的多余覆盖值（相对各自父项的当前编辑状态）。
+- **多余覆盖值（M14）**：只和父项的最终值比较，不再排除"不属于该类型"的键；回归数字是 **56,926**，Python 参考脚本独立得到同样的结果。
+- **兼容性条件的变量按文本推断类型（M6）**：整数按 int，带或不带 `%` 的数字按 double，其余按字符串；未设置的变量是空字符串；不带下标的数组如果所有元素相同，读作这个元素（OrcaSlicer 的单值 vector 就是这样被比较的）。布尔比较把 int 0/1 当作 false/true。用 `Snapmaker_Orca_compat_export` 在 OrcaSlicer `ba538f3bc1`（profile 数据与 `953509c23f` 相同）上重新对照：耗材 2906 项、工艺 2156 项，**0 处差异**。
+- **问题与键的关联**：`dangling-compatible-printer` 现在带键 `compatible_printers`，在问题面板里选中它会打开 Values 页并定位到这个键（原来这个用例靠已移除的值校验问题）。
+- **CI**：去掉 `source_commit` 一致性和带 schema 的统计核对，数据检出只取 `resources/profiles`。
+
+**验证**：143 个 Rust 测试（core 64、真实数据回归 8、studio 71）通过，clippy 无警告；Python 参考脚本 `--check` 通过；兼容性对照 0 处差异。
+
+---
+
 ## 后续阶段
 
-M0–M15 已完成。接下来依次是 M16：可选能力，schema 改为外部文件；M17：从 OrcaSlicer 源码生成 schema；M18：打包成 macOS 应用并做好跨平台准备；M19：Windows 版。「和 Git 对比」暂时待定，OrcaSlicer 升级检查自动化仍在「暂缓」；它们都不占用阶段编号。
+M0–M16 已完成。接下来依次是 M17：打包成 macOS 应用并做好跨平台准备；M18：Windows 版。「和 Git 对比」暂时待定，OrcaSlicer 升级检查自动化仍在「暂缓」；它们都不占用阶段编号。
 
-### M16：可选能力，schema 改为外部文件
-
-**场景**：`schema.json` 是从 OrcaSlicer 源码导出的配置项"字典"（类型、默认值、取值规则、名称和说明），profile 文件里没有这些信息。但把它编译进程序，等于让工具和某个 OrcaSlicer 版本强绑定，导出程序还在 OrcaSlicer 仓库的本地分支上，文件本身也适用 AGPL。用户决定：工具只靠 profile 文件就要完整可用；schema 和依赖它的功能做成**可选能力**，用户提供所需文件后才启用。
-
-**能力分层**
-
-| 能力 | 需要提供 | 带来什么 |
-|---|---|---|
-| 基础 | profiles 目录 | 浏览、继承、编辑、批量编辑、预设和机型管理、结构类问题 |
-| Schema | 一份 schema 文件（本阶段）；M17 起也可以只提供 OrcaSlicer 源码中的 4 个文件，由工具生成 | 默认值层、值校验（未知 / 过时 / 改名键、枚举、范围）、键属于哪一类、名称和说明、按类型选择编辑控件、按名称搜索、兼容性条件中的数值比较 |
-| 中文配置项名称 | `.po` 文件，**依赖 Schema** | 名称、类别、说明和枚举的中文 |
-
-**范围**
-- **移出仓库、不再内嵌**：删除 `crates/profile-core/schema/schema.json`、`crates/profile-core/schema/README.md` 和 `Schema::bundled()` / `include_str!`。来源和许可的说明改写进规格文档和 README。
-- **指定 schema 文件**：命令行 `--schema <文件>` 或环境变量 `ORCA_SCHEMA`；studio 在设置里记住路径。不自动到 OrcaSlicer 目录里寻找。
-- **能力面板**：studio 新增「能力」面板（也可从命令面板打开），逐项显示状态（已启用 / 未启用 / 已过期 / 出错）、需要哪些文件、当前来源（例如 schema 的 `source_commit`）。本阶段提供「选择 schema 文件…」「不使用 schema」和「选择 .po 文件…」；没有 schema 时，中文配置项名称显示为不可用并说明原因。
-- **没有 schema 时的行为**（有 schema 时与现在完全一致）：
-  - Values / 对比：名称列显示键名，类别按"未分类"；最终值只算到 profile 文件这一层，整条继承链都没写的键不显示；
-  - 编辑控件按当前值的形态选择（单值用单行输入框，数组每行一项），没有勾选框和枚举下拉；
-  - 问题面板只有结构类问题（清单、继承、重名、加载顺序），值校验、未知键、过时键、改名键关闭；
-  - 批量编辑的键列表改用 profile 里实际出现过的键，追加 / 移除元素对所有数组值开放，不再因缺少 schema 报错；
-  - 多余覆盖值只和父项比较，不考虑默认值，也不排除不属于该类型的键；
-  - 搜索只按键名；兼容性条件中的变量按字符串处理，数值大小比较可能和 OrcaSlicer 不一致，界面给出提示；
-  - 预设管理、机型管理不受影响。
-
-**设计要点**
-- core 已经区分 `Repository::load` 和 `load_with_schema`；本阶段把所有"假设一定有 schema"的地方改成按有无 schema 分别处理，并让 `Catalog`、界面和命令行从同一个可选的能力来源读取。
-- 单元测试改用一份手写的小型测试 schema（只包含测试用到的配置项，不从 OrcaSlicer 导出）；真实数据上的 schema 回归测试（`schema_*` 计数、带 schema 的 Python 统计）只在提供了 schema 文件时运行。
-- CI 去掉对内嵌 schema 的检查（`source_commit` 一致性、带 schema 的统计核对）。真实数据的 schema 回归暂时退出 CI，M17 恢复。
-- 现有的 `schema.json` 留在 git 历史里（`git show ae7d3e0:crates/profile-core/schema/schema.json`），作为 M17 生成器的对照基准。
-- `legacy.rs` 的旧键改名规则仍在代码里，与有无 schema 无关。
-
-**依赖**：M15 的 CI。
-
-**完成标准**：仓库里不再有从 OrcaSlicer 导出的文件；不指定 schema 时，命令行和 studio 的浏览、编辑、批量编辑、预设和机型管理都能正常使用，能力面板显示"未使用 schema"；指定 schema 文件后，行为和现在一致，真实数据的 schema 回归在本地通过；CI 通过；规格文档、README、AGENTS.md / CLAUDE.md 写明能力分层和 schema 的指定方法。
-
-### M17：从 OrcaSlicer 源码生成 schema
-
-**场景**：M16 之后 schema 只能由用户提供现成的文件。本阶段让工具直接解析 OrcaSlicer 的源码文件生成 schema，不再需要编译 OrcaSlicer、也不再需要 OrcaSlicer 仓库里的 C++ 导出程序。
-
-**需要提供的文件**（可以指定 OrcaSlicer 源码目录按默认路径寻找，也可以逐个指定）
-
-| 文件 | 提供什么 |
-|---|---|
-| `src/libslic3r/PrintConfig.cpp` | 配置项定义：类型、名称、说明、类别、默认值、范围、枚举值和名称、模式、单位；枚举映射表（`s_keys_map_*`） |
-| `src/libslic3r/PrintConfig.hpp` | 枚举类型声明和常量，用来把枚举默认值转成字符串 |
-| `src/libslic3r/Preset.cpp` | `s_Preset_print_options` / `filament_options` / `printer_options` / `machine_limits_options`：每个键属于哪一类预设 |
-| `src/libslic3r/PresetBundle.cpp` | 构造函数里对默认预设的调整（例如补上 `print_settings_id`、`filament_settings_id` 设为 `[""]`、`null_nullables()`） |
-
-**范围**
-- **生成器**：用 Rust 写在 profile-core 里（不依赖 Python），只解析 `PrintConfigDef` 部分，按 OrcaSlicer 的序列化规则输出默认值。少数解析不了的情况（个别宏、循环、引用其他文件的常量、Snapmaker 新增的字段）放进本仓库的覆盖表，每一项注明原因，不写完整的 C++ 解析器。
-- **命令行**：`profile-tool schema generate --orca <源码目录> [--print-config-cpp …] -o schema.json`。
-- **能力面板**：新增「从 OrcaSlicer 源码生成…」，在后台生成，保存到应用数据目录后启用。记下 4 个源码文件的内容指纹，源码变化时提示重新生成。
-
-**设计要点**
-- **验收基准**：用锁定提交 `953509c23f` 的源码生成，结果必须和 git 历史里那份由 C++ 导出程序生成的 `schema.json` 一致（逐项比较，记录并说明任何允许的差异）。
-- **CI 恢复 schema 回归**：稀疏检出时多取这 4 个源码文件，生成 schema 后运行 `schema_*` 回归测试和带 schema 的 Python 统计。
-- 生成器依赖 OrcaSlicer 源码的写法；写法变化时，对比结果会直接指出差异所在，由生成器或覆盖表跟进。C++ 导出程序生成 schema 的任务随之退役；兼容性对照工具（M6）仍在 OrcaSlicer 的 `personal/schema-export` 分支上。
-
-**依赖**：M16 的可选能力。
-
-**完成标准**：在锁定提交上生成的 schema 与基准一致；命令行和能力面板都能生成并启用 schema；CI 中真实数据的 schema 回归恢复并通过；文档写明需要的文件和生成方法。
-
-### M18：打包成 macOS 应用，做好跨平台准备
+### M17：打包成 macOS 应用，做好跨平台准备
 
 **范围**
 - 生成可以双击启动的 `Orca Profile Studio.app`：应用图标、`Info.plist`（Bundle ID 沿用代码里的 `org.orca-profile-studio.app`、版本号取自 `Cargo.toml`）、release 构建。脚本可选 `--install`，把 `.app` 复制到 `~/Applications/`。
 - 不带参数启动时沿用现在的规则：先用上次的目录，再找旁边的 OrcaSlicer 检出；从 Finder 启动没有 `ORCA_PROFILES_DIR` 时也能正常工作。
 - 系统通知能可靠送达（M9 记录过：普通 `cargo run` 不保证投递，需要受信任的 `.app`）。
-- 为 M19 的 Windows 版做好在 Mac 上就能完成和测试的准备：
+- 为 M18 的 Windows 版做好在 Mac 上就能完成和测试的准备：
   - 快捷键改用 GPUI 的 `secondary-` 写法（macOS 上是 Cmd，其他平台是 Ctrl），菜单和退出处理不再假设只有 macOS；
   - 设置文件位置按平台选择：macOS 用 `~/Library/Application Support`，Windows 用 `%APPDATA%`，其他平台用 XDG；
   - 清单里的 `sub_path` 读写一律用 `/`，路径的比较和查重不依赖字符串形式的分隔符，写回清单时绝不出现 `\`。
@@ -485,7 +464,7 @@ M0–M15 已完成。接下来依次是 M16：可选能力，schema 改为外部
 
 **完成标准**：脚本在本机生成 `.app`，双击能打开上次的 profiles 目录，设置和中文翻译正常，系统通知能显示；快捷键、设置路径和 `sub_path` 的改动有测试；README 写明打包和启动方法。
 
-### M19：Windows 版
+### M18：Windows 版
 
 **范围**
 - 在 CI 的 Windows 机器和用户自己的 Windows 机器上编译 release 版，跑通全部测试（包括真实数据回归）。
@@ -501,7 +480,7 @@ M0–M15 已完成。接下来依次是 M16：可选能力，schema 改为外部
 - 安装程序（MSI 或 Inno Setup）、代码签名和自动更新暂不做。
 - 我无法直接操作用户的 Windows 机器：界面验证由用户运行，把输出或报错交给我分析和修改；编译和测试的问题优先从 CI 日志排查。
 
-**依赖**：M15 的 CI，M18 的跨平台准备。
+**依赖**：M15 的 CI，M17 的跨平台准备。
 
 **完成标准**：CI 的 Windows 任务和用户的 Windows 机器上 `cargo test --workspace` 都全部通过；解压 zip 后双击 exe 能打开 profiles 目录，编辑、保存、预设和机型管理、中文界面都能正常使用；保存后 `git diff` 里没有因为路径分隔符或换行产生的差异；README 写明 Windows 的编译和使用方法。
 
@@ -528,8 +507,8 @@ M0–M15 已完成。接下来依次是 M16：可选能力，schema 改为外部
 ## 暂缓
 
 - **2D G-code 分层查看器**：练习 GPUI 自定义绘制用的扩展项，和 profile 维护关系不大。设想：在后台解析 G0–G3 指令和换层标记（`;LAYER_CHANGE` 或 Z 值变化），用 GPUI 的 canvas 和 path 逐层绘制，大文件按层分块加载。
-- **OrcaSlicer 升级检查自动化**（用户决定先往后放）：用一条命令完成重新导出 schema 并列出配置项变化、跑兼容性对照和回归测试、提示 `handle_legacy` 相对锁定提交是否变化，只输出报告，不自动修改，也不自动切换 OrcaSlicer 的分支。目前本地 `personal/notes` 与锁定的 `953509c23f` 一致，按「维护约定」手工完成即可。
-- **导出工具合入 `personal/notes`**：schema 和兼容性两个导出工具目前只在 OrcaSlicer 的 `personal/schema-export` 分支上。
+- **OrcaSlicer 升级检查自动化**（用户决定先往后放）：用一条命令完成兼容性对照和回归测试，只输出报告，不自动修改，也不自动切换 OrcaSlicer 的分支。目前本地 `personal/notes` 与锁定的 `953509c23f` 一致，按「维护约定」手工完成即可。
+- **导出工具合入 `personal/notes`**：兼容性导出工具目前只在 OrcaSlicer 的 `personal/schema-export` 分支上（同一分支上的 schema 导出程序自 M16 起不再使用）。
 
 ---
 
@@ -545,7 +524,6 @@ M0–M15 已完成。接下来依次是 M16：可选能力，schema 改为外部
 - **验收**：用户提交一个阶段就算验收通过，不另设「待人工验收」状态；阶段的提交里直接标 ✅。
 - **每完成一个阶段**：把它移到「已完成」，补上关键设计决定，同时更新总览表，这些改动和代码放在同一个提交里。提交标题带上阶段号（如 `feat: … (M10)`）。提交不能包含自己的提交号（amend 会改变它），所以总览表的「提交」列先写「待补」，等下一个本来就要改路线图的提交顺手补上（用 `git log --grep '(M10)'` 查），不为补提交号单独提交。
 - **OrcaSlicer 升级时**：
-  - 重新生成 `schema.json`（命令见 [AGENTS.md](../AGENTS.md)）；
-  - 对照新的 C++ 代码更新 `legacy.rs`；
-  - 更新回归测试里的数字。
+  - 更新回归测试和 Python 参考脚本里的数字，以及 CI 的 `ORCA_COMMIT`；
+  - 用兼容性导出工具重新对照（命令见 [AGENTS.md](../AGENTS.md)）。
 - **涉及 OrcaSlicer 仓库的工作**：比如改导出程序、导出兼容性表，动手前都需要先和用户确认。

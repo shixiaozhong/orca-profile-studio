@@ -1,8 +1,7 @@
 """Simulate Orca's system-profile loading rules over resources/profiles and print statistics.
 
 Reference implementation for docs/reference/profile_format_spec.md.
-Usage: python3 -I docs/reference/profile_format_stats.py resources/profiles [schema.json] [--check]
-The optional schema supplies defaults for redundant-override detection only.
+Usage: python3 -I docs/reference/profile_format_stats.py resources/profiles [--check]
 --check fails when counts differ from the real-data regression tests' baseline.
 """
 import argparse
@@ -13,7 +12,6 @@ import sys
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("profiles")
-parser.add_argument("schema", nargs="?")
 parser.add_argument("--check", action="store_true")
 args = parser.parse_args()
 ROOT = args.profiles
@@ -64,7 +62,6 @@ def lib_manifest(vdir):
     return items
 
 
-defaults = load(args.schema)["default_presets"] if args.schema else {}
 library_values = {}
 
 vendors = sorted(f[:-5] for f in os.listdir(ROOT) if f.endswith(".json") and f != "blacklist.json")
@@ -147,16 +144,11 @@ for v in vendors:
                     continue
             else:
                 depth = 0
-            inherited = (local_values.get(par, library_values.get(par, {})) if par
-                         else defaults.get(typ, {}).get("values", {}))
+            inherited = local_values.get(par, library_values.get(par, {})) if par else {}
             own = {k: value for k, value in d.items() if k.lower() not in META
                    and (isinstance(value, str) or (isinstance(value, list) and all(isinstance(x, str) for x in value)))}
-            kind_keys = defaults.get(typ, {}).get("values", {})
             if par:
                 for key, value in own.items():
-                    # With a schema, keys outside the kind are dropped by OrcaSlicer, not inherited.
-                    if defaults and key not in kind_keys:
-                        continue
                     if key in inherited and type(value) is type(inherited[key]) and value == inherited[key]:
                         issues["redundant_override"].append(f"{v}/{sub}: {key}")
             effective = {**inherited, **own}
@@ -246,7 +238,7 @@ if args.check:
         "issues": {
             "list_name_vs_file_name": 6,
             "orphan_json_not_in_manifest": 457,
-            "redundant_override": 73253 if args.schema else 56926,
+            "redundant_override": 56926,
         },
     }
     actual = {

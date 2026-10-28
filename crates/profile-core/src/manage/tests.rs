@@ -1,7 +1,7 @@
 use std::fs;
 
 use super::{ManagementPlan, NameRule, PresetDraft};
-use crate::{Document, PresetKind, RawValue, Repository, Schema, Severity};
+use crate::{Document, PresetKind, RawValue, Repository, Severity};
 
 fn fixture() -> (tempfile::TempDir, Repository) {
     let dir = tempfile::tempdir().unwrap();
@@ -16,7 +16,7 @@ fn fixture() -> (tempfile::TempDir, Repository) {
     )
     .unwrap();
     fs::write(dir.path().join("Acme/machine/a.json"), r#"{"TYPE":"machine", "NAME":"A 0.4", "from":"system", "instantiation":"true", "printer_model":"A", "printer_variant":"0.4", "nozzle_diameter":["0.4"]}"#).unwrap();
-    let repo = Repository::load_with_schema(dir.path(), Schema::bundled()).unwrap();
+    let repo = Repository::load(dir.path()).unwrap();
     assert!(!repo.issues().iter().any(|i| i.severity() >= Severity::Error));
     (dir, repo)
 }
@@ -44,7 +44,7 @@ fn copy_group_keeps_parent_order_and_only_changes_requested_values() {
     assert!(plan.is_ready(), "{:?}", plan.notices());
     assert!(!dir.path().join("Acme/process/child02.json").exists(), "preview is readonly");
     plan.apply().unwrap();
-    let loaded = Repository::load_with_schema(dir.path(), Schema::bundled()).unwrap();
+    let loaded = Repository::load(dir.path()).unwrap();
     clean(&loaded);
     let new_child = loaded.find(PresetKind::Process, "child 0.2")[0];
     let new_base = loaded.find(PresetKind::Process, "base 0.2")[0];
@@ -90,8 +90,6 @@ fn creates_new_preset_from_parent_and_rejects_invalid_values_and_collisions() {
     .unwrap();
     assert!(plan.is_ready(), "{:?}", plan.notices());
     for draft in [
-        PresetDraft::new(vendor, PresetKind::Process, "bad", "bad.json")
-            .with_value("wall_loops", RawValue::Str("bad".into())),
         PresetDraft::copy(&repo, base, "base 0.4", "other.json"),
         PresetDraft::copy(&repo, base, "other", "base.json"),
         PresetDraft::copy(&repo, base, "other", "../escape.json"),
@@ -109,7 +107,7 @@ fn rename_updates_machine_references_and_preserves_unrelated_json_bytes() {
     let plan = ManagementPlan::rename(&repo, printer, "New A 0.4", "new-a.json", true).unwrap();
     assert!(plan.is_ready(), "{:?}", plan.notices());
     plan.apply().unwrap();
-    let loaded = Repository::load_with_schema(dir.path(), Schema::bundled()).unwrap();
+    let loaded = Repository::load(dir.path()).unwrap();
     clean(&loaded);
     assert!(!dir.path().join("Acme/machine/a.json").exists());
     let renamed = fs::read_to_string(dir.path().join("Acme/machine/new-a.json")).unwrap();
@@ -129,7 +127,7 @@ fn rename_parent_updates_inherits_and_deletion_requires_descendants() {
     let plan = ManagementPlan::rename(&repo, base, "base renamed", "newbase.json", false).unwrap();
     assert!(plan.is_ready(), "{:?}", plan.notices());
     plan.apply().unwrap();
-    let repo = Repository::load_with_schema(dir.path(), Schema::bundled()).unwrap();
+    let repo = Repository::load(dir.path()).unwrap();
     clean(&repo);
     let child = repo.find(PresetKind::Process, "child 0.4")[0];
     assert_eq!(repo.preset(child).meta.inherits(), Some("base renamed"));
@@ -137,7 +135,7 @@ fn rename_parent_updates_inherits_and_deletion_requires_descendants() {
     let plan = ManagementPlan::delete(&repo, &[base, child]).unwrap();
     assert!(plan.is_ready());
     plan.apply().unwrap();
-    clean(&Repository::load_with_schema(dir.path(), Schema::bundled()).unwrap());
+    clean(&Repository::load(dir.path()).unwrap());
 }
 
 #[test]
@@ -182,7 +180,7 @@ fn deletion_removes_name_list_references_and_copy_can_rewrite_arrays() {
     let plan = ManagementPlan::delete(&repo, &[printer, child]).unwrap();
     assert!(plan.is_ready(), "{:?}", plan.notices());
     plan.apply().unwrap();
-    let loaded = Repository::load_with_schema(dir.path(), Schema::bundled()).unwrap();
+    let loaded = Repository::load(dir.path()).unwrap();
     clean(&loaded);
     assert!(loaded.find(PresetKind::Process, "child 0.4").is_empty());
     assert!(loaded.find(PresetKind::Machine, "A 0.4").is_empty());
@@ -191,11 +189,11 @@ fn deletion_removes_name_list_references_and_copy_can_rewrite_arrays() {
 #[test]
 fn rename_keeps_existing_issues_and_allows_case_only_file_renames() {
     let (dir, _) = fixture();
-    // An unknown key is an existing warning of the child, unrelated to its name.
+    // A dangling printer name is an existing warning of the child, unrelated to its name.
     let path = dir.path().join("Acme/process/child.json");
-    let text = fs::read_to_string(&path).unwrap().replace("\"setting_id\"", "\"not_a_key\":\"1\", \"setting_id\"");
+    let text = fs::read_to_string(&path).unwrap().replace("[ \"A 0.4\" ]", "[ \"A 0.4\", \"Gone printer\" ]");
     fs::write(&path, text).unwrap();
-    let repo = Repository::load_with_schema(dir.path(), Schema::bundled()).unwrap();
+    let repo = Repository::load(dir.path()).unwrap();
     let child = repo.find(PresetKind::Process, "child 0.4")[0];
     assert!(
         repo.issues().iter().any(|issue| issue.path.ends_with("child.json") && issue.severity() == Severity::Warning)
@@ -203,7 +201,7 @@ fn rename_keeps_existing_issues_and_allows_case_only_file_renames() {
     let plan = ManagementPlan::rename(&repo, child, "child 0.4", "Child.json", false).unwrap();
     assert!(plan.is_ready(), "{:?}", plan.notices());
     assert!(
-        plan.notices().iter().all(|notice| !notice.message().contains("not_a_key")),
+        plan.notices().iter().all(|notice| !notice.message().contains("Gone printer")),
         "an existing warning is not reported as new: {:?}",
         plan.notices()
     );
@@ -212,7 +210,7 @@ fn rename_keeps_existing_issues_and_allows_case_only_file_renames() {
         fs::read_dir(dir.path().join("Acme/process")).unwrap().map(|e| e.unwrap().file_name()).collect();
     assert!(names.iter().any(|name| name == "Child.json"), "{names:?}");
     assert!(!names.iter().any(|name| name == "child.json"), "{names:?}");
-    clean(&Repository::load_with_schema(dir.path(), Schema::bundled()).unwrap());
+    clean(&Repository::load(dir.path()).unwrap());
 }
 
 #[test]
@@ -243,7 +241,7 @@ fn copying_library_and_vendor_parents_preserves_cross_vendor_inheritance() {
         .array_insert("filament_list", 0, &serde_json::json!({"name":"Vendor PLA","sub_path":"filament/child.json"}))
         .unwrap();
     fs::write(dir.path().join("Acme.json"), manifest.into_text()).unwrap();
-    let repo = Repository::load_with_schema(dir.path(), Schema::bundled()).unwrap();
+    let repo = Repository::load(dir.path()).unwrap();
     clean(&repo);
     let base = repo.find(PresetKind::Filament, "Library base")[0];
     let child = repo.find(PresetKind::Filament, "Vendor PLA")[0];
@@ -258,7 +256,7 @@ fn copying_library_and_vendor_parents_preserves_cross_vendor_inheritance() {
     .unwrap();
     assert!(plan.is_ready(), "{:?}", plan.notices());
     plan.apply().unwrap();
-    let repo = Repository::load_with_schema(dir.path(), Schema::bundled()).unwrap();
+    let repo = Repository::load(dir.path()).unwrap();
     clean(&repo);
     let base = repo.find(PresetKind::Filament, "Library base copy")[0];
     let child = repo.find(PresetKind::Filament, "Vendor PLA copy")[0];
@@ -299,11 +297,11 @@ fn rename_and_delete_update_scalar_defaults_and_model_material_lists() {
     let mut doc = Document::parse(fs::read_to_string(&model).unwrap()).unwrap();
     doc.set("default_materials", &RawValue::Str("Acme PLA;Other material".into()));
     fs::write(&model, doc.into_text()).unwrap();
-    let repo = Repository::load_with_schema(dir.path(), Schema::bundled()).unwrap();
+    let repo = Repository::load(dir.path()).unwrap();
     clean(&repo);
     let child = repo.find(PresetKind::Process, "child 0.4")[0];
     ManagementPlan::rename(&repo, child, "new process", "new-process.json", false).unwrap().apply().unwrap();
-    let repo = Repository::load_with_schema(dir.path(), Schema::bundled()).unwrap();
+    let repo = Repository::load(dir.path()).unwrap();
     assert_eq!(
         repo.lookup_scalar(repo.find(PresetKind::Machine, "A 0.4")[0], "default_print_profile"),
         Some("new process")
@@ -312,12 +310,12 @@ fn rename_and_delete_update_scalar_defaults_and_model_material_lists() {
     ManagementPlan::rename(&repo, filament, "Renamed PLA", "renamed-pla.json", false).unwrap().apply().unwrap();
     let doc = Document::parse(fs::read_to_string(&model).unwrap()).unwrap();
     assert_eq!(doc.value("default_materials").unwrap(), "Renamed PLA;Other material");
-    let repo = Repository::load_with_schema(dir.path(), Schema::bundled()).unwrap();
+    let repo = Repository::load(dir.path()).unwrap();
     let filament = repo.find(PresetKind::Filament, "Renamed PLA")[0];
     ManagementPlan::delete(&repo, &[filament]).unwrap().apply().unwrap();
     let doc = Document::parse(fs::read_to_string(&model).unwrap()).unwrap();
     assert_eq!(doc.value("default_materials").unwrap(), "Other material");
-    clean(&Repository::load_with_schema(dir.path(), Schema::bundled()).unwrap());
+    clean(&Repository::load(dir.path()).unwrap());
 }
 
 #[cfg(unix)]

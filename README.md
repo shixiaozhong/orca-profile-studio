@@ -4,11 +4,11 @@
 
 OrcaSlicer 系统配置文件（`resources/profiles`）的浏览、校验与编辑工具，也是一个 GPUI 练手项目。
 
-> 这是个人维护的非官方工具，与 OrcaSlicer 项目、SoftFever 和 Snapmaker 均无隶属关系，也未获得它们的认可。内嵌的 `crates/profile-core/schema/schema.json` 导出自 OrcaSlicer 源码，适用 OrcaSlicer 的 GNU AGPL v3 许可，来源说明见 [crates/profile-core/schema/README.md](crates/profile-core/schema/README.md)。本项目其余代码尚未选定 license。
+> 这是个人维护的非官方工具，与 OrcaSlicer 项目、SoftFever 和 Snapmaker 均无隶属关系，也未获得它们的认可。仓库里没有从 OrcaSlicer 导出或复制的文件，工具只读取用户指定目录里的 profile 文件。本项目尚未选定 license。
 
-目前完成了 M0 到 M15：
+目前完成了 M0 到 M16：
 - M0：不依赖界面的 core 库，加一个命令行工具；
-- M0.5：从 OrcaSlicer 导出的配置项 schema，用来校验参数值、补全默认值；
+- M0.5：从 OrcaSlicer 导出的配置项 schema（已在 M16 中移除）；
 - M1：用 gpui-kit 写的桌面浏览器；
 - M2：继承链视图，列出预设每个键的最终值和来源层；
 - M3：在界面里编辑预设的值，支持撤销和重做，保存时只改动变化的那几行；
@@ -20,17 +20,17 @@ OrcaSlicer 系统配置文件（`resources/profiles`）的浏览、校验与编�
 - M9：按 Design Guides 审查界面，修正交互和错误反馈，关闭窗口和退出应用前保护未保存的编辑；
 - M10：新建、复制、批量复制、重命名、删除预设，同步厂商清单；
 - M11：批量设置或删除键、追加或移除字符串数组元素，逐预设预览，整组撤销和重做；
-- M12：中英文界面、配置项术语和问题描述、中文搜索，以及保留编辑状态的语言切换；
+- M12：中英文界面和问题描述，以及保留编辑状态的语言切换；
 - M13：机型的新建、复制、修改、重命名和删除，同步厂商清单与机器预设引用；
 - M14：检测与继承值相同的覆盖值，将兄弟预设的共同值提到父项，预览所有受影响子孙；
-- M15：GitHub Actions 持续集成，在 Linux 和 macOS 上跑格式、lint、全部测试和真实数据回归。
+- M15：GitHub Actions 持续集成，在 Linux 和 macOS 上跑格式、lint、全部测试和真实数据回归；
+- M16：移除 schema，工具只分析 profile 文件本身。
 
 ## 结构
 
 ```
 crates/
 ├── profile-core/    # 加载、继承解析、校验；不依赖任何 GUI
-│   └── schema/      # 从 OrcaSlicer 导出的 schema.json，编译时内嵌
 ├── profile-tool/    # 命令行：stats / check / resolve
 └── profile-studio/  # gpui-kit 桌面应用
 docs/roadmap.md      # 开发路线图
@@ -55,18 +55,18 @@ profiles 目录按以下顺序确定：
 界面说明：
 - **左侧导航树**：厂商 → 机型（→ 该机型的打印机预设）、耗材、工艺、模板。树是虚拟化的，只渲染可见的行。有 warning 及以上级别问题的预设，行尾会显示警告图标。
 - **右侧详情**：选中厂商、机型或预设后，显示文件信息、继承链、关键字段的最终值，以及该项的校验问题。
-- **预设的 Values 页**：表格列出预设的全部键，列有类别、配置项名称、键名、最终值（带单位）和来源层（本文件、第 n 层祖先或 schema 默认值）。
-  - 可以按键名、名称或类别搜索，可以隐藏默认值，或只看本文件设置的键；点列头可以排序。
-  - 选中一行，下方会列出继承链上设置过这个键的每一层和它的值，被覆盖的值显示为删除线。同时显示配置项说明、类型、取值范围和相关的校验问题。
+- **预设的 Values 页**：表格列出继承链上的文件写过的全部键，列有键名、最终值和来源层（本文件或第 n 层祖先）。整条链都没写的键不显示，它们的默认值在 OrcaSlicer 源码里，本工具不读取。
+  - 可以按键名搜索，或只看本文件设置的键；点列头可以排序。
+  - 选中一行，下方会列出继承链上设置过这个键的每一层和它的值，被覆盖的值显示为删除线，以及相关的问题（如与继承值相同的覆盖值）。
 - **编辑**：在 Values 页选中一行就可以修改预设自己的值；继承来的值点「Override」后再修改，「Reset to inherited」删掉本文件的值、恢复继承。
-  - 控件按类型选择：bool 是复选框，枚举是下拉框，数组在多行文本框里一行一个元素，G-code 原样编辑。
+  - 控件按值的形态选择：单个字符串用单行输入框，数组在多行文本框里一行一个元素，含换行的文本（如 G-code）原样编辑。值不按 OrcaSlicer 的类型校验。
   - 修改过的键和预设会标上铅笔图标；⌘Z / ⇧⌘Z 撤销和重做，⌘S 或「Save…」打开保存预览对话框，Enter 确认后才写盘，Escape 取消；仅保存已经 Apply 的编辑。
   - 保存时只替换变化的值，文件的缩进、数组写法、BOM 和末尾换行都保持原样；如果文件在加载后被外部改过，会拒绝保存。
   - 保存后在后台自动刷新，继承这个预设的其他预设（包括跨厂商继承公共耗材库的预设）、搜索、问题和兼容性一起更新。Reload 同样保留未保存编辑、撤销/重做历史、当前选中项、标签页和 Values 筛选。
   - 有编辑或历史记录的文件被外部改动、删除或无法加载时，会暂停数据替换，保留旧视图和所有编辑，并在窗口中提示。点「Review files…」查看具体文件；可以恢复磁盘文件后重试 Reload，也可以明确放弃这些文件的编辑和历史、采用磁盘版本，其他文件的编辑仍保留。Open 先选择目录，再明确确认是否丢弃当前编辑；取消选择或取消确认都保留内容。
 - **预设对比**：在 Values 页点「Compare with…」，搜索并选择另一个同类型预设，支持跨厂商和模板。
   - 左右并排列出最终值和来源，默认只显示差异；关闭「Only differences」也能查看值相同、来源不同的键。
-  - 默认按类别和名称排列，可以按键名、名称、类别搜索，或点击列头排序图标排序；选中一行后，下方显示两边的继承层。
+  - 默认按键名排列，可以按键名搜索，或点击列头排序图标排序；选中一行后，下方显示两边的继承层。一边没有写这个键时显示为「(missing)」。
   - 对比包含两边各自的编辑会话，未保存的修改在标题中标明；祖先值与 Values 页一致，使用最近一次加载的快照，保存祖先后自动刷新。刷新保留对比对象、筛选、排序和选中的键。
   - 按 `RawValue` 比较，字符串与数组、数组顺序、数值的不同字符串写法均计为差异；数组保留方括号显示，缺失值显示为 `(missing)`。
   - 对比页只读，点「Back to values」返回后保留原有的编辑、筛选和选择。
@@ -81,9 +81,9 @@ profiles 目录按以下顺序确定：
   - 先预览，Enter 确认后整批写入，失败回滚。Reset input 清除未应用输入；返回浏览器、切换语言或 Reload 会保留输入，来源变化时需重置后重新预览。
   - 新建机型后，可继续用批量复制创建机器预设，再用批量编辑追加兼容列表。
 - **批量编辑**（M11）：工具栏或 ⌘K 的「Batch edit」打开独立视图。
-  - 按类型、厂商、搜索、机型、问题代码筛选，勾选同类型预设，选择键与操作：Set value、Remove key (inherit)、Add item、Remove item。
-  - 元素操作适用于字符串数组（如 `compatible_printers`）；保留每个预设自己列表中的其他元素，已有的元素不重复追加。继承来的列表需要修改时建立本地覆盖，预览会明确标出；同时选中的父项改完后子项已经继承到目标值时跳过，不写多余的覆盖值。Set value 的输入从第一个选中预设的当前值开始。
-  - Preview 展示前后值、来源、新增 schema 问题及受影响子孙数量；点预设名查看完整详情。Apply batch 只修改编辑会话，Save… 确认后才写盘。改变输入、筛选选择、编辑或 Reload 后须重新预览。
+  - 按类型、厂商、搜索、机型、问题代码筛选，勾选同类型预设，选择键与操作：Set value、Remove key (inherit)、Add item、Remove item。可选的键是这一类预设实际写过的键。
+  - 元素操作适用于数组值（如 `compatible_printers`）；保留每个预设自己列表中的其他元素，已有的元素不重复追加。继承来的列表需要修改时建立本地覆盖，预览会明确标出；同时选中的父项改完后子项已经继承到目标值时跳过，不写多余的覆盖值。Set value 的输入从第一个选中预设的当前值开始。
+  - Preview 展示前后值、来源、新出现的多余覆盖值及受影响子孙数量；点预设名查看完整详情。Apply batch 只修改编辑会话，Save… 确认后才写盘。改变输入、筛选选择、编辑或 Reload 后须重新预览。
   - Undo batch / Redo batch 或 ⌘Z / ⇧⌘Z 整组操作；在 Values 页撤销属于批次的一步时也会整组撤销。成员有后续单独编辑时，先撤销这些后续编辑。
   - 返回浏览器后保留输入和编辑；Reset input 清除尚未应用的输入。保存沿用现有逐文件流程，部分失败会报告结果并刷新已保存的文件。
 - **提到父项**（M14）：在批量编辑中选至少两个同父项、同类型的预设，选择键和「提到父项 / Promote to parent」。所选预设必须各自写有完全相同的值。
@@ -100,8 +100,7 @@ profiles 目录按以下顺序确定：
   - 也可以运行命令：重新加载、打开目录、切换 Overview / Values。
   - 只搜已加载的数据；保存后自动更新搜索索引，未保存的编辑不参与搜索。
 - **语言**：默认跟随系统，⌘K 中搜索「Language」或「语言」可选择 English、中文或跟随系统，所有窗口同步切换并保存偏好。
-  - 应用文案和组件自带文字支持中英文；配置项名称、说明、类别、单位和枚举标签从 OrcaSlicer 的 PO 文件读取。键名和实际保存的值保持原样，中文名称与英文键名都可搜索。
-  - 默认读取 `<profiles>/../../localization/i18n/zh_CN/*_zh_CN.po`。打开临时 profiles 副本时，可用 `ORCA_LOCALIZATION_DIR` 指定 `localization/i18n` 目录，然后 Reload。文件不存在、读取失败或候选不唯一时，配置项显示英文并提示；单个条目缺翻译时直接显示原文。
+  - 应用文案、问题描述和组件自带文字支持中英文；配置项始终显示键名，保存的值保持原样。
   - 切换语言保留未保存编辑、未应用文本、筛选与选择；批量预览需要重新生成。已显示的状态消息和底层技术错误详情可能保留原文。
   - 应用文案的中英对照在 [`locales/app.yml`](crates/profile-studio/locales/app.yml)，不需要修改代码即可调整译文。
 - **主题和窗口**：在 ⌘K 里运行「Theme: System / Light / Dark」切换主题，默认跟随系统。⌘N 或 File 菜单的「New Window」打开一个独立的新窗口，加载上次的目录。
@@ -159,32 +158,13 @@ cargo run --release -p profile-tool -- compat "0.07mm DETAIL @CORE One 0.25"
 
 `compat` 列出一个耗材或工艺兼容的打印机，以及每台兼容的原因（条件、列表或没有限制）；对打印机则列出它兼容的工艺和耗材。
 
-`compat-check <表>` 拿 OrcaSlicer 导出的兼容性表（`Snapmaker_Orca_compat_export`，命令见 `AGENTS.md`）逐项对照。在 OrcaSlicer `953509c23f` 的数据上，约 400 万个（预设，打印机）组合全部一致。
+`compat-check <表>` 拿 OrcaSlicer 导出的兼容性表（`Snapmaker_Orca_compat_export`，命令见 `AGENTS.md`）逐项对照。条件里的变量按值的文本推断类型（整数、数字或字符串）；在 OrcaSlicer `953509c23f` 的数据上，约 400 万个（预设，打印机）组合全部一致。
 
-`resolve` 默认只列出继承链上的文件设置过的值；加 `--defaults` 会把来自 schema 默认值的键也列出来（标记为 `[d]`）。
+`resolve` 列出继承链上的文件设置过的值。
 
-## Schema
+## 不使用 schema
 
-配置文件里只有字符串，各配置项的类型、默认值、范围、枚举值和界面文字都定义在 OrcaSlicer 的 C++ 代码里（`print_config_def`）。`crates/profile-core/schema/schema.json` 是从 OrcaSlicer 导出的这份定义，内容包括：
-- 每个配置项的类型、默认值、范围、枚举值、label、tooltip、类别和模式；
-- 三类默认预设的完整内容，也就是没有 `inherits` 的预设的起点；
-- `Preset::print_options()` 等键列表。
-
-命令行和桌面应用默认使用内嵌的 schema：
-- `--schema <文件>` 换成别的 schema；
-- `--no-schema` 不使用 schema。
-
-使用 schema 时会多做这些检查：
-- 未知键、过时键、改了名的旧键；
-- 不属于该类型的键；
-- 数值解析失败或后面带多余文字；
-- 枚举值和布尔值不合法；
-- 标量写成了数组，非 nullable 的数组里出现 `nil`；
-- 超出界面上的取值范围。
-
-严重程度按 OrcaSlicer 实际的加载行为来定，见 `crates/profile-core/src/issue.rs`。
-
-导出程序是 OrcaSlicer 仓库里的 `src/dev-utils/Snapmaker_Orca_schema_export.cpp`（`personal/schema-export` 分支）。OrcaSlicer 更新后按 `AGENTS.md` 里的命令重新生成。`src/legacy.rs` 是 `PrintConfigDef::handle_legacy` 的手工移植，重新生成 schema 时也要对照更新。
+配置文件里只有字符串，各配置项的类型、默认值、范围、枚举值和界面文字都定义在 OrcaSlicer 的 C++ 代码里（`print_config_def`）。M0.5 曾把这份定义导出成 `schema.json` 内嵌进来，用来校验参数值、补全默认值；M16 起整个项目不再使用它，避免和某个 OrcaSlicer 版本强绑定。因此本工具不报告未知键、类型或取值范围这类问题，只做结构检查（清单、继承、重名、编码、兼容性条件等）和多余覆盖值检测。严重程度按 OrcaSlicer 实际的加载行为来定，见 `crates/profile-core/src/issue.rs`。
 
 ## 测试
 
@@ -205,18 +185,17 @@ cargo test --locked --workspace
 - **Linux（Ubuntu 24.04）**：格式检查，`profile-core` / `profile-tool` 的 clippy 和测试。
 - **macOS 15**：整个 workspace 的 clippy 和测试，包括 headless 界面测试。
 - **最低 Rust 版本**：两平台都从 `Cargo.toml` 读取 `rust-version`，用该版本检查对应包的全部 targets。
-- **真实数据回归**：两平台的测试任务都从公开 OrcaSlicer fork 稀疏检出锁定提交的 profiles 和中文翻译，先检查数据存在及提交与内嵌 schema 一致，再设置 `ORCA_PROFILES_DIR` 运行测试，避免缺数据时静默跳过。
-- **独立统计核对**：Python 参考脚本分别在不带 schema 和带 schema 时检查固定统计数字；不一致时退出码为 1。它不覆盖 Rust 的 schema 值校验。
+- **真实数据回归**：两平台的测试任务都从公开 OrcaSlicer fork 稀疏检出锁定提交的 profiles，先检查数据存在及提交正确，再设置 `ORCA_PROFILES_DIR` 运行测试，避免缺数据时静默跳过。
+- **独立统计核对**：Python 参考脚本检查固定统计数字；不一致时退出码为 1。
 
-所有构建、lint 和测试均使用 `--locked`；Action 固定到提交 SHA，按系统和工具链缓存依赖，锁定的 OrcaSlicer 数据按 `ORCA_COMMIT` 缓存。只取消 PR 上被新推送取代的运行，`main` 上的每个提交都有自己的结果。CI 只读仓库，不推送或发布产物。数据提交集中在 workflow 的 `ORCA_COMMIT`，升级数据时也要更新 Rust 测试、Python 的 `--check` 基线及内嵌 schema。
+所有构建、lint 和测试均使用 `--locked`；Action 固定到提交 SHA，按系统和工具链缓存依赖，锁定的 OrcaSlicer 数据按 `ORCA_COMMIT` 缓存。只取消 PR 上被新推送取代的运行，`main` 上的每个提交都有自己的结果。CI 只读仓库，不推送或发布产物。数据提交集中在 workflow 的 `ORCA_COMMIT`，升级数据时也要更新 Rust 测试和 Python 的 `--check` 基线。
 
 本地运行同样的 Python 检查：
 
 ```bash
 python3 -I docs/reference/profile_format_stats.py ../OrcaSlicer/resources/profiles --check
-python3 -I docs/reference/profile_format_stats.py ../OrcaSlicer/resources/profiles crates/profile-core/schema/schema.json --check
 ```
 
 ## 路线图
 
-已完成 M0 到 M15。接下来是 M16 可选能力（schema 改为外部文件）、M17 从 OrcaSlicer 源码生成 schema、M18 打包成 macOS 应用并做好跨平台准备、M19 Windows 版；和 Git 对比暂时待定。各阶段的范围、关键设计决定、依赖和完成标准见 [docs/roadmap.md](docs/roadmap.md)。
+已完成 M0 到 M16。接下来是 M17 打包成 macOS 应用并做好跨平台准备、M18 Windows 版；和 Git 对比暂时待定。各阶段的范围、关键设计决定、依赖和完成标准见 [docs/roadmap.md](docs/roadmap.md)。

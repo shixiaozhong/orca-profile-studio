@@ -89,53 +89,6 @@ pub enum IssueKind {
     RedundantOverride {
         key: String,
     },
-    // Values, checked against the schema
-    ObsoleteKey {
-        key: String,
-    },
-    RenamedKey {
-        key: String,
-        current: String,
-    },
-    UnknownKey {
-        key: String,
-    },
-    /// `reported`: OrcaSlicer removes the key and logs an error; otherwise it keeps it silently
-    /// (templates, or an ancestor already sets the key).
-    KeyNotForKind {
-        key: String,
-        reported: bool,
-    },
-    /// `collapsed`: all items are equal and OrcaSlicer reads the first one.
-    ScalarGivenList {
-        key: String,
-        collapsed: bool,
-    },
-    NilNotNullable {
-        key: String,
-    },
-    ValueUnparsable {
-        key: String,
-        value: String,
-    },
-    ItemUnparsable {
-        key: String,
-        item: String,
-    },
-    ValueSubstituted {
-        key: String,
-        value: String,
-    },
-    ValueTrailingText {
-        key: String,
-        value: String,
-    },
-    ValueOutOfRange {
-        key: String,
-        value: String,
-        min: Option<i64>,
-        max: Option<i64>,
-    },
     // Compatibility conditions; OrcaSlicer treats a failing condition as "compatible with everything"
     ConditionInvalid {
         key: String,
@@ -163,35 +116,20 @@ impl IssueKind {
             | FilamentIdMissing
             | PrinterModelMissing
             | PrinterModelUnknown { .. }
-            | PrinterVariantUnknown { .. }
-            | ValueUnparsable { .. } => Severity::Fatal,
+            | PrinterVariantUnknown { .. } => Severity::Fatal,
             InvalidManifestEntry(_)
             | InvalidMetaType { .. }
             | InvalidValueType { .. }
             | InvalidInstantiation(_)
             | DuplicateAcrossVendors { .. }
-            | KeyNotForKind { reported: true, .. }
-            | ItemUnparsable { .. }
-            | ValueSubstituted { .. }
             | ConditionInvalid { .. }
             | ConditionFailed { .. } => Severity::Error,
             Utf8Bom
             | TypeMismatch { .. }
             | UnexpectedFrom(Some(_))
             | ModelWithoutVariants
-            | DanglingCompatiblePrinter { .. }
-            | UnknownKey { .. }
-            | KeyNotForKind { reported: false, .. }
-            | ScalarGivenList { .. }
-            | NilNotNullable { .. }
-            | ValueTrailingText { .. }
-            | ValueOutOfRange { .. } => Severity::Warning,
-            OrphanFile
-            | UnexpectedFrom(None)
-            | ListNameMismatch { .. }
-            | ObsoleteKey { .. }
-            | RenamedKey { .. }
-            | RedundantOverride { .. } => Severity::Info,
+            | DanglingCompatiblePrinter { .. } => Severity::Warning,
+            OrphanFile | UnexpectedFrom(None) | ListNameMismatch { .. } | RedundantOverride { .. } => Severity::Info,
         }
     }
 
@@ -200,20 +138,10 @@ impl IssueKind {
         use IssueKind::*;
         match self {
             RedundantOverride { key }
-            | ObsoleteKey { key }
-            | RenamedKey { key, .. }
-            | UnknownKey { key }
-            | KeyNotForKind { key, .. }
-            | ScalarGivenList { key, .. }
-            | NilNotNullable { key }
-            | ValueUnparsable { key, .. }
-            | ItemUnparsable { key, .. }
-            | ValueSubstituted { key, .. }
-            | ValueTrailingText { key, .. }
-            | ValueOutOfRange { key, .. }
             | ConditionInvalid { key, .. }
             | ConditionFailed { key, .. }
             | InvalidValueType { key } => Some(key),
+            DanglingCompatiblePrinter { .. } => Some("compatible_printers"),
             _ => None,
         }
     }
@@ -246,17 +174,6 @@ impl IssueKind {
             PrinterVariantUnknown { .. } => "printer-variant-unknown",
             DanglingCompatiblePrinter { .. } => "dangling-compatible-printer",
             RedundantOverride { .. } => "redundant-override",
-            ObsoleteKey { .. } => "obsolete-key",
-            RenamedKey { .. } => "renamed-key",
-            UnknownKey { .. } => "unknown-key",
-            KeyNotForKind { .. } => "key-not-for-kind",
-            ScalarGivenList { .. } => "scalar-given-list",
-            NilNotNullable { .. } => "nil-not-nullable",
-            ValueUnparsable { .. } => "value-unparsable",
-            ItemUnparsable { .. } => "item-unparsable",
-            ValueSubstituted { .. } => "value-substituted",
-            ValueTrailingText { .. } => "value-trailing-text",
-            ValueOutOfRange { .. } => "value-out-of-range",
             ConditionInvalid { .. } => "condition-invalid",
             ConditionFailed { .. } => "condition-failed",
         }
@@ -304,36 +221,6 @@ impl fmt::Display for IssueKind {
             }
             DanglingCompatiblePrinter { printer } => {
                 write!(f, "`compatible_printers` names {printer:?}, which is not a selectable printer")
-            }
-            ObsoleteKey { key } => write!(f, "`{key}` is obsolete; OrcaSlicer ignores it"),
-            RenamedKey { key, current } => write!(f, "`{key}` is a legacy name of `{current}`"),
-            UnknownKey { key } => write!(f, "`{key}` is not an OrcaSlicer option; it is ignored"),
-            KeyNotForKind { key, reported: true } => {
-                write!(f, "`{key}` does not belong to this preset type; OrcaSlicer removes it")
-            }
-            KeyNotForKind { key, reported: false } => {
-                write!(f, "`{key}` does not belong to this preset type; OrcaSlicer keeps it without a report")
-            }
-            ScalarGivenList { key, collapsed: true } => {
-                write!(f, "`{key}` is a single value but written as a list of equal items")
-            }
-            ScalarGivenList { key, collapsed: false } => {
-                write!(f, "`{key}` is a single value but written as a list; the items are joined with commas")
-            }
-            NilNotNullable { key } => write!(f, "`{key}` cannot be nil; the nil item is skipped"),
-            ValueUnparsable { key, value } => {
-                write!(f, "`{key}`: {value:?} cannot be parsed; OrcaSlicer rejects the file")
-            }
-            ItemUnparsable { key, item } => write!(f, "`{key}`: item {item:?} cannot be parsed and is read as 0"),
-            ValueSubstituted { key, value } => {
-                write!(f, "`{key}`: {value:?} is not a valid value; OrcaSlicer uses the default")
-            }
-            ValueTrailingText { key, value } => {
-                write!(f, "`{key}`: {value:?} has text after the number, which is ignored")
-            }
-            ValueOutOfRange { key, value, min, max } => {
-                let bound = |bound: &Option<i64>| bound.map_or_else(|| "-".to_owned(), |bound| bound.to_string());
-                write!(f, "`{key}`: {value} is outside the GUI range [{}, {}]", bound(min), bound(max))
             }
             ConditionInvalid { key, message } => {
                 write!(f, "`{key}` cannot be parsed ({message}); OrcaSlicer treats it as compatible with everything")

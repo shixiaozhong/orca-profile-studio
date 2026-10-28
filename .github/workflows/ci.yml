@@ -16,7 +16,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # Update together with the Rust and Python regression baselines and bundled schema.
+  # Update together with the Rust and Python regression baselines.
   ORCA_COMMIT: 953509c23f8b13deae53abbb2b314f26f7eda606
   ORCA_PROFILES_DIR: ${{ github.workspace }}/.ci-data/OrcaSlicer/resources/profiles
 
@@ -59,7 +59,7 @@ jobs:
           git init -q .ci-data/OrcaSlicer
           cd .ci-data/OrcaSlicer
           git remote add origin https://github.com/shixiaozhong/OrcaSlicer.git
-          git sparse-checkout set --no-cone /resources/profiles/ /localization/i18n/zh_CN/
+          git sparse-checkout set --no-cone /resources/profiles/
           git fetch -q --depth 1 --filter=blob:none origin "$ORCA_COMMIT"
           git -c advice.detachedHead=false checkout -q --detach FETCH_HEAD
       - name: Require regression data
@@ -67,13 +67,6 @@ jobs:
           test "$(git -C .ci-data/OrcaSlicer rev-parse HEAD)" = "$ORCA_COMMIT"
           test -f "$ORCA_PROFILES_DIR/OrcaFilamentLibrary.json"
           test -f "$ORCA_PROFILES_DIR/Snapmaker.json"
-          compgen -G '.ci-data/OrcaSlicer/localization/i18n/zh_CN/*_zh_CN.po'
-          python3 - <<'PY'
-          import json, os
-          with open('crates/profile-core/schema/schema.json') as file:
-              commit = json.load(file)['source_commit']
-          assert commit and os.environ['ORCA_COMMIT'].startswith(commit), commit
-          PY
       - name: Install stable Rust
         run: |
           rustup toolchain install stable --profile minimal --component clippy --component rustfmt --no-self-update
@@ -91,7 +84,6 @@ jobs:
       - name: Independent Python regression counts
         run: |
           python3 -I docs/reference/profile_format_stats.py "$ORCA_PROFILES_DIR" --check
-          python3 -I docs/reference/profile_format_stats.py "$ORCA_PROFILES_DIR" crates/profile-core/schema/schema.json --check
 
   msrv:
     name: MSRV / ${{ matrix.os }}

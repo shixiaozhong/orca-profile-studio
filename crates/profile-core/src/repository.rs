@@ -3,17 +3,14 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
 
-use crate::check::check_params;
 use crate::compat::{CompatibilityIndex, Verdict};
 use crate::issue::{Issue, IssueKind};
 use crate::json::{fingerprint, read_json};
 use crate::model::{MachineModel, Preset, PresetId, PresetKind, PresetMeta, RawValue, Vendor, VendorId, derived_alias};
-use crate::schema::Schema;
 
 /// The shared filament library. It loads first and is the only cross-vendor inheritance source.
 pub const FILAMENT_LIBRARY: &str = "OrcaFilamentLibrary";
@@ -37,8 +34,6 @@ pub enum LoadError {
 pub enum Origin {
     /// A preset file in the inheritance chain.
     Preset(PresetId),
-    /// The schema's default preset of the kind, which the root of every chain starts from.
-    Default,
 }
 
 /// A config value together with the layer of the inheritance chain that set it.
@@ -66,7 +61,6 @@ impl<'a> KeyTrace<'a> {
 #[derive(Debug, Default)]
 pub struct Repository {
     root: PathBuf,
-    schema: Option<Arc<Schema>>,
     compatibility: CompatibilityIndex,
     vendors: Vec<Vendor>,
     models: Vec<MachineModel>,
@@ -100,20 +94,12 @@ struct ParsedPreset {
 }
 
 impl Repository {
-    /// Loads without a schema: values are not checked and keys no file sets stay unresolved.
+    /// Loads the profiles under `root`. Keys no file in a chain sets stay unresolved: their
+    /// defaults live in OrcaSlicer's sources, not in the profiles.
     pub fn load(root: impl AsRef<Path>) -> Result<Self, LoadError> {
-        Self::load_impl(root.as_ref(), None)
-    }
-
-    /// Loads, checks every value against `schema` and resolves unset keys to its defaults.
-    pub fn load_with_schema(root: impl AsRef<Path>, schema: Arc<Schema>) -> Result<Self, LoadError> {
-        Self::load_impl(root.as_ref(), Some(schema))
-    }
-
-    fn load_impl(root: &Path, schema: Option<Arc<Schema>>) -> Result<Self, LoadError> {
-        let root = root.to_path_buf();
+        let root = root.as_ref().to_path_buf();
         let vendor_names = vendor_names(&root)?;
-        let mut repo = Repository { root, schema, ..Default::default() };
+        let mut repo = Repository { root, ..Default::default() };
         let mut library = HashMap::new();
         for name in &vendor_names {
             repo.load_vendor(name, &mut library);
@@ -134,10 +120,6 @@ impl Repository {
     /// (`None`: missing or unreadable).
     pub(crate) fn sources(&self) -> impl Iterator<Item = (&Path, Option<u64>)> {
         self.sources.iter().map(|(path, &fingerprint)| (path.as_path(), fingerprint))
-    }
-
-    pub fn schema(&self) -> Option<&Schema> {
-        self.schema.as_deref()
     }
 
     /// Which printers and processes each filament and process preset is compatible with.
@@ -201,16 +183,12 @@ impl Repository {
         (!broken).then(|| chain.len() - 1)
     }
 
-    /// The effective value of `key`: a child replaces the whole value of its parent, and the
-    /// schema's default applies when no file in the chain sets the key.
+    /// The effective value of `key`: a child replaces the whole value of its parent. `None` when
+    /// no file in the chain sets the key.
     pub fn lookup(&self, id: PresetId, key: &str) -> Option<ResolvedValue<'_>> {
-        let own = self.chain(id).into_iter().find_map(|link| {
+        self.chain(id).into_iter().find_map(|link| {
             let value = self.preset(link).params.get(key)?;
             Some(ResolvedValue { value, origin: Origin::Preset(link) })
-        });
-        own.or_else(|| {
-            let value = self.defaults(self.preset(id).kind)?.get(key)?;
-            Some(ResolvedValue { value, origin: Origin::Default })
         })
     }
 
@@ -218,15 +196,10 @@ impl Repository {
         self.lookup(id, key)?.value.as_scalar()
     }
 
-    /// All effective values: the schema defaults first (when a schema is loaded), then the keys
-    /// in the order they first appear from the root of the chain down.
-    ///
-    /// Without a schema, keys no file in the chain sets are missing.
+    /// All effective values, in the order the keys first appear from the root of the chain down.
+    /// Keys no file in the chain sets are missing.
     pub fn resolve(&self, id: PresetId) -> IndexMap<&str, ResolvedValue<'_>> {
         let mut values = IndexMap::new();
-        for (key, value) in self.defaults(self.preset(id).kind).into_iter().flatten() {
-            values.insert(key.as_str(), ResolvedValue { value, origin: Origin::Default });
-        }
         for link in self.chain(id).into_iter().rev() {
             for (key, value) in &self.preset(link).params {
                 values.insert(key.as_str(), ResolvedValue { value, origin: Origin::Preset(link) });
@@ -249,9 +222,6 @@ impl Repository {
             trace.layers.insert(0, layer);
         }
         let mut traces = IndexMap::new();
-        for (key, value) in self.defaults(self.preset(id).kind).into_iter().flatten() {
-            add(&mut traces, key, ResolvedValue { value, origin: Origin::Default });
-        }
         for link in self.chain(id).into_iter().rev() {
             let params = if link == id { own } else { &self.preset(link).params };
             for (key, value) in params {
@@ -261,16 +231,15 @@ impl Repository {
         traces.into_values().collect()
     }
 
-    /// Reports byte-spelling/shape equality with the parent's effective value, including schema
-    /// defaults when loaded. Roots and incomplete inheritance chains are not candidates.
+    /// Reports byte-spelling/shape equality with the parent's effective value. Roots and incomplete
+    /// inheritance chains are not candidates.
     pub fn redundant_overrides(&self, id: PresetId, own: &IndexMap<String, RawValue>) -> Vec<IssueKind> {
         let Some(parent) = self.preset(id).parent else { return Vec::new() };
         self.redundant_overrides_against(id, own, |key| self.lookup(parent, key).map(|v| v.value.clone()))
     }
 
     /// Like [`Self::redundant_overrides`], with the parent's effective value supplied by the caller
-    /// (e.g. including unsaved edits of the ancestors). With a schema, keys that do not belong to
-    /// the kind are left out: OrcaSlicer drops them, so they are reported as such instead.
+    /// (e.g. including unsaved edits of the ancestors).
     pub fn redundant_overrides_against(
         &self,
         id: PresetId,
@@ -282,24 +251,9 @@ impl Repository {
             return Vec::new();
         }
         own.iter()
-            .filter(|(key, _)| self.schema.as_ref().is_none_or(|schema| schema.belongs_to(preset.kind, key)))
             .filter(|(key, value)| inherited(key).as_ref() == Some(*value))
             .map(|(key, _)| IssueKind::RedundantOverride { key: key.clone() })
             .collect()
-    }
-
-    /// The schema checks of `params` as the own values of preset `id`; empty without a schema.
-    pub fn check_values(&self, id: PresetId, params: &IndexMap<String, RawValue>) -> Vec<IssueKind> {
-        let Some(schema) = &self.schema else { return Vec::new() };
-        let preset = self.preset(id);
-        let instantiated = !preset.is_template() || self.vendor(preset.vendor).name == TEMPLATE_VENDOR;
-        let ancestors = preset.parent.map(|parent| self.chain(parent)).unwrap_or_default();
-        let inherited = |key: &str| ancestors.iter().any(|&link| self.preset(link).params.contains_key(key));
-        check_params(schema, preset.kind, params, instantiated, inherited)
-    }
-
-    fn defaults(&self, kind: PresetKind) -> Option<&IndexMap<String, RawValue>> {
-        Some(&self.schema()?.default_preset(kind).values)
     }
 
     /// The display alias: an explicit `alias` option, otherwise the name before `@`.
@@ -537,7 +491,6 @@ impl Repository {
                     _ => {}
                 }
             }
-            issues.extend(self.check_values(id, &self.preset(id).params));
             issues.extend(self.redundant_overrides(id, &self.preset(id).params));
             for kind in issues {
                 self.issue(vendor, &path, Some(id), kind);

@@ -159,6 +159,11 @@ impl PresetMeta {
         "is_custom_defined",
     ];
 
+    /// Whether `key` is preset metadata (any case) rather than a configuration value.
+    pub fn is_key(key: &str) -> bool {
+        Self::KEYS.contains(&key.to_ascii_lowercase().as_str())
+    }
+
     /// Stores a metadata value; `key` must be one of [`Self::KEYS`] in lower case.
     pub(crate) fn set(&mut self, key: &str, value: String) {
         let slot = match key {

@@ -107,7 +107,7 @@ impl PromotionPlan {
                     return Some(value.clone());
                 }
             }
-            repo.schema().and_then(|schema| schema.default_preset(repo.preset(id).kind).values.get(key)).cloned()
+            None
         };
         let impacts = repo
             .presets()
@@ -137,7 +137,7 @@ impl PromotionPlan {
 #[cfg(test)]
 mod tests {
     use super::{PromotionError, PromotionPlan};
-    use crate::{IssueKind, PresetId, PresetKind, RawValue, Repository, Schema, Severity};
+    use crate::{IssueKind, PresetId, PresetKind, RawValue, Repository, Severity};
     use serde_json::json;
     use std::{collections::BTreeMap, fs};
 
@@ -169,7 +169,7 @@ mod tests {
             }
             fs::write(dir.path().join(format!("Acme/process/{name}.json")), data.to_string()).unwrap();
         }
-        let repo = Repository::load_with_schema(dir.path(), Schema::bundled()).unwrap();
+        let repo = Repository::load(dir.path()).unwrap();
         (dir, repo)
     }
     fn id(repo: &Repository, name: &str) -> PresetId {
@@ -261,7 +261,7 @@ mod tests {
     }
 
     #[test]
-    fn redundancy_is_exact_inherited_equality_and_includes_schema_defaults_only_for_children() {
+    fn redundancy_is_exact_inherited_equality_for_children_with_complete_chains() {
         let (dir, repo) = fixture();
         let parent = id(&repo, "base");
         let child = id(&repo, "a");
@@ -278,17 +278,15 @@ mod tests {
             params.insert("wall_loops".into(), value);
             assert!(repo.redundant_overrides(child, &params).is_empty());
         }
-        let defaults = &repo.schema().unwrap().default_preset(PresetKind::Process).values;
-        params.insert("layer_height".into(), defaults["layer_height"].clone());
-        assert!(repo.redundant_overrides(child, &params).iter().any(|i| i.key() == Some("layer_height")));
+        // Keys no file in the chain sets have no inherited value to be redundant with.
+        params.insert("layer_height".into(), RawValue::Str("0.2".into()));
+        assert!(!repo.redundant_overrides(child, &params).iter().any(|i| i.key() == Some("layer_height")));
         assert!(repo.redundant_overrides(parent, &params).is_empty());
-        let bare = Repository::load(dir.path()).unwrap();
-        assert!(bare.redundant_overrides(child, &params).is_empty(), "no schema means no implicit defaults");
         let path = dir.path().join("Acme/process/base.json");
         let mut broken: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         broken["inherits"] = "missing".into();
         fs::write(path, broken.to_string()).unwrap();
-        let broken = Repository::load_with_schema(dir.path(), Schema::bundled()).unwrap();
+        let broken = Repository::load(dir.path()).unwrap();
         params.insert("wall_loops".into(), RawValue::Str("1".into()));
         assert!(broken.redundant_overrides(child, &params).is_empty());
         assert_eq!(
@@ -342,28 +340,5 @@ mod tests {
         let repo = Repository::load(dir.path()).unwrap();
         let selected = [repo.find(PresetKind::Filament, "a")[0], repo.find(PresetKind::Filament, "b")[0]];
         assert_eq!(PromotionPlan::new(&repo, &selected, "filament_type").unwrap_err(), PromotionError::SharedLibrary);
-    }
-
-    #[test]
-    fn keys_outside_the_kind_are_not_reported_as_redundant() {
-        let (dir, _) = fixture();
-        // Both parent and child repeat a key that does not belong to processes.
-        for name in ["base", "a"] {
-            let path = dir.path().join(format!("Acme/process/{name}.json"));
-            let mut data: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-            data["not_an_option"] = "1".into();
-            fs::write(path, data.to_string()).unwrap();
-        }
-        let repo = Repository::load_with_schema(dir.path(), Schema::bundled()).unwrap();
-        let child = id(&repo, "a");
-        let keys: Vec<_> = repo.redundant_overrides(child, &repo.preset(child).params).into_iter().collect();
-        assert!(!keys.contains(&IssueKind::RedundantOverride { key: "not_an_option".into() }), "{keys:?}");
-        // Without a schema there is nothing to tell the kind's keys apart, so it is compared.
-        let bare = Repository::load(dir.path()).unwrap();
-        let child = id(&bare, "a");
-        assert!(
-            bare.redundant_overrides(child, &bare.preset(child).params)
-                .contains(&IssueKind::RedundantOverride { key: "not_an_option".into() })
-        );
     }
 }

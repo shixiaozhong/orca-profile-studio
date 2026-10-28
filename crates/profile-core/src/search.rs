@@ -18,8 +18,7 @@ struct PresetEntry {
 
 struct OptionEntry {
     key: String,
-    label: String,
-    /// Lower-cased key and label.
+    /// Lower-cased key.
     haystack: String,
 }
 
@@ -42,7 +41,6 @@ pub struct SearchIndex {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OptionHit {
     pub key: String,
-    pub label: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,20 +79,15 @@ impl SearchIndex {
                 }
             })
             .collect();
+        // Options are the keys the profiles set.
         let options = repo
-            .schema()
-            .map(|schema| {
-                schema
-                    .options
-                    .iter()
-                    .map(|(key, option)| OptionEntry {
-                        key: key.clone(),
-                        label: option.display_label().to_owned(),
-                        haystack: format!("{key}\n{}", option.display_label()).to_lowercase(),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+            .presets()
+            .iter()
+            .flat_map(|preset| preset.params.keys())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .map(|key| OptionEntry { key: key.clone(), haystack: key.to_lowercase() })
+            .collect();
         let values = repo
             .presets()
             .iter()
@@ -107,16 +100,6 @@ impl SearchIndex {
             })
             .collect();
         SearchIndex { presets, options, values }
-    }
-
-    /// Adds translated labels without replacing English labels or changing stored profile values.
-    pub fn add_option_labels(&mut self, labels: impl IntoIterator<Item = (String, String)>) {
-        for (key, label) in labels {
-            if let Some(entry) = self.options.iter_mut().find(|entry| entry.key == key) {
-                entry.haystack.push('\n');
-                entry.haystack.push_str(&label.to_lowercase());
-            }
-        }
     }
 
     /// Every whitespace-separated term of `query` must occur. Each list keeps at most `limit`
@@ -141,11 +124,7 @@ impl SearchIndex {
             total_options: options.len(),
             total_values: values.len(),
             presets: presets.into_iter().take(limit).map(|entry| entry.id).collect(),
-            options: options
-                .into_iter()
-                .take(limit)
-                .map(|entry| OptionHit { key: entry.key.clone(), label: entry.label.clone() })
-                .collect(),
+            options: options.into_iter().take(limit).map(|entry| OptionHit { key: entry.key.clone() }).collect(),
             values: values
                 .into_iter()
                 .take(limit)
@@ -193,7 +172,6 @@ mod tests {
     use super::{SearchIndex, snippet};
     use crate::model::PresetKind;
     use crate::repository::Repository;
-    use crate::schema::Schema;
 
     fn fixture() -> (tempfile::TempDir, Repository) {
         let dir = tempfile::tempdir().unwrap();
@@ -223,19 +201,19 @@ mod tests {
             r#"{ "type": "filament", "name": "Super Acme PLA", "inherits": "acme_base", "instantiation": "true",
                 "setting_id": "GFSX01", "nozzle_temperature": ["230"] }"#,
         );
-        let repo = Repository::load_with_schema(dir.path(), Schema::bundled()).unwrap();
+        let repo = Repository::load(dir.path()).unwrap();
         (dir, repo)
     }
 
     #[test]
-    fn translated_labels_add_search_terms_without_replacing_english_or_keys() {
+    fn options_are_the_keys_the_profiles_set() {
         let (_dir, repo) = fixture();
-        let mut index = SearchIndex::build(&repo);
-        index.add_option_labels([("wall_loops".into(), "墙层数".into())]);
-        for query in ["墙层数", "Wall loops", "wall_loops"] {
-            let result = index.search(query, 10);
-            assert!(result.options.iter().any(|hit| hit.key == "wall_loops"), "{query}");
-        }
+        let index = SearchIndex::build(&repo);
+        let result = index.search("nozzle_temperature", 10);
+        assert_eq!(result.options.len(), 1);
+        assert_eq!(result.options[0].key, "nozzle_temperature");
+        assert_eq!(result.values.len(), 2);
+        assert!(index.search("Wall loops", 10).options.is_empty());
     }
 
     #[test]
@@ -266,7 +244,7 @@ mod tests {
 
         let results = index.search("nozzle_temp", 1);
         assert_eq!(results.options[0].key, "nozzle_temperature");
-        assert!(results.total_options > 1);
+        assert!(results.total_options >= 1);
         assert_eq!(results.values.len(), 1);
         assert_eq!(results.total_values, 2);
 

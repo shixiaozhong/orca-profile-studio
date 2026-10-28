@@ -8,7 +8,6 @@ pub use models::{ModelDraft, ModelPlan};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
 
 use serde_json::{Value, json};
 
@@ -557,10 +556,7 @@ impl ManagementPlan {
                 std::fs::write(path, text)?;
             }
         }
-        let load = |path: &Path| match repo.schema() {
-            Some(schema) => Repository::load_with_schema(path, Arc::new(schema.clone())),
-            None => Repository::load(path),
-        };
+        let load = |path: &Path| Repository::load(path);
         let key = |path: &Path, issue: &crate::Issue| format!("{}:{:?}", path.display(), issue.kind);
         let old: BTreeSet<_> =
             repo.issues().iter().map(|issue| key(self.moved.get(&issue.path).unwrap_or(&issue.path), issue)).collect();

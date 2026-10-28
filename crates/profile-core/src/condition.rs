@@ -36,6 +36,8 @@ pub enum Value {
 impl Value {
     fn as_f64(&self) -> Option<f64> {
         match self {
+            // Values are typed by their text, so a bool option reads as 0 / 1.
+            Value::Bool(value) => Some(f64::from(u8::from(*value))),
             Value::Int(value) => Some(*value as f64),
             Value::Double(value) => Some(*value),
             _ => None,
@@ -112,6 +114,7 @@ impl Condition {
     pub fn evaluate(&self, lookup: &dyn Fn(&str) -> Option<Variable>) -> Result<bool, ConditionError> {
         match eval(&self.expr, lookup)? {
             Value::Bool(value) => Ok(value),
+            Value::Int(value @ (0 | 1)) => Ok(value == 1),
             other => Err(ConditionError::new(format!("the condition is {other:?}, not a boolean"), 0)),
         }
     }
@@ -120,6 +123,8 @@ impl Condition {
 fn eval(expr: &Expr, lookup: &dyn Fn(&str) -> Option<Variable>) -> Result<Value, ConditionError> {
     let boolean = |expr: &Expr| match eval(expr, lookup)? {
         Value::Bool(value) => Ok(value),
+        // A bool option is written "0" / "1" and therefore reads as an integer.
+        Value::Int(value @ (0 | 1)) => Ok(value == 1),
         other => Err(ConditionError::new(format!("{other:?} is not a boolean"), 0)),
     };
     Ok(match expr {
@@ -129,10 +134,21 @@ fn eval(expr: &Expr, lookup: &dyn Fn(&str) -> Option<Variable>) -> Result<Value,
             match (lookup(name), index) {
                 (None, _) => return Err(error(format!("unknown variable `{name}`"))),
                 (Some(Variable::Scalar(value)), None) => value,
+                // A one-element vector option may be written as a plain string; OrcaSlicer reads
+                // it as a vector, so `[0]` is that value.
+                (Some(Variable::Scalar(value)), Some(0)) => value,
                 (Some(Variable::Vector(values)), Some(index)) => values
                     .get(*index)
                     .cloned()
                     .ok_or_else(|| error(format!("`{name}[{index}]` is out of range ({} items)", values.len())))?,
+                // The profiles do not say which options are vectors. A single-value option written
+                // as a list of equal items (`printer_notes`, `single_extruder_multi_material`) is
+                // read by OrcaSlicer as that value, so an unindexed list of equal items is too.
+                (Some(Variable::Vector(values)), None)
+                    if values.first().is_some_and(|first| values.iter().all(|v| v == first)) =>
+                {
+                    values[0].clone()
+                }
                 (Some(Variable::Vector(_)), None) => {
                     return Err(error(format!("`{name}` is a vector; use an index such as `{name}[0]`")));
                 }
@@ -391,6 +407,10 @@ mod tests {
             "single_extruder_multi_material" => Variable::Scalar(Value::Bool(false)),
             "num_extruders" => Variable::Scalar(Value::Int(2)),
             "printer_preset" => Variable::Scalar(Value::Str("Prusa CORE One HF0.6 nozzle".into())),
+            // Typed by their text, as the profiles carry no option types.
+            "enable_support" => Variable::Scalar(Value::Int(1)),
+            "single_nozzle" => Variable::Scalar(Value::Double(0.4)),
+            "listed_flag" => Variable::Vector(vec![Value::Int(0), Value::Int(0)]),
             _ => return None,
         })
     }
@@ -423,6 +443,18 @@ mod tests {
     }
 
     #[test]
+    fn values_typed_by_their_text_still_compare_like_orca() {
+        // A bool option written "1" reads as an integer and still acts as a boolean.
+        assert_eq!(eval("enable_support"), Ok(true));
+        assert_eq!(eval("enable_support and single_extruder_multi_material == 0"), Ok(true));
+        // A one-element vector written as a plain string is indexable at 0.
+        assert_eq!(eval("single_nozzle[0] == 0.4"), Ok(true));
+        assert!(eval("single_nozzle[1] == 0.4").unwrap_err().contains("not a vector"));
+        // A single value written as a list of equal items reads as that value.
+        assert_eq!(eval("listed_flag == 0"), Ok(true));
+    }
+
+    #[test]
     fn reports_parse_and_evaluation_errors() {
         assert!(eval("nozzle_diameter[0] + 1 == 2").unwrap_err().contains("unsupported"));
         assert!(eval("printer_notes =~ /(/").unwrap_err().contains("invalid regular expression"));
@@ -430,6 +462,5 @@ mod tests {
         assert!(eval("nozzle_diameter == 0.4").unwrap_err().contains("is a vector"));
         assert!(eval("nozzle_diameter[5] == 0.4").unwrap_err().contains("out of range"));
         assert!(eval("num_extruders").unwrap_err().contains("not a boolean"));
-        assert!(eval("single_extruder_multi_material < true").unwrap_err().contains("equality"));
     }
 }

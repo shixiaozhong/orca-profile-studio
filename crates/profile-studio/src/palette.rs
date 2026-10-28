@@ -151,8 +151,10 @@ pub fn build(
                 .options
                 .iter()
                 .map(|hit| {
-                    let label = format!("{} — {}", catalog.translate(&hit.label), hit.key);
-                    (CommandItem::new().label(label).icon(IconName::SlidersHorizontal), Target::Option(hit.key.clone()))
+                    (
+                        CommandItem::new().label(hit.key.clone()).icon(IconName::SlidersHorizontal),
+                        Target::Option(hit.key.clone()),
+                    )
                 })
                 .collect();
             groups.push((t!("palette.options", arg0 = results.total_options), options));

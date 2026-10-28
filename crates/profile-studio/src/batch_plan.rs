@@ -1,6 +1,7 @@
 //! Immutable previews calculated off the UI thread from a coherent set of edit sessions.
 use crate::{catalog::Catalog, details::format_value, edits::Edits};
-use profile_core::{OptionType, PresetId, RawValue};
+use indexmap::IndexMap;
+use profile_core::{PresetId, PresetMeta, RawValue};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -74,9 +75,8 @@ impl BatchPlan {
         value: Option<RawValue>,
     ) -> Result<Self, String> {
         let repo = &catalog.repo;
-        let schema = repo.schema().ok_or(t!("batch.schema_required"))?;
         let kind = selected.first().map(|id| repo.preset(*id).kind).ok_or(t!("batch.select_required"))?;
-        if !schema.belongs_to(kind, &key) {
+        if key.is_empty() || PresetMeta::is_key(&key) {
             return Err(t!("batch.invalid_key"));
         }
         if selected.iter().any(|id| repo.preset(*id).kind != kind) {
@@ -86,9 +86,6 @@ impl BatchPlan {
             return Self::promote(catalog, baseline, selected, key);
         }
         let array = matches!(operation, Operation::AddItem | Operation::RemoveItem);
-        if array && schema.option(&key).is_none_or(|o| o.type_ != OptionType::Strings) {
-            return Err(t!("batch.string_array"));
-        }
         if operation != Operation::Remove && value.is_none() {
             return Err(t!("batch.value_required"));
         }
@@ -162,17 +159,9 @@ impl BatchPlan {
             } else {
                 t!("batch.will_change")
             };
-            let before_issues = repo.check_values(id, params);
             candidate.session_mut(ix).set(&key, next.clone());
-            let new_issues = repo
-                .check_values(id, candidate.session(ix).unwrap().params())
-                .into_iter()
-                .filter(|issue| !before_issues.contains(issue))
-                .map(|issue| {
-                    format!("{}: {}", crate::i18n::severity(issue.severity()), crate::issue_text::issue(&issue))
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let new_issues =
+                new_issues(catalog, id, (&baseline, params), (&candidate, candidate.session(ix).unwrap().params()));
             if changed {
                 changes.push((ix, key.clone(), next));
             }
@@ -261,16 +250,7 @@ impl BatchPlan {
                 let preset = repo.preset(id);
                 let before = baseline.session(ix).map_or(&preset.params, |s| s.params());
                 let after = candidate.session(ix).map_or(&preset.params, |s| s.params());
-                let existing = repo.check_values(id, before);
-                let issues = repo
-                    .check_values(id, after)
-                    .into_iter()
-                    .filter(|issue| !existing.contains(issue))
-                    .map(|issue| {
-                        format!("{}: {}", crate::i18n::severity(issue.severity()), crate::issue_text::issue(&issue))
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                let issues = new_issues(catalog, id, (&baseline, before), (&candidate, after));
                 let descendants = descendants.get(&id).copied().unwrap_or(0);
                 PreviewRow {
                     preset: ix,
@@ -289,6 +269,27 @@ impl BatchPlan {
         Ok(Self { baseline, changes, rows, selected_count: selected.len(), impact_count: plan.impacts().len() })
     }
 }
+/// Redundant overrides that `after` has and `before` lacks, each against its own parent values.
+fn new_issues(
+    catalog: &Catalog,
+    id: PresetId,
+    before: (&Edits, &IndexMap<String, RawValue>),
+    after: (&Edits, &IndexMap<String, RawValue>),
+) -> String {
+    let repo = &catalog.repo;
+    let Some(parent) = repo.preset(id).parent else { return String::new() };
+    let redundant = |(edits, params): (&Edits, &IndexMap<String, RawValue>)| {
+        repo.redundant_overrides_against(id, params, |key| edits.effective(parent.index(), key).map(|(value, _)| value))
+    };
+    let existing = redundant(before);
+    redundant(after)
+        .into_iter()
+        .filter(|issue| !existing.contains(issue))
+        .map(|issue| format!("{}: {}", crate::i18n::severity(issue.severity()), crate::issue_text::issue(&issue)))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn describe(value: Option<(RawValue, String)>) -> String {
     // The same rendering as Values, Compare and Details.
     value.map_or(t!("common.unset"), |(value, source)| format!("{} — {source}", format_value(&value)))
@@ -298,7 +299,7 @@ fn describe(value: Option<(RawValue, String)>) -> String {
 mod tests {
     use super::{BatchPlan, Operation};
     use crate::{catalog::Catalog, edits::Edits};
-    use profile_core::{PresetKind, RawValue, Repository, Schema};
+    use profile_core::{PresetKind, RawValue, Repository};
     use std::{fs, sync::Arc, time::Duration};
 
     fn fixture() -> (tempfile::TempDir, Arc<Catalog>) {
@@ -317,7 +318,7 @@ mod tests {
         (dir, catalog)
     }
     fn load(path: &std::path::Path) -> Arc<Catalog> {
-        Arc::new(Catalog::new(Repository::load_with_schema(path, Schema::bundled()).unwrap(), Duration::ZERO))
+        Arc::new(Catalog::new(Repository::load(path).unwrap(), Duration::ZERO))
     }
     fn id(catalog: &Catalog, name: &str) -> profile_core::PresetId {
         catalog.repo.find(PresetKind::Process, name)[0]
@@ -382,11 +383,13 @@ mod tests {
         let a = id(&catalog, "a").index();
         edits.session_mut(a).set("wall_loops", text("4"));
         let preview = plan(&catalog, &edits, &["base", "a"], "wall_loops", Operation::Remove, None);
-        assert!(preview.rows().iter().all(|r| r.cell(2).contains("default")));
-        let bad = plan(&catalog, &edits, &["base", "a"], "wall_loops", Operation::Set, text("invalid"));
-        assert!(bad.rows().iter().all(|r| r.cell(4).contains("fatal")));
-        bad.apply(&mut edits).unwrap();
-        let same = plan(&catalog, &edits, &["base", "a"], "wall_loops", Operation::Set, text("invalid"));
+        assert!(preview.rows().iter().all(|r| r.cell(2) == "(unset)"));
+        // `a` keeps its own value, now equal to what it inherits from the edited `base`.
+        let redundant = plan(&catalog, &edits, &["base", "a"], "wall_loops", Operation::Set, text("4"));
+        assert_eq!(redundant.rows()[0].cell(4), "");
+        assert!(redundant.rows()[1].cell(4).starts_with("info: "), "{}", redundant.rows()[1].cell(4));
+        redundant.apply(&mut edits).unwrap();
+        let same = plan(&catalog, &edits, &["base", "a"], "wall_loops", Operation::Set, text("4"));
         assert_eq!(same.changed_count(), 0);
         assert!(same.rows().iter().all(|r| r.cell(4).is_empty()));
         assert_eq!(same.apply(&mut edits).unwrap(), None);
@@ -424,7 +427,7 @@ mod tests {
         assert!(preview.apply(&mut edits).is_err());
         assert_eq!(edits.dirty(), [a.index()]);
         for (key, operation) in
-            [("wall_loops", Operation::AddItem), ("name", Operation::Set), ("missing", Operation::Remove)]
+            [("wall_loops", Operation::AddItem), ("name", Operation::Set), ("Inherits", Operation::Remove)]
         {
             assert!(BatchPlan::build(&catalog, edits.clone(), vec![a], key.into(), operation, text("x")).is_err());
         }
