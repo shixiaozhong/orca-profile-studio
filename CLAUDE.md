@@ -253,11 +253,12 @@ from the package directory).
 [docs/roadmap.md](docs/roadmap.md) (Chinese) is the roadmap: stages and status, key design decisions
 of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
 M1–M15 (M15: CI on GitHub Actions, Linux and macOS, real-data regression from a cached sparse
-checkout of the public OrcaSlicer fork at the pinned commit). Next: M16 optional schema (no bundled
-schema.json; `--schema` / `ORCA_SCHEMA` / a studio setting; full functionality from profiles alone),
-then M17 macOS app bundle plus
+checkout of the public OrcaSlicer fork at the pinned commit). Next: M16 optional capabilities (no bundled
+schema.json; `--schema` / `ORCA_SCHEMA` / a studio capabilities panel; full functionality from
+profiles alone), then M17 schema generation from 4 OrcaSlicer source files (Rust, in core; CI regains
+the schema regression), then M18 macOS app bundle plus
 cross-platform prep (secondary- key bindings, per-platform settings path, `/` in manifest
-sub_paths), then M18 Windows build and portable zip (CI Windows job plus the user's own machine). Git diff is pending (待定) and the OrcaSlicer upgrade check is
+sub_paths), then M19 Windows build and portable zip (CI Windows job plus the user's own machine). Git diff is pending (待定) and the OrcaSlicer upgrade check is
 deferred (暂缓); pending and deferred items get no M number until the user decides to do them.
 The G-code viewer and OrcaSlicer sync automation are deferred.
 When a stage is finished, move it to "已完成" there with its design decisions, mark it ✅, and update
