@@ -2,6 +2,8 @@
 
 OrcaSlicer 系统配置文件（`resources/profiles`）的浏览、校验与编辑工具，也是一个 GPUI 练手项目。
 
+> 这是个人维护的非官方工具，与 OrcaSlicer 项目、SoftFever 和 Snapmaker 均无隶属关系，也未获得它们的认可。内嵌的 `crates/profile-core/schema/schema.json` 导出自 OrcaSlicer 源码，适用 OrcaSlicer 的 GNU AGPL v3 许可，来源说明见 [crates/profile-core/schema/README.md](crates/profile-core/schema/README.md)。本项目其余代码尚未选定 license。
+
 目前完成了 M0 到 M14：
 - M0：不依赖界面的 core 库，加一个命令行工具；
 - M0.5：从 OrcaSlicer 导出的配置项 schema，用来校验参数值、补全默认值；
@@ -191,4 +193,4 @@ cargo test
 
 ## 路线图
 
-已完成 M0 到 M14。接下来是 M15 打包成 macOS 应用；和 Git 对比暂时待定。各阶段的范围、关键设计决定、依赖和完成标准见 [docs/roadmap.md](docs/roadmap.md)。
+已完成 M0 到 M14。接下来是 M15 持续集成、M16 打包成 macOS 应用并做好跨平台准备、M17 Windows 版；和 Git 对比暂时待定。各阶段的范围、关键设计决定、依赖和完成标准见 [docs/roadmap.md](docs/roadmap.md)。

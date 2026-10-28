@@ -23,8 +23,10 @@ OrcaSlicer 的加载语义以 [profile_format_spec.md](reference/profile_format_
 | M11 | ✅ | 批量编辑：设置/删除键、追加/移除字符串数组元素，预览与整组撤销 | `8494e24` |
 | M12 | ✅ | 中英文界面、配置项术语与问题描述、中文搜索、所有窗口同步切换 | `f1a898c` |
 | M13 | ✅ | 新建、复制、修改、重命名、删除机型，同步清单与机器引用 | `95359a7` |
-| M14 | ✅ | 冗余覆盖值 info 检测、提到父项、未选子孙影响预览与整组撤销 | 待补 |
-| M15 | 计划中 | 打包成可双击启动的 macOS 应用 | |
+| M14 | ✅ | 冗余覆盖值 info 检测、提到父项、未选子孙影响预览与整组撤销 | `7edab54` |
+| M15 | 计划中 | 持续集成：GitHub Actions 上跑格式、lint、全部测试和真实数据回归 | |
+| M16 | 计划中 | 打包成可双击启动的 macOS 应用，为 Windows 做好跨平台准备 | |
+| M17 | 计划中 | Windows 版：在 Windows 上编译、测试并打包成免安装 zip | |
 | — | 待定 | 和 Git 对比：工作区相对 HEAD 改了哪些预设、哪些键 | |
 | — | 暂缓 | 2D G-code 分层查看器 | |
 
@@ -381,23 +383,69 @@ M0.5 排在 M1 之后才做，编号沿用最初的规划。
 
 ## 后续阶段
 
-M0–M14 已完成。接下来是 M15：打包成 macOS 应用。「和 Git 对比」暂时待定，OrcaSlicer 升级检查自动化仍在「暂缓」；它们都不占用阶段编号。
+M0–M14 已完成。接下来依次是 M15：持续集成；M16：打包成 macOS 应用并做好跨平台准备；M17：Windows 版。「和 Git 对比」暂时待定，OrcaSlicer 升级检查自动化仍在「暂缓」；它们都不占用阶段编号。
 
-### M15：打包成 macOS 应用
+### M15：持续集成（GitHub Actions）
+
+**场景**：仓库已公开在 [shixiaozhong/orca-profile-studio](https://github.com/shixiaozhong/orca-profile-studio)，公开仓库使用 GitHub 的标准机器不限分钟数。每次推送和 PR 自动跑格式、lint 和全部测试，包括 macOS 上的界面测试和真实数据回归。
 
 **范围**
-- 生成可以双击启动的 `Orca Profile Studio.app`：应用图标、`Info.plist`（Bundle ID 沿用代码里的 `org.orca-profile-studio.app`、版本号取自 `Cargo.toml`）、release 构建。
-- 不带参数启动时沿用现在的规则：先用上次的目录，再找旁边的 OrcaSlicer 检出；从 Finder 启动没有 `ORCA_PROFILES_DIR` 时也能正常工作。
-- 系统通知能可靠送达（M9 记录过：普通 `cargo run` 不保证投递，需要受信任的 `.app`）。
+- 新增 `.github/workflows/ci.yml`，在推送到 `main`、PR 和手动触发时运行：
+  - **Linux**：`cargo fmt --check`，以及 `profile-core` / `profile-tool` 的 clippy 和测试（studio 依赖 macOS 的界面测试，不在 Linux 上跑）；
+  - **macOS**：整个 workspace 的 clippy 和 `cargo test --workspace`，包括 headless 界面测试；
+  - **真实数据回归**：从公开的 [shixiaozhong/OrcaSlicer](https://github.com/shixiaozhong/OrcaSlicer) 用部分克隆和 sparse checkout 只取锁定提交 `953509c23f` 的 `resources/profiles` 和 `localization/i18n/zh_CN`（约 81 MB，不下载整个约 1 GB 的仓库），设置 `ORCA_PROFILES_DIR` 后跑回归测试，并用 `profile_format_stats.py` 交叉核对统计数字。
+- README 加上 CI 状态徽章。
 
 **设计要点**
-- 用仓库里的脚本（例如 `scripts/bundle-macos.sh`）完成打包，不依赖额外安装的 cargo 子命令；脚本只写 `target/` 下的产物。
+- 一律 `--locked`，使用仓库里的 `Cargo.lock`；工具链用 stable，另加一个用 `rust-version`（1.88）做 `cargo check` 的步骤，确保最低版本仍能编译。
+- 依赖缓存用固定版本的 Action（例如 `Swatinem/rust-cache`），所有第三方 Action 都固定到具体版本。
+- 锁定的 OrcaSlicer 提交写在一处（例如 workflow 的环境变量），升级 OrcaSlicer 数据时和回归数字一起改。
+- CI 只读：不推送、不发布产物；Windows 的编译和测试在 M17 加入。
+
+**依赖**：无。
+
+**完成标准**：推送后 CI 在 Linux 和 macOS 上都通过；真实数据回归在 CI 里实际运行（不是跳过）；故意制造一个格式或测试错误时 CI 失败；README 写明 CI 包含哪些检查。
+
+### M16：打包成 macOS 应用，做好跨平台准备
+
+**范围**
+- 生成可以双击启动的 `Orca Profile Studio.app`：应用图标、`Info.plist`（Bundle ID 沿用代码里的 `org.orca-profile-studio.app`、版本号取自 `Cargo.toml`）、release 构建。脚本可选 `--install`，把 `.app` 复制到 `~/Applications/`。
+- 不带参数启动时沿用现在的规则：先用上次的目录，再找旁边的 OrcaSlicer 检出；从 Finder 启动没有 `ORCA_PROFILES_DIR` 时也能正常工作。
+- 系统通知能可靠送达（M9 记录过：普通 `cargo run` 不保证投递，需要受信任的 `.app`）。
+- 为 M17 的 Windows 版做好在 Mac 上就能完成和测试的准备：
+  - 快捷键改用 GPUI 的 `secondary-` 写法（macOS 上是 Cmd，其他平台是 Ctrl），菜单和退出处理不再假设只有 macOS；
+  - 设置文件位置按平台选择：macOS 用 `~/Library/Application Support`，Windows 用 `%APPDATA%`，其他平台用 XDG；
+  - 清单里的 `sub_path` 读写一律用 `/`，路径的比较和查重不依赖字符串形式的分隔符，写回清单时绝不出现 `\`。
+
+**设计要点**
+- 用仓库里的脚本（例如 `scripts/bundle-macos.sh`）完成打包，不依赖额外安装的 cargo 子命令；图标从一张 1024×1024 的 PNG 用系统自带的 `sips` / `iconutil` 生成 `.icns`，没有图标源文件时先生成占位图标。脚本只写 `target/` 下的产物（`--install` 除外）。
 - 本地使用，不做签名公证和分发；需要时再说。
+- 「旁边的 OrcaSlicer 检出」用的是编译时的源码路径：从这个检出编译的 `.app` 能找到，拷到别的机器上会失效，文档里说明。
 - 从 Finder 启动时没有终端环境变量，`ORCA_LOCALIZATION_DIR` 这类覆盖只在命令行启动时有效，文档里说明。
 
 **依赖**：无。
 
-**完成标准**：脚本在本机生成 `.app`，双击能打开上次的 profiles 目录，设置和中文翻译正常，系统通知能显示；README 写明打包和启动方法。
+**完成标准**：脚本在本机生成 `.app`，双击能打开上次的 profiles 目录，设置和中文翻译正常，系统通知能显示；快捷键、设置路径和 `sub_path` 的改动有测试；README 写明打包和启动方法。
+
+### M17：Windows 版
+
+**范围**
+- 在 CI 的 Windows 机器和用户自己的 Windows 机器上编译 release 版，跑通全部测试（包括真实数据回归）。
+- 修好只在 Windows 上出现的差异，例如：
+  - `canonicalize` 返回的 `\\?\C:\…` 路径在界面显示和设置文件里的处理；
+  - 路径大小写、硬链接和临时目录在 NTFS 上的行为（M10 的事务写入依赖硬链接）；
+  - 系统语言检测、字体回退和窗口尺寸记忆。
+- 打包成免安装的 zip：带图标和版本信息的 exe（通过 `build.rs` 嵌入，只在 Windows 编译时生效），release 版不弹出控制台窗口，附一份简短的使用说明。
+
+**设计要点**
+- 不从 Mac 交叉编译（需要额外下载微软 SDK）。CI 里加一个 Windows 任务，用 MSVC 工具链编译并跑全部测试；界面在用户自己的 Windows 机器上实际使用验证。
+- Windows 上的打包脚本放在仓库里（例如 `scripts/package-windows.ps1`），只写 `target\` 下的产物。
+- 安装程序（MSI 或 Inno Setup）、代码签名和自动更新暂不做。
+- 我无法直接操作用户的 Windows 机器：界面验证由用户运行，把输出或报错交给我分析和修改；编译和测试的问题优先从 CI 日志排查。
+
+**依赖**：M15 的 CI，M16 的跨平台准备。
+
+**完成标准**：CI 的 Windows 任务和用户的 Windows 机器上 `cargo test --workspace` 都全部通过；解压 zip 后双击 exe 能打开 profiles 目录，编辑、保存、预设和机型管理、中文界面都能正常使用；保存后 `git diff` 里没有因为路径分隔符或换行产生的差异；README 写明 Windows 的编译和使用方法。
 
 ## 待定
 

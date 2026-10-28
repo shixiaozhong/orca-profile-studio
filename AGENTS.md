@@ -238,7 +238,8 @@ from the package directory).
   ending with a blank line and the trailer `Co-Authored-By: Codex (<model>) <noreply@openai.com>`,
   where `<model>` is the model this session runs on (e.g. `Codex (gpt-5-codex)`); if you are not
   sure of the model name, write `Co-Authored-By: Codex <noreply@openai.com>`. Commit only when
-  asked. No remote is configured yet.
+  asked. The remote `origin` is the public GitHub repository
+  `shixiaozhong/orca-profile-studio`; push only when asked.
 - One task, one commit: code, tests and docs (roadmap, README, AGENTS.md/CLAUDE.md) go together.
   A commit cannot contain its own hash (amending changes it), so never make a follow-up commit
   just to record a hash. Put the stage in the subject instead (`feat: … (M10)`), leave the
@@ -251,7 +252,10 @@ from the package directory).
 
 [docs/roadmap.md](docs/roadmap.md) (Chinese) is the roadmap: stages and status, key design decisions
 of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
-M1–M14. Next: M15 macOS app bundle. Git diff is pending (待定) and the OrcaSlicer upgrade check is
+M1–M14. Next: M15 CI on GitHub Actions (Linux and macOS, real-data regression from a sparse
+checkout of the public OrcaSlicer fork at the pinned commit), then M16 macOS app bundle plus
+cross-platform prep (secondary- key bindings, per-platform settings path, `/` in manifest
+sub_paths), then M17 Windows build and portable zip (CI Windows job plus the user's own machine). Git diff is pending (待定) and the OrcaSlicer upgrade check is
 deferred (暂缓); pending and deferred items get no M number until the user decides to do them.
 The G-code viewer and OrcaSlicer sync automation are deferred.
 When a stage is finished, move it to "已完成" there with its design decisions, mark it ✅, and update
