@@ -24,9 +24,10 @@ OrcaSlicer 的加载语义以 [profile_format_spec.md](reference/profile_format_
 | M12 | ✅ | 中英文界面、配置项术语与问题描述、中文搜索、所有窗口同步切换 | `f1a898c` |
 | M13 | ✅ | 新建、复制、修改、重命名、删除机型，同步清单与机器引用 | `95359a7` |
 | M14 | ✅ | 冗余覆盖值 info 检测、提到父项、未选子孙影响预览与整组撤销 | `7edab54` |
-| M15 | ✅ | 持续集成：GitHub Actions 上跑格式、lint、全部测试和真实数据回归 | 待补 |
-| M16 | 计划中 | 打包成可双击启动的 macOS 应用，为 Windows 做好跨平台准备 | |
-| M17 | 计划中 | Windows 版：在 Windows 上编译、测试并打包成免安装 zip | |
+| M15 | ✅ | 持续集成：GitHub Actions 上跑格式、lint、全部测试和真实数据回归 | `d64af19` |
+| M16 | 计划中 | schema 改为可选：工具只靠 profile 文件也完整可用，schema 从外部文件读取，移出仓库 | |
+| M17 | 计划中 | 打包成可双击启动的 macOS 应用，为 Windows 做好跨平台准备 | |
+| M18 | 计划中 | Windows 版：在 Windows 上编译、测试并打包成免安装 zip | |
 | — | 待定 | 和 Git 对比：工作区相对 HEAD 改了哪些预设、哪些键 | |
 | — | 暂缓 | 2D G-code 分层查看器 | |
 
@@ -386,10 +387,10 @@ M0.5 排在 M1 之后才做，编号沿用最初的规划。
 **关键设计决定**
 
 - **两平台分工**：Linux（Ubuntu 24.04）跑格式检查和 `profile-core` / `profile-tool` 的 clippy（`-D warnings`）与测试；macOS 15 跑整个 workspace 的 clippy 和测试，包括 headless 界面测试。studio 的界面测试依赖 macOS，不在 Linux 上跑。
-- **真实数据一定参与**：从公开的 [shixiaozhong/OrcaSlicer](https://github.com/shixiaozhong/OrcaSlicer) 用部分克隆和 sparse checkout 只取锁定提交的 `resources/profiles` 和 `localization/i18n/zh_CN`（约 81 MB，不下载约 1 GB 的完整仓库），按 `ORCA_COMMIT` 缓存。跑测试前先检查数据存在、提交正确、且与 `schema.json` 的 `source_commit` 一致，缺数据时直接失败，不会让真实数据测试悄悄跳过。锁定的提交只写在 workflow 的 `ORCA_COMMIT` 一处，升级数据时与 Rust 回归、Python 基线和 schema 一起改。
+- **真实数据一定参与**：用普通 git 命令（而不是 `actions/checkout`，OrcaSlicer 树里的 `src/tiff` 子模块条目没有 `.gitmodules` 地址，会让它的收尾步骤失败）从公开的 [shixiaozhong/OrcaSlicer](https://github.com/shixiaozhong/OrcaSlicer) 用部分克隆和 sparse checkout 只取锁定提交的 `resources/profiles` 和 `localization/i18n/zh_CN`（约 81 MB，不下载约 1 GB 的完整仓库），按 `ORCA_COMMIT` 缓存。跑测试前先检查数据存在、提交正确、且与 `schema.json` 的 `source_commit` 一致，缺数据时直接失败，不会让真实数据测试悄悄跳过。锁定的提交只写在 workflow 的 `ORCA_COMMIT` 一处，升级数据时与 Rust 回归、Python 基线和 schema 一起改。
 - **独立统计核对**：`profile_format_stats.py --check` 用脚本内的固定基线核对统计，不从 Rust 程序或输入数据推导期望值；CI 在不带和带 schema 两种模式下各跑一次，不一致时退出码为 1。
 - **最低 Rust 版本按实测修正为 1.95**：原声明的 1.88 编译不了现有依赖（serde-saphyr / smol_str 要求 1.89，GPUI 的 `std::hint::cold_path` 要求 1.95）。保留依赖版本、改声明；MSRV 任务从 `Cargo.toml` 读取版本，在两平台上 `cargo check` 全部 targets，避免两处数字漂移。
-- **可复现、只读**：所有构建、lint 和测试都用 `--locked`；第三方 Action 固定到提交 SHA（已核对与版本标签一致）；依赖按系统和工具链缓存。CI 只读仓库（`contents: read`，不保留凭据），不推送也不发布产物。只取消 PR 上被新推送取代的运行，`main` 上的每个提交都有自己的结果。Windows 的编译和测试在 M17 加入。
+- **可复现、只读**：所有构建、lint 和测试都用 `--locked`；第三方 Action 固定到提交 SHA（已核对与版本标签一致）；依赖按系统和工具链缓存。CI 只读仓库（`contents: read`，不保留凭据），不推送也不发布产物。只取消 PR 上被新推送取代的运行，`main` 上的每个提交都有自己的结果。Windows 的编译和测试在 M18 加入。
 
 **验证**：本地在独立稀疏检出的锁定数据上，156 个 Rust 测试和两套 Python 统计通过；Rust 1.95 的 workspace 全 targets 检查通过。临时副本中加入孤立文件、指定缺失的数据目录或制造格式错误时，相关检查都返回失败。GitHub 托管机器上的首次运行在推送后查看。
 
@@ -397,15 +398,42 @@ M0.5 排在 M1 之后才做，编号沿用最初的规划。
 
 ## 后续阶段
 
-M0–M15 已完成。接下来依次是 M16：打包成 macOS 应用并做好跨平台准备；M17：Windows 版。「和 Git 对比」暂时待定，OrcaSlicer 升级检查自动化仍在「暂缓」；它们都不占用阶段编号。
+M0–M15 已完成。接下来依次是 M16：schema 改为可选；M17：打包成 macOS 应用并做好跨平台准备；M18：Windows 版。「和 Git 对比」暂时待定，OrcaSlicer 升级检查自动化仍在「暂缓」；它们都不占用阶段编号。
 
-### M16：打包成 macOS 应用，做好跨平台准备
+### M16：schema 改为可选
+
+**场景**：`schema.json` 是从 OrcaSlicer 源码导出的配置项"字典"（类型、默认值、取值规则、名称和说明），profile 文件里没有这些信息。但把它编译进程序，等于让工具和某个 OrcaSlicer 版本强绑定，导出程序还在 OrcaSlicer 仓库的本地分支上，文件本身也适用 AGPL。用户决定：工具只靠 profile 文件就要完整可用，schema 作为可选的增强层，由用户自己生成和更新，用路径指定。
+
+**范围**
+- **移出仓库、不再内嵌**：删除 `crates/profile-core/schema/schema.json` 和 `Schema::bundled()` / `include_str!`；schema 只从外部文件读取（同时删除 `crates/profile-core/schema/README.md`，来源说明改写进规格文档和 README）。
+- **指定方式**：命令行 `--schema <文件>` 或环境变量 `ORCA_SCHEMA`；studio 在设置里记住 schema 文件路径，命令面板提供「选择 schema 文件…」和「不使用 schema」，界面显示当前 schema 的来源提交号或"未使用 schema"。不自动到 OrcaSlicer 目录里寻找。
+- **没有 schema 时的行为**（有 schema 时与现在完全一致）：
+  - Values / 对比：名称列显示键名，类别按"未分类"；最终值只算到 profile 文件这一层，整条继承链都没写的键不显示；
+  - 编辑控件按当前值的形态选择（单值用单行输入框，数组每行一项），没有勾选框和枚举下拉；
+  - 问题面板只有结构类问题（清单、继承、重名、加载顺序），值校验、未知键、过时键、改名键关闭；
+  - 批量编辑的键列表改用 profile 里实际出现过的键，追加 / 移除元素对所有数组值开放，不再因缺少 schema 报错；
+  - 多余覆盖值只和父项比较，不考虑默认值，也不排除不属于该类型的键；
+  - 搜索只按键名；配置项的中文名称（M12）关闭，界面本身的中文照常；
+  - 兼容性条件中的变量按字符串处理，数值大小比较可能和 OrcaSlicer 不一致，界面给出提示。
+  - 预设管理、机型管理不受影响。
+
+**设计要点**
+- core 已经区分 `Repository::load` 和 `load_with_schema`；本阶段把所有"假设一定有 schema"的地方改成按有无 schema 分别处理，并让 `Catalog`、界面和命令行从同一个可选的 schema 来源读取。
+- 单元测试改用一份手写的小型测试 schema（只包含测试用到的配置项，不从 OrcaSlicer 导出）；真实数据上的 schema 回归测试（`schema_*` 计数、带 schema 的 Python 统计）只在提供了 schema 文件时运行。
+- CI 去掉对内嵌 schema 的检查（`source_commit` 一致性、带 schema 的统计核对），只跑不依赖 schema 的部分和用小型测试 schema 的单元测试。代价是真实数据的 schema 回归不再进 CI，只能在本地指定 schema 文件后运行。
+- 生成 schema 的方式先沿用 OrcaSlicer 仓库里的 C++ 导出程序；以后是否改为本仓库的源码解析脚本，另行决定。`legacy.rs` 的旧键改名规则仍在代码里，与有无 schema 无关。
+
+**依赖**：M15 的 CI。
+
+**完成标准**：仓库里不再有从 OrcaSlicer 导出的文件；不指定 schema 时，命令行和 studio 的浏览、编辑、批量编辑、预设和机型管理都能正常使用，界面明确显示"未使用 schema"；指定 schema 文件后，行为和现在一致，真实数据的 schema 回归在本地通过；CI 通过；规格文档、README、AGENTS.md / CLAUDE.md 写明 schema 的生成和指定方法。
+
+### M17：打包成 macOS 应用，做好跨平台准备
 
 **范围**
 - 生成可以双击启动的 `Orca Profile Studio.app`：应用图标、`Info.plist`（Bundle ID 沿用代码里的 `org.orca-profile-studio.app`、版本号取自 `Cargo.toml`）、release 构建。脚本可选 `--install`，把 `.app` 复制到 `~/Applications/`。
 - 不带参数启动时沿用现在的规则：先用上次的目录，再找旁边的 OrcaSlicer 检出；从 Finder 启动没有 `ORCA_PROFILES_DIR` 时也能正常工作。
 - 系统通知能可靠送达（M9 记录过：普通 `cargo run` 不保证投递，需要受信任的 `.app`）。
-- 为 M17 的 Windows 版做好在 Mac 上就能完成和测试的准备：
+- 为 M18 的 Windows 版做好在 Mac 上就能完成和测试的准备：
   - 快捷键改用 GPUI 的 `secondary-` 写法（macOS 上是 Cmd，其他平台是 Ctrl），菜单和退出处理不再假设只有 macOS；
   - 设置文件位置按平台选择：macOS 用 `~/Library/Application Support`，Windows 用 `%APPDATA%`，其他平台用 XDG；
   - 清单里的 `sub_path` 读写一律用 `/`，路径的比较和查重不依赖字符串形式的分隔符，写回清单时绝不出现 `\`。
@@ -420,7 +448,7 @@ M0–M15 已完成。接下来依次是 M16：打包成 macOS 应用并做好跨
 
 **完成标准**：脚本在本机生成 `.app`，双击能打开上次的 profiles 目录，设置和中文翻译正常，系统通知能显示；快捷键、设置路径和 `sub_path` 的改动有测试；README 写明打包和启动方法。
 
-### M17：Windows 版
+### M18：Windows 版
 
 **范围**
 - 在 CI 的 Windows 机器和用户自己的 Windows 机器上编译 release 版，跑通全部测试（包括真实数据回归）。
@@ -436,7 +464,7 @@ M0–M15 已完成。接下来依次是 M16：打包成 macOS 应用并做好跨
 - 安装程序（MSI 或 Inno Setup）、代码签名和自动更新暂不做。
 - 我无法直接操作用户的 Windows 机器：界面验证由用户运行，把输出或报错交给我分析和修改；编译和测试的问题优先从 CI 日志排查。
 
-**依赖**：M15 的 CI，M16 的跨平台准备。
+**依赖**：M15 的 CI，M17 的跨平台准备。
 
 **完成标准**：CI 的 Windows 任务和用户的 Windows 机器上 `cargo test --workspace` 都全部通过；解压 zip 后双击 exe 能打开 profiles 目录，编辑、保存、预设和机型管理、中文界面都能正常使用；保存后 `git diff` 里没有因为路径分隔符或换行产生的差异；README 写明 Windows 的编译和使用方法。
 

@@ -50,19 +50,18 @@ jobs:
         with:
           path: .ci-data/OrcaSlicer
           key: orca-data-${{ runner.os }}-${{ env.ORCA_COMMIT }}
-      - name: Check out pinned OrcaSlicer data
+      # Plain git instead of actions/checkout: the OrcaSlicer tree has a gitlink (src/tiff) without a
+      # .gitmodules entry, which makes checkout's post-step `git submodule foreach` fail.
+      - name: Fetch pinned OrcaSlicer data
         if: steps.orca-data.outputs.cache-hit != 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: shixiaozhong/OrcaSlicer
-          ref: ${{ env.ORCA_COMMIT }}
-          path: .ci-data/OrcaSlicer
-          persist-credentials: false
-          # Sparse checkout automatically uses a blob:none partial clone.
-          sparse-checkout-cone-mode: false
-          sparse-checkout: |
-            /resources/profiles/
-            /localization/i18n/zh_CN/
+        run: |
+          rm -rf .ci-data/OrcaSlicer
+          git init -q .ci-data/OrcaSlicer
+          cd .ci-data/OrcaSlicer
+          git remote add origin https://github.com/shixiaozhong/OrcaSlicer.git
+          git sparse-checkout set --no-cone /resources/profiles/ /localization/i18n/zh_CN/
+          git fetch -q --depth 1 --filter=blob:none origin "$ORCA_COMMIT"
+          git -c advice.detachedHead=false checkout -q --detach FETCH_HEAD
       - name: Require regression data
         run: |
           test "$(git -C .ci-data/OrcaSlicer rev-parse HEAD)" = "$ORCA_COMMIT"

@@ -219,4 +219,4 @@ python3 -I docs/reference/profile_format_stats.py ../OrcaSlicer/resources/profil
 
 ## 路线图
 
-已完成 M0 到 M15。接下来是 M16 打包成 macOS 应用并做好跨平台准备、M17 Windows 版；和 Git 对比暂时待定。各阶段的范围、关键设计决定、依赖和完成标准见 [docs/roadmap.md](docs/roadmap.md)。
+已完成 M0 到 M15。接下来是 M16 schema 改为可选、M17 打包成 macOS 应用并做好跨平台准备、M18 Windows 版；和 Git 对比暂时待定。各阶段的范围、关键设计决定、依赖和完成标准见 [docs/roadmap.md](docs/roadmap.md)。
