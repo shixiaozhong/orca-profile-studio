@@ -67,7 +67,9 @@ jobs:
           git init -q .ci-data/OrcaSlicer
           cd .ci-data/OrcaSlicer
           git remote add origin https://github.com/shixiaozhong/OrcaSlicer.git
-          git sparse-checkout set --no-cone /resources/profiles/
+          # No leading slash: Git Bash on Windows rewrites arguments that start with `/`. A pattern with
+          # an inner slash is anchored to the repository root anyway.
+          git sparse-checkout set --no-cone resources/profiles/
           git fetch -q --depth 1 --filter=blob:none origin "$ORCA_COMMIT"
           git -c advice.detachedHead=false checkout -q --detach FETCH_HEAD
       - name: Require regression data

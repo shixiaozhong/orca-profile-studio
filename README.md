@@ -144,6 +144,23 @@ profiles 目录按以下顺序确定：
 - `warning`：能加载，但很可能不是作者的本意；
 - `info`：仅供参考。
 
+### Windows
+
+在 Windows 上用 MSVC 工具链编译（不支持从 Mac 交叉编译）：
+
+```powershell
+cargo run --release -p profile-studio -- D:\OrcaSlicer\resources\profiles
+powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1
+```
+
+打包脚本生成 `target\release\package\orca-profile-studio-<版本>-windows-<x64|arm64>.zip`，里面是带图标和版本信息的 `Orca Profile Studio.exe` 和一份使用说明。解压后双击 exe 即可，不需要安装。release 版不弹出控制台窗口。exe 没有签名，第一次运行时 SmartScreen 可能拦截，点「更多信息」→「仍要运行」。
+
+- Windows 版没有菜单栏：新窗口、关闭、退出用 Ctrl+N / Ctrl+W / Ctrl+Q，其余操作在工具栏和 Ctrl+K 里；关掉最后一个窗口时退出。
+- 路径显示为普通的 `D:\…` 形式（不是 `\\?\D:\…`）。清单里的 `sub_path` 写回时一律用 `/`。
+- 保存保留文件原有的换行（CRLF 或 LF）和 BOM，所以 Git 的 `core.autocrlf` 设成什么都不会产生额外差异。
+- 预设管理优先用硬链接原子地安装文件；在不支持硬链接的盘（FAT/exFAT U 盘、部分网络盘）上改为新建文件再写入，同样不会覆盖已有文件。
+- `.ico` 由 `scripts/icon-windows.sh`（在 Mac 上运行）从同一张图标 PNG 生成。
+
 ## 使用
 
 需要 Rust 1.88 及以上版本。
@@ -204,8 +221,9 @@ cargo test --locked --workspace
 
 - **Linux（Ubuntu 24.04）**：格式检查，`profile-core` / `profile-tool` 的 clippy 和测试。
 - **macOS 15**：整个 workspace 的 clippy 和测试，包括 headless 界面测试。
-- **最低 Rust 版本**：两平台都从 `Cargo.toml` 读取 `rust-version`，用该版本检查对应包的全部 targets。
-- **真实数据回归**：两平台的测试任务都从公开 OrcaSlicer fork 稀疏检出锁定提交的 profiles，先检查数据存在及提交正确，再设置 `ORCA_PROFILES_DIR` 运行测试，避免缺数据时静默跳过。
+- **Windows（Server 2025，MSVC）**：整个 workspace 的 clippy 和测试，包括界面测试；保留 Git 默认的换行转换，profiles 按 CRLF 检出；最后用打包脚本生成 zip（不上传）并核对 exe 的版本信息。
+- **最低 Rust 版本**：三个平台都从 `Cargo.toml` 读取 `rust-version`，用该版本检查对应包的全部 targets。
+- **真实数据回归**：三个平台的测试任务都从公开 OrcaSlicer fork 稀疏检出锁定提交的 profiles，先检查数据存在及提交正确，再设置 `ORCA_PROFILES_DIR` 运行测试，避免缺数据时静默跳过。
 - **独立统计核对**：Python 参考脚本检查固定统计数字；不一致时退出码为 1。
 
 所有构建、lint 和测试均使用 `--locked`；Action 固定到提交 SHA，按系统和工具链缓存依赖，锁定的 OrcaSlicer 数据按 `ORCA_COMMIT` 缓存。只取消 PR 上被新推送取代的运行，`main` 上的每个提交都有自己的结果。CI 只读仓库，不推送或发布产物。数据提交集中在 workflow 的 `ORCA_COMMIT`，升级数据时也要更新 Rust 测试和 Python 的 `--check` 基线。
