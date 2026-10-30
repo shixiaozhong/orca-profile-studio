@@ -93,6 +93,9 @@ pub struct Repository {
     sources: HashMap<PathBuf, Option<u64>>,
     /// Contents read ahead by [`prefetch`], relative to `root`; taken while loading, empty after.
     prefetched: HashMap<PathBuf, Vec<u8>>,
+    /// The JSON files found in each vendor's folder (by vendor index), sorted, relative to `root`;
+    /// walked once for [`prefetch`] and taken by `find_orphans`.
+    vendor_files: Vec<Vec<PathBuf>>,
 }
 
 struct ManifestItem {
@@ -120,8 +123,9 @@ impl Repository {
     pub fn load(root: impl AsRef<Path>) -> Result<Self, LoadError> {
         let root = root.as_ref().to_path_buf();
         let vendor_names = vendor_names(&root)?;
-        let prefetched = prefetch(&root, &vendor_names);
-        let mut repo = Repository { root, prefetched, ..Default::default() };
+        let vendor_files: Vec<Vec<PathBuf>> = vendor_names.iter().map(|name| vendor_json_files(&root, name)).collect();
+        let prefetched = prefetch(&root, &vendor_names, &vendor_files);
+        let mut repo = Repository { root, prefetched, vendor_files, ..Default::default() };
         let mut library = HashMap::new();
         for name in &vendor_names {
             repo.load_vendor(name, &mut library);
@@ -686,17 +690,8 @@ impl Repository {
 
     fn find_orphans(&mut self) {
         let mut orphans = Vec::new();
-        for vendor in &self.vendors {
-            let mut files = Vec::new();
-            collect_json_files(&self.root.join(&vendor.name), true, &mut files);
-            files.sort();
-            for file in files {
-                if let Ok(relative) = file.strip_prefix(&self.root)
-                    && !self.listed.contains(relative)
-                {
-                    orphans.push((vendor.id, relative.to_path_buf()));
-                }
-            }
+        for (vendor, files) in self.vendors.iter().zip(std::mem::take(&mut self.vendor_files)) {
+            orphans.extend(files.into_iter().filter(|file| !self.listed.contains(file)).map(|file| (vendor.id, file)));
         }
         for (vendor, path) in orphans {
             self.issue(vendor, &path, None, IssueKind::OrphanFile);
@@ -780,13 +775,12 @@ fn library_priority(file: &Path) -> u8 {
 /// overlaps the per-file cost of opening and reading, which dominates a first load with cold
 /// caches or an antivirus scanning each file (Windows Defender). Unreadable files are left out
 /// and read again where they are needed, which reports the error.
-fn prefetch(root: &Path, vendor_names: &[String]) -> HashMap<PathBuf, Vec<u8>> {
-    let mut files: Vec<PathBuf> = vendor_names.iter().map(|name| PathBuf::from(format!("{name}.json"))).collect();
-    for name in vendor_names {
-        let mut found = Vec::new();
-        collect_json_files(&root.join(name), true, &mut found);
-        files.extend(found.into_iter().filter_map(|file| file.strip_prefix(root).ok().map(Path::to_path_buf)));
-    }
+fn prefetch(root: &Path, vendor_names: &[String], vendor_files: &[Vec<PathBuf>]) -> HashMap<PathBuf, Vec<u8>> {
+    let files: Vec<PathBuf> = vendor_names
+        .iter()
+        .map(|name| PathBuf::from(format!("{name}.json")))
+        .chain(vendor_files.iter().flatten().cloned())
+        .collect();
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(2, 16);
     // Each thread takes the next unread file, so slow files (a cold folder, a long scan) do not
     // leave the other threads idle the way fixed shares would.
@@ -809,10 +803,25 @@ fn prefetch(root: &Path, vendor_names: &[String]) -> HashMap<PathBuf, Vec<u8>> {
     })
 }
 
+/// The JSON files under `root/<vendor>`, recursively, sorted and relative to `root`.
+fn vendor_json_files(root: &Path, vendor: &str) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    collect_json_files(&root.join(vendor), true, &mut files);
+    files.sort();
+    files.into_iter().filter_map(|file| file.strip_prefix(root).ok().map(Path::to_path_buf)).collect()
+}
+
 fn collect_json_files(dir: &Path, recursive: bool, out: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(dir) else { return };
-    for path in entries.filter_map(Result::ok).map(|entry| entry.path()) {
-        if path.is_dir() {
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        // The listing already carries the entry type (no extra metadata call on Windows); only a
+        // symbolic link needs `is_dir`, which follows it.
+        let is_dir = match entry.file_type() {
+            Ok(kind) if !kind.is_symlink() => kind.is_dir(),
+            _ => path.is_dir(),
+        };
+        if is_dir {
             if recursive {
                 collect_json_files(&path, true, out);
             }
