@@ -26,8 +26,8 @@ OrcaSlicer 的加载语义以 [profile_format_spec.md](reference/profile_format_
 | M14 | ✅ | 冗余覆盖值 info 检测、提到父项、未选子孙影响预览与整组撤销 | `7edab54` |
 | M15 | ✅ | 持续集成：GitHub Actions 上跑格式、lint、全部测试和真实数据回归 | `d64af19` |
 | M16 | ✅ | 移除 schema：工具只分析 profile 文件，删除内嵌的 schema.json 及依赖它的功能 | `ab40649` |
-| M17 | ✅ | 打包成可双击启动的 macOS 应用，为 Windows 做好跨平台准备 | 待补 |
-| M18 | 计划中 | Windows 版：在 Windows 上编译、测试并打包成免安装 zip | |
+| M17 | ✅ | 打包成可双击启动的 macOS 应用，为 Windows 做好跨平台准备 | `940201a` |
+| M18 | ✅ | Windows 版：在 Windows 上编译、测试并打包成免安装 zip | 待补 |
 | — | 待定 | 和 Git 对比：工作区相对 HEAD 改了哪些预设、哪些键 | |
 | — | 暂缓 | 2D G-code 分层查看器 | |
 
@@ -408,7 +408,7 @@ M0.5 排在 M1 之后才做，编号沿用最初的规划。
 - **真实数据一定参与**：用普通 git 命令（而不是 `actions/checkout`，OrcaSlicer 树里的 `src/tiff` 子模块条目没有 `.gitmodules` 地址，会让它的收尾步骤失败）从公开的 [shixiaozhong/OrcaSlicer](https://github.com/shixiaozhong/OrcaSlicer) 用部分克隆和 sparse checkout 只取锁定提交的 `resources/profiles` 和 `localization/i18n/zh_CN`（约 81 MB，不下载约 1 GB 的完整仓库），按 `ORCA_COMMIT` 缓存。跑测试前先检查数据存在、提交正确、且与 `schema.json` 的 `source_commit` 一致，缺数据时直接失败，不会让真实数据测试悄悄跳过。锁定的提交只写在 workflow 的 `ORCA_COMMIT` 一处，升级数据时与 Rust 回归、Python 基线和 schema 一起改。
 - **独立统计核对**：`profile_format_stats.py --check` 用脚本内的固定基线核对统计，不从 Rust 程序或输入数据推导期望值；CI 在不带和带 schema 两种模式下各跑一次，不一致时退出码为 1。
 - **最低 Rust 版本按实测修正为 1.95**：原声明的 1.88 编译不了现有依赖（serde-saphyr / smol_str 要求 1.89，GPUI 的 `std::hint::cold_path` 要求 1.95）。保留依赖版本、改声明；MSRV 任务从 `Cargo.toml` 读取版本，在两平台上 `cargo check` 全部 targets，避免两处数字漂移。
-- **可复现、只读**：所有构建、lint 和测试都用 `--locked`；第三方 Action 固定到提交 SHA（已核对与版本标签一致）；依赖按系统和工具链缓存。CI 只读仓库（`contents: read`，不保留凭据），不推送也不发布产物。只取消 PR 上被新推送取代的运行，`main` 上的每个提交都有自己的结果。Windows 的编译和测试在 M18 加入。
+- **可复现、只读**：所有构建、lint 和测试都用 `--locked`；第三方 Action 固定到提交 SHA（已核对与版本标签一致）；依赖按系统和工具链缓存。CI 只读仓库（`contents: read`，不保留凭据），不推送也不发布产物。只取消 PR 上被新推送取代的运行，`main` 上的每个提交都有自己的结果。Windows 的编译、测试和打包在 M18 加入。
 
 **验证**：本地在独立稀疏检出的锁定数据上，156 个 Rust 测试和两套 Python 统计通过；Rust 1.95 的 workspace 全 targets 检查通过。临时副本中加入孤立文件、指定缺失的数据目录或制造格式错误时，相关检查都返回失败。GitHub 托管机器上的首次运行在推送后查看。
 
@@ -458,29 +458,28 @@ M0.5 排在 M1 之后才做，编号沿用最初的规划。
 
 ---
 
-## 后续阶段
-
-M0–M17 已完成。接下来是 M18：Windows 版。「和 Git 对比」暂时待定，OrcaSlicer 升级检查自动化仍在「暂缓」；它们都不占用阶段编号。
-
 ### M18：Windows 版
 
-**范围**
-- 在 CI 的 Windows 机器和用户自己的 Windows 机器上编译 release 版，跑通全部测试（包括真实数据回归）。
-- 修好只在 Windows 上出现的差异，例如：
-  - `canonicalize` 返回的 `\\?\C:\…` 路径在界面显示和设置文件里的处理；
-  - 路径大小写、硬链接和临时目录在 NTFS 上的行为（M10 的事务写入依赖硬链接）；
-  - 系统语言检测、字体回退和窗口尺寸记忆。
-- 打包成免安装的 zip：带图标和版本信息的 exe（通过 `build.rs` 嵌入，只在 Windows 编译时生效），release 版不弹出控制台窗口，附一份简短的使用说明。
+**范围**：在 GitHub Actions 的 Windows 机器上用 MSVC 编译整个 workspace，跑通全部测试（含真实数据回归和 headless 界面测试），并打包成免安装 zip：带图标和版本信息的 `Orca Profile Studio.exe` 加一份中文使用说明。修掉只在 Windows 上出现的路径问题。
 
-**设计要点**
-- 不从 Mac 交叉编译（需要额外下载微软 SDK）。CI 里加一个 Windows 任务，用 MSVC 工具链编译并跑全部测试；界面在用户自己的 Windows 机器上实际使用验证。
-- Windows 上的打包脚本放在仓库里（例如 `scripts/package-windows.ps1`），只写 `target\` 下的产物。
-- 安装程序（MSI 或 Inno Setup）、代码签名和自动更新暂不做。
-- 我无法直接操作用户的 Windows 机器：界面验证由用户运行，把输出或报错交给我分析和修改；编译和测试的问题优先从 CI 日志排查。
+**关键设计决定**
 
-**依赖**：M15 的 CI，M17 的跨平台准备。
+- **不交叉编译**：GPUI 的构建脚本要用 Windows 的资源编译器，Mac 上只能对 core 和 CLI 做 `cargo check --target x86_64-pc-windows-msvc`。CI 的 `windows-2025` 任务做 clippy、全部测试（`--no-fail-fast`，一次看到所有失败）、Python 统计核对，最后运行打包脚本（zip 不上传）。MSRV 检查也加了 Windows。
+- **保留 Git 的换行转换**：Windows 任务不关闭 `core.autocrlf`，profiles 按 CRLF 检出，和一般的 Windows 机器一致；Rust 回归、格式复现测试和 Python 基线都不受影响。Git Bash 会把以 `/` 开头的参数改写成 Windows 路径，所以稀疏检出规则写成 `resources/profiles/`（中间有 `/` 的规则本来就相对仓库根目录）。
+- **不出现 `\\?\` 路径**：打开目录和预设管理改用 `dunce::canonicalize`。`std::fs::canonicalize` 在 Windows 上返回 verbatim 路径，界面和设置文件里会显示 `\\?\C:\…`，而且这种路径不接受 `/`，原来会让机型封面图的回退路径检查失效；那里的拼接也改成按路径组件。
+- **硬链接不可用时复制**：事务写入优先用硬链接原子地安装文件（NTFS 支持）。FAT/exFAT 和部分网络盘不支持硬链接，这时改为新建文件（`create_new`）再写入，同样不会覆盖已有文件；回滚也走同一个函数。两种路径都有测试（硬链接通过注入的函数模拟不可用）。
+- **exe 资源**：`build.rs` 只在目标是 Windows 时运行，把图标（资源 ID 1，GPUI 也用它作窗口图标）和 `VERSIONINFO` 写成 `.rc` 放到 `OUT_DIR`，用 `embed-resource` 编译，版本号取自 `Cargo.toml`。宏传字符串到 `rc.exe` 时引号容易出错，所以直接生成文本。`.ico` 由 `scripts/icon-windows.sh` 从 macOS 图标 PNG 裁掉外边距后生成（16–256 px），提交在仓库里。release 版用 `windows_subsystem = "windows"`，不弹控制台；debug 版保留控制台以便看 stderr。
+- **打包脚本**：`scripts/package-windows.ps1` 兼容 Windows PowerShell 5.1，按 `rustc` 的 host 生成 `orca-profile-studio-<版本>-windows-<x64|arm64>.zip`，只写 `target\`，最后核对 exe 里的版本号。使用说明 `README.txt` 带 BOM 和 CRLF（`.gitattributes` 里设为 `-text`，各平台检出都按原字节），旧版记事本也能正确显示中文。
+- **没有菜单栏**：GPUI 在 Windows 上不画原生菜单栏（M17 加的 File 菜单 Exit 在 Windows 上看不到），新窗口、关闭、退出用 Ctrl+N / Ctrl+W / Ctrl+Q，其余操作在工具栏和 Ctrl+K 里；使用说明里写明。安装程序、代码签名和自动更新不做。
+- **测试按平台写期望值**：期望值里的相对路径用 `sub_path::to_manifest` 统一成 `/`，界面上显示的路径按 `Path::join` 生成；改相对目录的界面测试把临时目录放在 `target/test-fixtures` 下，因为 Windows 的临时目录可能和工作区不在同一个盘，没有相对路径可达。
 
-**完成标准**：CI 的 Windows 任务和用户的 Windows 机器上 `cargo test --workspace` 都全部通过；解压 zip 后双击 exe 能打开 profiles 目录，编辑、保存、预设和机型管理、中文界面都能正常使用；保存后 `git diff` 里没有因为路径分隔符或换行产生的差异；README 写明 Windows 的编译和使用方法。
+**验证**：合并前的 M18 分支在 CI 上全部通过（run 41089875555）：Windows 任务的 clippy、全部测试、Python 统计核对、打包和版本号核对，以及 Linux、macOS 和三个平台的 MSRV 检查。Windows 任务首次运行约 40 分钟（含 release 打包），依赖缓存后会缩短。与「打开目录」入口的改动合并后，本地 152 个 Rust 测试（core 68、真实数据回归 8、studio 76）通过，clippy 无警告；合并后的 CI 结果在提交后查看。用户在自己的 Windows 机器上解压 zip 实际使用的验证在提交之后进行，发现问题单独修复。
+
+---
+
+## 后续阶段
+
+M0–M18 已完成，目前没有计划中的阶段。「和 Git 对比」暂时待定，OrcaSlicer 升级检查自动化仍在「暂缓」；它们都不占用阶段编号。
 
 ## 待定
 

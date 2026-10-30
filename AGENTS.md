@@ -15,7 +15,7 @@ crates/
 └── profile-studio/  # gpui-kit desktop app
 docs/roadmap.md      # roadmap: stages, design decisions, done criteria
 docs/reference/      # profile format spec + Python reference stats script
-scripts/             # bundle-macos.sh (.app bundle), icon.swift (draws the icon source PNG)
+scripts/             # bundle-macos.sh (.app), package-windows.ps1 (zip), icon.swift / icon-windows.sh (icons)
 AGENTS.md            # this file (Codex); CLAUDE.md is the Claude Code counterpart
 ```
 
@@ -212,6 +212,11 @@ from the package directory).
   open windows through `open_with_settings(cx, dir, None)`, which keeps settings in memory, so they
   never touch the user's file. Resizable splits keep an `Entity<ResizableState>`; its `Resized`
   event (also emitted by `resize_panel`) is where sizes are saved.
+- Windows (M18): no cross-compiling from the Mac (GPUI's build script needs Windows' resource
+  compiler); CI's `windows-2025` job is the check. Canonicalize with `dunce` (never a `\\?\` path in UI
+  or settings, and verbatim paths reject `/`); build paths from components; tests compare manifest
+  forms via `sub_path::to_manifest` and displayed paths via `Path::join`. GPUI draws no menu bar on
+  Windows. `build.rs` embeds the icon/version only for Windows targets.
 - Key bindings and test key presses use `secondary-` (⌘ on macOS, Ctrl elsewhere), never `cmd-`;
   UI text shows a shortcut through `i18n::shortcut(..)`, never a literal ⌘. Quit lives in the app
   menu on macOS and at the end of File elsewhere. System notifications only work from the `.app`
@@ -246,16 +251,16 @@ from the package directory).
   the next commit that edits the roadmap anyway.
 - `Cargo.toml` deliberately has no `license` field; the user has not chosen one.
 - `rust-version = "1.95"` matches GPUI's use of `std::hint::cold_path`; CI checks the locked workspace
-  on Linux and macOS. serde-saphyr and smol_str already require 1.89. The local toolchain is 1.97.
+  on Linux, macOS and Windows. serde-saphyr and smol_str already require 1.89. The local toolchain is 1.97.
 
 ## Roadmap
 
 [docs/roadmap.md](docs/roadmap.md) (Chinese) is the roadmap: stages and status, key design decisions
 of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
-M1–M17 (M15: CI on GitHub Actions, Linux and macOS, real-data regression from a cached sparse
-checkout of the public OrcaSlicer fork at the pinned commit; M16: schema removed, profiles only;
-M17: `.app` bundle script, secondary- key bindings, per-platform menus and settings path, `/` in
-manifest sub_paths). Next: M18 Windows build and portable zip (CI Windows job plus the user's own machine). Git diff is pending (待定) and the OrcaSlicer upgrade check is
+M1–M18 (M15: CI on GitHub Actions, real-data regression from a cached sparse checkout of the
+public OrcaSlicer fork at the pinned commit; M16: schema removed, profiles only; M17: `.app` bundle
+script, secondary- key bindings, per-platform menus and settings path, `/` in manifest sub_paths;
+M18: Windows CI job and portable zip). No stage is planned next. Git diff is pending (待定) and the OrcaSlicer upgrade check is
 deferred (暂缓); pending and deferred items get no M number until the user decides to do them.
 The G-code viewer and OrcaSlicer sync automation are deferred.
 When a stage is finished, move it to "已完成" there with its design decisions, mark it ✅, and update
