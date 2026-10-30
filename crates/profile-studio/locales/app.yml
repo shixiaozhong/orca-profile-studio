@@ -560,6 +560,9 @@ menu.quit:
 menu.exit:
   en: "Exit"
   zh-CN: "退出"
+menu.open_folder:
+  en: "Open Folder…"
+  zh-CN: "打开目录…"
 menu.new_window:
   en: "New Window…"
   zh-CN: "新建窗口…"
@@ -972,8 +975,26 @@ app.search_hint:
   en: "Search presets, options and values; run commands (%{key})"
   zh-CN: "搜索预设、配置项和值，或运行命令（%{key}）"
 app.open_folder:
-  en: "Open…"
-  zh-CN: "打开…"
+  en: "Open folder…"
+  zh-CN: "打开目录…"
+app.open_last:
+  en: "Open last folder"
+  zh-CN: "打开上次的目录"
+app.open_last_on_startup:
+  en: "Open the last folder at startup"
+  zh-CN: "启动时打开上次的目录"
+palette.startup_open_last:
+  en: "Startup: open the last folder"
+  zh-CN: "启动时：打开上次的目录"
+palette.startup_empty:
+  en: "Startup: open no folder"
+  zh-CN: "启动时：不打开目录"
+app.open_folder_hint:
+  en: "Choose the profiles directory to analyze (%{key})"
+  zh-CN: "选择要分析的预设目录（%{key}）"
+app.not_profiles:
+  en: "it has no vendor profiles (a <Vendor>.json beside a <Vendor> folder). Choose OrcaSlicer's resources/profiles, or the OrcaSlicer checkout or installation that contains it."
+  zh-CN: "这里没有厂商配置（与「厂商」文件夹并列的「厂商」.json）。选择 OrcaSlicer 的 resources/profiles，或包含它的 OrcaSlicer 源码或安装目录。"
 app.reload:
   en: "Reload profiles"
   zh-CN: "重新加载预设"
@@ -984,8 +1005,8 @@ app.refreshing:
   en: "Refreshing"
   zh-CN: "正在刷新"
 app.empty:
-  en: "Open OrcaSlicer's resources/profiles directory to start."
-  zh-CN: "打开 OrcaSlicer 的 resources/profiles 目录以开始。"
+  en: "Choose the profiles directory to analyze, such as OrcaSlicer's resources/profiles. An OrcaSlicer checkout, installation or app also works."
+  zh-CN: "选择要分析的预设目录，例如 OrcaSlicer 的 resources/profiles；也可以直接选 OrcaSlicer 的源码、安装目录或应用。"
 app.select_hint:
   en: "Select a vendor, model or preset in the tree."
   zh-CN: "在导航树中选择厂商、型号或预设。"

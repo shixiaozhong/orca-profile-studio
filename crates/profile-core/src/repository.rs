@@ -29,6 +29,24 @@ pub enum LoadError {
     },
 }
 
+/// Whether `dir` holds at least one vendor: a `<Vendor>.json` beside a `<Vendor>` folder. Entry
+/// points check this; [`Repository::load`] does not, as a candidate copy may lack empty folders.
+pub fn is_profiles_dir(dir: &Path) -> bool {
+    vendor_names(dir).is_ok_and(|names| names.iter().any(|name| dir.join(name).is_dir()))
+}
+
+/// `dir` if it is a profiles directory, else the profiles directory of the OrcaSlicer folder it
+/// names: `resources/profiles` (a source checkout or a Windows/Linux installation), `profiles`
+/// (the `resources` folder) or `Contents/Resources/profiles` (a macOS app bundle).
+pub fn find_profiles_dir(dir: &Path) -> Option<PathBuf> {
+    let candidates: [&[&str]; 4] =
+        [&[], &["resources", "profiles"], &["profiles"], &["Contents", "Resources", "profiles"]];
+    candidates
+        .iter()
+        .map(|parts| parts.iter().fold(dir.to_path_buf(), |path, part| path.join(part)))
+        .find(|candidate| is_profiles_dir(candidate))
+}
+
 /// Where an effective value comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Origin {
@@ -791,6 +809,32 @@ fn to_raw_value(value: Value) -> Option<RawValue> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn finds_the_profiles_directory_of_an_orcaslicer_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let vendor_at = |parts: &[&str]| {
+            let profiles = parts.iter().fold(dir.path().to_path_buf(), |path, part| path.join(part));
+            fs::create_dir_all(profiles.join("Acme")).unwrap();
+            fs::write(profiles.join("Acme.json"), "{}").unwrap();
+            profiles
+        };
+        // A checkout or installation, its `resources` folder, and a macOS app bundle.
+        let checkout = vendor_at(&["checkout", "resources", "profiles"]);
+        assert_eq!(find_profiles_dir(&dir.path().join("checkout")), Some(checkout.clone()));
+        assert_eq!(find_profiles_dir(&dir.path().join("checkout").join("resources")), Some(checkout.clone()));
+        assert_eq!(find_profiles_dir(&checkout), Some(checkout));
+        let bundle = vendor_at(&["Orca.app", "Contents", "Resources", "profiles"]);
+        assert_eq!(find_profiles_dir(&dir.path().join("Orca.app")), Some(bundle));
+
+        // JSON files without a vendor folder beside them are not vendors.
+        let other = dir.path().join("other");
+        fs::create_dir_all(&other).unwrap();
+        fs::write(other.join("CMakePresets.json"), "{}").unwrap();
+        assert!(!is_profiles_dir(&other));
+        assert_eq!(find_profiles_dir(&other), None);
+        assert_eq!(find_profiles_dir(&dir.path().join("missing")), None);
+    }
 
     struct Fixture {
         dir: tempfile::TempDir,

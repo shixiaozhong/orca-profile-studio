@@ -41,7 +41,9 @@ from the package directory).
 
 ## Data source: the OrcaSlicer checkout
 
-- Profiles come from `ORCA_PROFILES_DIR`, else `../OrcaSlicer/resources/profiles` next to this repo.
+- The CLI and tests take profiles from `ORCA_PROFILES_DIR`, else `../OrcaSlicer/resources/profiles` next
+  to this repo. The desktop app does not read `ORCA_PROFILES_DIR`: it opens its first argument, else the
+  last directory only when the `open_last_dir` setting is on (off by default: a start page).
 - `../OrcaSlicer` is a separate repository (Snapmaker's OrcaSlicer fork, the user works on branch
   `personal/notes`). Treat it as read-only unless the task is explicitly about changing it.
 - `docs/reference/profile_format_spec.md` is the authoritative description of the format and of
@@ -57,6 +59,10 @@ from the package directory).
 - A child replaces whole keys (arrays are not merged element-wise). The only cross-vendor parent
   source is OrcaFilamentLibrary's filaments.
 - Lookups use the preset's own `name`, not the manifest entry name or file name.
+- Entry points (studio open/startup, CLI `--profiles`) resolve a chosen folder with
+  `find_profiles_dir` (itself, `resources/profiles`, `profiles`, `Contents/Resources/profiles`) and
+  refuse a folder without a `<Vendor>.json` beside a `<Vendor>` folder. `Repository::load` itself must
+  not check this: management validation loads candidate copies that lack empty vendor folders.
 - Manifest `sub_path`s go through `profile-core`'s `sub_path` module (M17): written with `/` on every
   platform, converted to native paths at load, matched by path components, case-folded in `/` form
   for collision checks. Never compare or write them via `to_string_lossy`/`to_str`.

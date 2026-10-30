@@ -40,6 +40,8 @@ pub struct Settings {
     pub language: LanguagePreference,
     /// The directory loaded last.
     pub profiles_dir: Option<PathBuf>,
+    /// Whether startup and new windows open `profiles_dir`; otherwise they start empty.
+    pub open_last_dir: bool,
     /// Width of the navigation tree, in pixels.
     pub sidebar_width: Option<f32>,
     pub issues_open: bool,
@@ -221,6 +223,7 @@ mod tests {
             theme: ThemePreference::Dark,
             language: crate::i18n::LanguagePreference::Chinese,
             profiles_dir: Some("/profiles".into()),
+            open_last_dir: true,
             sidebar_width: Some(300.),
             issues_open: true,
             issues_height: Some(200.),

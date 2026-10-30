@@ -5,7 +5,7 @@ use gpui_kit::component::command::{CommandGroup, CommandItem};
 
 use crate::catalog::Catalog;
 use crate::i18n::LanguagePreference;
-use crate::settings::ThemePreference;
+use crate::settings::{Settings, ThemePreference};
 
 /// Hits shown per result group.
 const LIMIT: usize = 8;
@@ -23,10 +23,12 @@ pub enum AppCommand {
     NewWindow,
     Theme(ThemePreference),
     Language(LanguagePreference),
+    /// Whether startup and new windows open the directory loaded last.
+    OpenLastDir(bool),
 }
 
 impl AppCommand {
-    const ALL: [AppCommand; 15] = [
+    const ALL: [AppCommand; 17] = [
         AppCommand::Language(LanguagePreference::System),
         AppCommand::Language(LanguagePreference::English),
         AppCommand::Language(LanguagePreference::Chinese),
@@ -42,6 +44,8 @@ impl AppCommand {
         AppCommand::Theme(ThemePreference::System),
         AppCommand::Theme(ThemePreference::Light),
         AppCommand::Theme(ThemePreference::Dark),
+        AppCommand::OpenLastDir(true),
+        AppCommand::OpenLastDir(false),
     ];
 
     fn label(self) -> String {
@@ -57,6 +61,8 @@ impl AppCommand {
             AppCommand::ManagePresets => t!("common.manage_presets"),
             AppCommand::NewWindow => t!("palette.new_window"),
             AppCommand::Theme(theme) => t!("palette.theme", arg0 = theme.label()),
+            AppCommand::OpenLastDir(true) => t!("palette.startup_open_last"),
+            AppCommand::OpenLastDir(false) => t!("palette.startup_empty"),
         }
     }
 
@@ -73,6 +79,7 @@ impl AppCommand {
             AppCommand::NewWindow => IconName::AppWindow,
             AppCommand::Theme(_) => IconName::Palette,
             AppCommand::Language(_) => IconName::Languages,
+            AppCommand::OpenLastDir(_) => IconName::FolderClock,
         }
     }
 
@@ -88,7 +95,8 @@ impl AppCommand {
             | AppCommand::ManagePresets
             | AppCommand::NewWindow
             | AppCommand::Theme(_)
-            | AppCommand::Language(_) => true,
+            | AppCommand::Language(_)
+            | AppCommand::OpenLastDir(_) => true,
         }
     }
 }
@@ -111,8 +119,7 @@ pub fn build(
     catalog: &Catalog,
     query: &str,
     preset_selected: bool,
-    theme: ThemePreference,
-    language: LanguagePreference,
+    settings: &Settings,
 ) -> (Vec<CommandGroup>, Vec<Vec<Target>>) {
     let repo = &catalog.repo;
     let lower = query.trim().to_lowercase();
@@ -124,8 +131,12 @@ pub fn build(
         .filter(|command| lower.split_whitespace().all(|term| command.label().to_lowercase().contains(term)))
         .map(|command| {
             let item = CommandItem::new().label(command.label()).icon(command.icon());
-            // The current theme carries a check mark.
-            let item = item.checked(command == AppCommand::Theme(theme) || command == AppCommand::Language(language));
+            // The current theme, language and startup behavior carry a check mark.
+            let item = item.checked(
+                command == AppCommand::Theme(settings.theme)
+                    || command == AppCommand::Language(settings.language)
+                    || command == AppCommand::OpenLastDir(settings.open_last_dir),
+            );
             (item, Target::Command(command))
         })
         .collect();

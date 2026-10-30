@@ -38,7 +38,8 @@ fn main() {
         // Keys are bound before the menus are built, so the menus show the shortcuts.
         set_menus(cx);
 
-        let profiles_dir = initial_profiles_dir(settings::get(cx).profiles_dir.clone());
+        let settings = settings::get(cx);
+        let profiles_dir = initial_profiles_dir(settings.open_last_dir, settings.profiles_dir.clone());
         app::open_window(profiles_dir, cx);
         // Quit with the last window, not the first.
         cx.on_window_closed(|cx, _| {
@@ -51,26 +52,26 @@ fn main() {
     });
 }
 
-/// The first argument, else `ORCA_PROFILES_DIR`, else the directory loaded last, else an
-/// OrcaSlicer checkout next to this repository (the path it was built from, so a copied app
-/// bundle loses it). Apps started from Finder have no terminal environment.
-fn initial_profiles_dir(last: Option<PathBuf>) -> Option<PathBuf> {
+/// The first argument, else (when the setting asks for it) the directory
+/// loaded last or an OrcaSlicer checkout next to this repository (the path it was built from, so a
+/// copied app bundle loses it); else none. Apps started from Finder have no terminal environment.
+fn initial_profiles_dir(open_last: bool, last: Option<PathBuf>) -> Option<PathBuf> {
     std::env::args_os()
         .skip(1)
         // Older macOS versions pass a process serial number to apps launched from Finder.
         .find(|arg| !arg.to_string_lossy().starts_with("-psn_"))
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("ORCA_PROFILES_DIR").filter(|dir| !dir.is_empty()).map(PathBuf::from))
-        .or_else(|| last.filter(|dir| dir.is_dir()))
+        .or_else(|| last.filter(|dir| open_last && dir.is_dir()))
         .or_else(|| {
             let sibling = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../OrcaSlicer/resources/profiles");
-            sibling.is_dir().then_some(sibling)
+            (open_last && sibling.is_dir()).then_some(sibling)
         })
 }
 
 pub fn set_menus(cx: &mut App) {
     let mut file = vec![
         MenuItem::action(t!("menu.new_window"), app::NewWindow),
+        MenuItem::action(t!("menu.open_folder"), app::OpenFolder),
         MenuItem::action(t!("menu.close_window"), lifecycle::CloseWindow),
     ];
     let mut menus = Vec::new();

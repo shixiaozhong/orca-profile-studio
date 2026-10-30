@@ -57,6 +57,9 @@ pub struct Catalog {
 impl Catalog {
     pub fn load(dir: &Path) -> Result<Self, String> {
         let started = std::time::Instant::now();
+        if dir.is_dir() && !profile_core::is_profiles_dir(dir) {
+            return Err(t!("app.not_profiles"));
+        }
         let repo = Repository::load(dir).map_err(|err| err.to_string())?;
         Ok(Self::new(repo, started.elapsed()))
     }

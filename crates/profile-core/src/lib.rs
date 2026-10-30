@@ -33,6 +33,8 @@ pub use manage::{
 };
 pub use model::{MachineModel, Preset, PresetId, PresetKind, PresetMeta, RawValue, Vendor, VendorId, derived_alias};
 pub use promote::{PromotionError, PromotionImpact, PromotionPlan};
-pub use repository::{FILAMENT_LIBRARY, KeyTrace, LoadError, Origin, Repository, ResolvedValue};
+pub use repository::{
+    FILAMENT_LIBRARY, KeyTrace, LoadError, Origin, Repository, ResolvedValue, find_profiles_dir, is_profiles_dir,
+};
 pub use search::{OptionHit, SearchIndex, SearchResults, ValueHit};
 pub use stats::{KindStats, Stats};

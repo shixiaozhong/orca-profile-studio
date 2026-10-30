@@ -5,7 +5,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::{Button, ButtonVariant};
+use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
+use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::command::{Command, CommandGroup, CommandState};
 use gpui_kit::component::list::ListItem;
 use gpui_kit::component::resizable::{ResizablePanelEvent, ResizableState};
@@ -16,7 +17,7 @@ use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, StyledExt as _, h_flex, h_resizable,
     resizable_panel, v_flex, v_resizable,
 };
-use gpui_kit::component::{IndexPath, Theme, WindowExt as _};
+use gpui_kit::component::{IndexPath, Theme, WindowExt as _, tooltip::Tooltip};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use profile_core::Severity;
@@ -48,7 +49,7 @@ enum PresetTab {
     Values,
 }
 
-actions!(studio, [OpenPalette, NewWindow]);
+actions!(studio, [OpenPalette, NewWindow, OpenFolder]);
 
 #[derive(Default)]
 struct PaletteEntries {
@@ -59,9 +60,17 @@ struct PaletteEntries {
 pub fn init(cx: &mut App) {
     crate::lifecycle::init(cx);
     cx.set_app_identity("org.orca-profile-studio.app", "Orca Profile Studio");
-    cx.bind_keys([KeyBinding::new("secondary-k", OpenPalette, None), KeyBinding::new("secondary-n", NewWindow, None)]);
-    // Each window loads the directory on its own; a new one opens the directory loaded last.
-    cx.on_action(|_: &NewWindow, cx| open_window(settings::get(cx).profiles_dir.clone(), cx));
+    cx.bind_keys([
+        KeyBinding::new("secondary-k", OpenPalette, None),
+        KeyBinding::new("secondary-n", NewWindow, None),
+        KeyBinding::new("secondary-o", OpenFolder, None),
+    ]);
+    // Each window loads the directory on its own; a new one opens the directory loaded last only when
+    // the startup setting asks for it, so another version can be chosen there.
+    cx.on_action(|_: &NewWindow, cx| {
+        let settings = settings::get(cx);
+        open_window(settings.open_last_dir.then(|| settings.profiles_dir.clone()).flatten(), cx)
+    });
 }
 
 pub fn remember_window_size(window: &Window, cx: &mut App) {
@@ -240,8 +249,7 @@ impl StudioApp {
 
     /// Loads `dir` on the background executor; a newer request supersedes a running one.
     fn load(&mut self, dir: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        // Absolute and without `..`, so the saved setting does not depend on where the app started.
-        let dir = dir.canonicalize().or_else(|_| std::path::absolute(&dir)).unwrap_or(dir);
+        let dir = profiles_dir(dir);
         let refreshing = self.profiles_dir.as_ref() == Some(&dir) && matches!(self.state, LoadState::Ready(_));
         self.load_generation += 1;
         let generation = self.load_generation;
@@ -458,7 +466,7 @@ impl StudioApp {
         if !self.may_leave_during_write(window, cx) {
             return;
         }
-        let dir = dir.canonicalize().or_else(|_| std::path::absolute(&dir)).unwrap_or(dir);
+        let dir = profiles_dir(dir);
         let dirty = self.unsaved_files(cx).len();
         if dirty == 0 || self.profiles_dir.as_ref() == Some(&dir) {
             self.load(dir, window, cx);
@@ -732,7 +740,40 @@ impl StudioApp {
             .border_color(theme.border)
             .child(Icon::new(IconName::FolderTree).text_color(theme.muted_foreground))
             .child(div().font_semibold().child("Orca Profile Studio"))
-            .child(div().flex_1().min_w_0().truncate().text_sm().text_color(theme.muted_foreground).child(location))
+            // The directory being analyzed and the commands that change or reread it come first.
+            .child(
+                Button::new("open")
+                    .small()
+                    .icon(IconName::FolderOpen)
+                    .label(t!("app.open_folder"))
+                    .tooltip(t!("app.open_folder_hint", key = crate::i18n::shortcut("secondary-o")))
+                    .on_click(cx.listener(|this, _, window, cx| this.choose_folder(window, cx))),
+            )
+            .child(
+                Button::new("reload")
+                    .small()
+                    .ghost()
+                    .accessibility_label(t!("app.reload"))
+                    .icon(IconName::RefreshCw)
+                    .tooltip(t!("app.reload_hint"))
+                    .disabled(self.profiles_dir.is_none() || self.load_task.is_some())
+                    .on_click(cx.listener(|this, _, window, cx| this.reload(window, cx))),
+            )
+            .child(
+                div()
+                    .id("profiles-dir")
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    // Long paths are truncated; the tooltip shows the whole path.
+                    .tooltip({
+                        let location = location.clone();
+                        move |window, cx| Tooltip::new(location.clone()).build(window, cx)
+                    })
+                    .child(location),
+            )
             .child(
                 Button::new("batch-edit")
                     .small()
@@ -767,25 +808,76 @@ impl StudioApp {
                     .disabled(!matches!(self.state, LoadState::Ready(_)))
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_issues(window, cx))),
             )
+            .when(self.load_task.is_some() && matches!(self.state, LoadState::Ready(_)), |bar| {
+                bar.child(Spinner::new().small()).child(div().text_sm().child(t!("app.refreshing")))
+            })
+    }
+
+    /// An empty or failed window: what happened, and the command that gets a directory loaded.
+    fn placeholder(
+        &self,
+        icon: IconName,
+        message: String,
+        extra: Option<AnyElement>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        v_flex()
+            .size_full()
+            .items_center()
+            .justify_center()
+            .gap_3()
+            .child(Icon::new(icon).large().text_color(cx.theme().muted_foreground))
+            .child(div().max_w(rems(35.)).text_sm().text_color(cx.theme().muted_foreground).child(message))
             .child(
-                Button::new("open")
-                    .small()
+                Button::new("open-placeholder")
                     .icon(IconName::FolderOpen)
                     .label(t!("app.open_folder"))
                     .on_click(cx.listener(|this, _, window, cx| this.choose_folder(window, cx))),
             )
-            .child(
-                Button::new("reload")
-                    .small()
-                    .accessibility_label(t!("app.reload"))
-                    .icon(IconName::RefreshCw)
-                    .tooltip(t!("app.reload_hint"))
-                    .disabled(self.profiles_dir.is_none() || self.load_task.is_some())
-                    .on_click(cx.listener(|this, _, window, cx| this.reload(window, cx))),
-            )
-            .when(self.load_task.is_some() && matches!(self.state, LoadState::Ready(_)), |bar| {
-                bar.child(Spinner::new().small()).child(div().text_sm().child(t!("app.refreshing")))
+            .children(extra)
+            .into_any_element()
+    }
+
+    /// The start page's way back to the directory loaded last, and the startup setting that would
+    /// have opened it.
+    fn render_start(&self, cx: &mut Context<Self>) -> AnyElement {
+        let settings = settings::get(cx);
+        let (last, open_last_dir) = (settings.profiles_dir.clone(), settings.open_last_dir);
+        v_flex()
+            .items_center()
+            .gap_3()
+            .when_some(last, |page, dir| {
+                let path = dir.display().to_string();
+                page.child(
+                    Button::new("open-last")
+                        .icon(IconName::FolderClock)
+                        .label(t!("app.open_last"))
+                        .on_click(cx.listener(move |this, _, window, cx| this.request_open(dir.clone(), window, cx))),
+                )
+                .child(
+                    div()
+                        .id("last-dir")
+                        .max_w(rems(35.))
+                        .truncate()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .tooltip({
+                            let path = path.clone();
+                            move |window, cx| Tooltip::new(path.clone()).build(window, cx)
+                        })
+                        .child(path),
+                )
             })
+            .child(
+                Checkbox::new("open-last-on-startup")
+                    .label(t!("app.open_last_on_startup"))
+                    .checked(open_last_dir)
+                    .on_click(cx.listener(|_, checked: &bool, _, cx| {
+                        settings::update(cx, |settings| settings.open_last_dir = *checked);
+                        cx.notify();
+                    })),
+            )
+            .into_any_element()
     }
 
     fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -805,7 +897,10 @@ impl StudioApp {
             return management.clone().into_any_element();
         }
         match &self.state {
-            LoadState::Empty => placeholder(IconName::FolderOpen, t!("app.empty").to_owned(), cx),
+            LoadState::Empty => {
+                let start = self.render_start(cx);
+                self.placeholder(IconName::FolderOpen, t!("app.empty"), Some(start), cx)
+            }
             LoadState::Loading(dir) => v_flex()
                 .size_full()
                 .items_center()
@@ -819,9 +914,12 @@ impl StudioApp {
                         .child(SharedString::from(t!("app.loading_path", arg0 = dir.display()))),
                 )
                 .into_any_element(),
-            LoadState::Failed(dir, err) => {
-                placeholder(IconName::TriangleAlert, t!("app.load_failed", arg0 = dir.display(), err = err), cx)
-            }
+            LoadState::Failed(dir, err) => self.placeholder(
+                IconName::TriangleAlert,
+                t!("app.load_failed", arg0 = dir.display(), err = err),
+                None,
+                cx,
+            ),
             LoadState::Ready(catalog) => {
                 let catalog = catalog.clone();
                 self.render_browser(&catalog, cx)
@@ -937,8 +1035,7 @@ impl StudioApp {
     fn refresh_palette(&mut self, query: &str, cx: &mut Context<Self>) {
         let LoadState::Ready(catalog) = &self.state else { return };
         let preset_selected = matches!(self.selected, Some(Node::Preset(_)));
-        let (groups, targets) =
-            palette::build(catalog, query, preset_selected, settings::get(cx).theme, settings::get(cx).language);
+        let (groups, targets) = palette::build(catalog, query, preset_selected, settings::get(cx));
         self.palette_entries = PaletteEntries { groups, targets };
         cx.notify();
     }
@@ -1000,6 +1097,9 @@ impl StudioApp {
             Target::Command(AppCommand::Reload) => self.reload(window, cx),
             Target::Command(AppCommand::Open) => self.choose_folder(window, cx),
             Target::Command(AppCommand::Theme(theme)) => settings::set_theme(theme, window, cx),
+            Target::Command(AppCommand::OpenLastDir(open)) => {
+                settings::update(cx, |settings| settings.open_last_dir = open)
+            }
             Target::Command(AppCommand::NewWindow) => window.dispatch_action(Box::new(NewWindow), cx),
             Target::Command(AppCommand::ShowOverview) => self.set_preset_tab(PresetTab::Overview, window, cx),
             Target::Command(AppCommand::ShowValues) => self.set_preset_tab(PresetTab::Values, window, cx),
@@ -1147,6 +1247,7 @@ impl Render for StudioApp {
             .text_color(cx.theme().foreground)
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &OpenPalette, window, cx| this.open_palette(window, cx)))
+            .on_action(cx.listener(|this, _: &OpenFolder, window, cx| this.choose_folder(window, cx)))
             .on_action(
                 cx.listener(|this, _: &crate::lifecycle::CloseWindow, window, cx| this.request_close(window, cx)),
             )
@@ -1240,15 +1341,12 @@ fn render_row(catalog: &Catalog, ix: usize, entry: &TreeEntry, dirty: &dyn Fn(us
     )
 }
 
-fn placeholder(icon: IconName, message: String, cx: &App) -> AnyElement {
-    v_flex()
-        .size_full()
-        .items_center()
-        .justify_center()
-        .gap_3()
-        .child(Icon::new(icon).large().text_color(cx.theme().muted_foreground))
-        .child(div().max_w(rems(35.)).text_sm().text_color(cx.theme().muted_foreground).child(message))
-        .into_any_element()
+/// The directory to load for `dir`: absolute and without `..` (so the saved setting does not
+/// depend on where the app started), and the profiles directory inside it when `dir` is an
+/// OrcaSlicer checkout, installation or app bundle.
+fn profiles_dir(dir: PathBuf) -> PathBuf {
+    let dir = dir.canonicalize().or_else(|_| std::path::absolute(&dir)).unwrap_or(dir);
+    profile_core::find_profiles_dir(&dir).unwrap_or(dir)
 }
 
 #[cfg(test)]
@@ -1285,9 +1383,10 @@ mod tests {
     /// Opens a window; `settings` is the settings file, `None` keeps settings in memory only.
     fn open_with_settings(
         cx: &mut TestAppContext,
-        dir: PathBuf,
+        dir: impl Into<Option<PathBuf>>,
         settings: Option<PathBuf>,
     ) -> (WindowHandle<Root>, Entity<StudioApp>) {
+        let dir = dir.into();
         cx.update(gpui_kit::init);
         cx.update(|cx| cx.set_reduce_motion(true));
         cx.update(|cx| crate::settings::init(settings, cx));
@@ -1297,8 +1396,7 @@ mod tests {
             let bounds = Bounds { origin: Point::default(), size: size(px(1200.), px(900.)) };
             let options = WindowOptions { window_bounds: Some(WindowBounds::Windowed(bounds)), ..Default::default() };
             let (window, app) =
-                gpui_kit::open_window(options, cx, |window, cx| cx.new(|cx| StudioApp::new(Some(dir), window, cx)))
-                    .unwrap();
+                gpui_kit::open_window(options, cx, |window, cx| cx.new(|cx| StudioApp::new(dir, window, cx))).unwrap();
             (window.downcast::<Root>().unwrap(), app)
         })
     }
@@ -3617,6 +3715,102 @@ mod tests {
         let (_, app) = open(cx, missing);
         cx.run_until_parked();
         assert!(app.read_with(cx, |app, _| matches!(app.state, LoadState::Failed(..))));
+    }
+
+    #[gpui_kit::test]
+    fn starts_empty_unless_the_setting_opens_the_last_folder(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
+        let profiles = editable_fixture();
+        let last = profiles.path().canonicalize().unwrap();
+        let settings_dir = tempfile::tempdir().unwrap();
+        let path = settings_dir.path().join("settings.json");
+        crate::settings::Settings { profiles_dir: Some(last.clone()), ..Default::default() }.save(&path).unwrap();
+        let (window, app) = open_with_settings(cx, None, Some(path.clone()));
+        cx.run_until_parked();
+        assert!(app.read_with(cx, |app, _| matches!(app.state, LoadState::Empty)));
+        let newest_dir = |cx: &mut TestAppContext| {
+            let newest = *cx.update(|cx| cx.windows()).last().unwrap();
+            cx.update_window(newest, |_, window, cx| {
+                let view = Root::read(window, cx).view().clone().downcast::<StudioApp>().unwrap();
+                view.read(cx).profiles_dir.clone()
+            })
+            .unwrap()
+        };
+        let new_window = |cx: &mut TestAppContext| {
+            cx.update_window(window.into(), |_, window, cx| {
+                window.render_frame(cx);
+                window.press("secondary-n", cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+        };
+
+        // Off by default: a new window starts empty too, ready for another folder.
+        new_window(cx);
+        assert_eq!(newest_dir(cx), None);
+
+        // The start page turns the setting on and saves it; new windows then open the last folder.
+        click(window, "open-last-on-startup", cx);
+        assert!(crate::settings::Settings::load(&path).unwrap().open_last_dir);
+        new_window(cx);
+        assert_eq!(newest_dir(cx), Some(last.clone()));
+
+        // The start page reopens the last folder in this window.
+        click(window, "open-last", cx);
+        cx.run_until_parked();
+        app.read_with(cx, |app, _| {
+            assert!(matches!(app.state, LoadState::Ready(_)));
+            assert_eq!(app.profiles_dir, Some(last));
+        });
+    }
+
+    #[gpui_kit::test]
+    fn a_folder_without_profiles_explains_itself_and_offers_another_choice(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
+        let empty = tempfile::tempdir().unwrap();
+        std::fs::write(empty.path().join("CMakePresets.json"), "{}").unwrap();
+        let (window, app) = open(cx, empty.path().to_path_buf());
+        cx.run_until_parked();
+        app.read_with(cx, |app, _| {
+            let LoadState::Failed(_, err) = &app.state else { panic!("a folder without vendors is not loaded") };
+            assert!(err.contains("no vendor profiles"), "{err}");
+        });
+
+        // The failure page offers the same command as the toolbar.
+        let profiles = editable_fixture();
+        click(window, "open-placeholder", cx);
+        assert!(cx.did_prompt_for_paths());
+        cx.simulate_path_prompt_response(|_| Some(vec![profiles.path().to_path_buf()]));
+        cx.run_until_parked();
+        assert!(app.read_with(cx, |app, _| matches!(app.state, LoadState::Ready(_))));
+    }
+
+    #[gpui_kit::test]
+    fn the_open_shortcut_finds_profiles_inside_an_orcaslicer_folder(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
+        let first = editable_fixture();
+        let (window, app) = open(cx, first.path().to_path_buf());
+        cx.run_until_parked();
+
+        // A checkout (or installation) folder: its resources/profiles is loaded.
+        let checkout = tempfile::tempdir().unwrap();
+        let nested = checkout.path().join("resources").join("profiles");
+        std::fs::create_dir_all(nested.parent().unwrap()).unwrap();
+        let fixture = editable_fixture();
+        std::fs::rename(fixture.path(), &nested).unwrap();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.press("secondary-o", cx);
+        })
+        .unwrap();
+        assert!(cx.did_prompt_for_paths());
+        cx.simulate_path_prompt_response(|_| Some(vec![checkout.path().to_path_buf()]));
+        cx.run_until_parked();
+        app.read_with(cx, |app, _| {
+            assert!(matches!(app.state, LoadState::Ready(_)));
+            assert_eq!(app.profiles_dir, Some(nested.canonicalize().unwrap()));
+        });
+        cx.update(|cx| assert_eq!(crate::settings::get(cx).profiles_dir, Some(nested.canonicalize().unwrap())));
     }
 
     fn choose_comparison(window: WindowHandle<Root>, query: &str, cx: &mut TestAppContext) {

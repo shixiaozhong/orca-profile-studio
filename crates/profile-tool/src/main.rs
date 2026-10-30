@@ -11,7 +11,8 @@ use profile_core::{Issue, Origin, PresetId, PresetKind, RawValue, Repository, Se
 #[derive(Parser)]
 #[command(name = "profile-tool", version, about = "Inspect and validate OrcaSlicer system profiles")]
 struct Cli {
-    /// OrcaSlicer's `resources/profiles` directory
+    /// OrcaSlicer's `resources/profiles` directory, or an OrcaSlicer checkout, installation or app
+    /// bundle that contains it
     #[arg(long, short, env = "ORCA_PROFILES_DIR", global = true)]
     profiles: Option<PathBuf>,
     #[command(subcommand)]
@@ -120,6 +121,9 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<ExitCode> {
     let Some(dir) = cli.profiles else {
         bail!("pass --profiles <DIR> or set ORCA_PROFILES_DIR");
+    };
+    let Some(dir) = profile_core::find_profiles_dir(&dir) else {
+        bail!("{} is not a profiles directory: it has no `<Vendor>.json` beside a `<Vendor>` folder", dir.display());
     };
     let started = Instant::now();
     let repo = Repository::load(&dir).with_context(|| format!("loading {}", dir.display()))?;

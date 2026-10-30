@@ -58,19 +58,19 @@ scripts/bundle-macos.sh --install  # 同时复制到 ~/Applications/
 
 脚本做 release 构建，生成图标和 `Info.plist`，并做本地的 ad-hoc 签名（不做公证，不用于分发）。除了 `--install` 之外只写 `target/`。图标源文件是 `crates/profile-studio/resources/icon.png`，由 `swift scripts/icon.swift <输出路径>` 绘制。
 
-profiles 目录按以下顺序确定：
-1. 命令行第一个参数；
-2. 环境变量 `ORCA_PROFILES_DIR`；
-3. 上次打开的目录（记在设置文件里）；
-4. 编译时和本仓库同级的 `../OrcaSlicer/resources/profiles`。
+默认启动时不打开任何目录，页面中间有「打开目录…」和「打开上次的目录」。以下情况会直接打开：
+1. 命令行的第一个参数指定了目录；
+2. 勾选了「启动时打开上次的目录」（起始页的勾选框，或 ⌘K 里的「启动时：打开上次的目录 / 不打开目录」）时，打开上次的目录；还没有打开过目录时，打开编译时和本仓库同级的 `../OrcaSlicer/resources/profiles`。
 
-从 Finder 或 Dock 启动时没有终端的环境变量，`ORCA_PROFILES_DIR` 和 `ORCA_STUDIO_SETTINGS` 都不生效，通常打开上次的目录。第 4 条用的是编译时的源码路径：从这个检出打包的 `.app` 能找到它，拷到别的机器上就找不到了，这时用工具栏的「Open…」选一次即可。
+桌面应用不读取 `ORCA_PROFILES_DIR`（它只给命令行工具和测试用）。同一个启动设置也决定 ⌘N 新窗口是空白的还是打开上次的目录。从 Finder 或 Dock 启动时没有终端的环境变量，`ORCA_STUDIO_SETTINGS` 不生效。第 2 条里的同级检出用的是编译时的源码路径：从这个检出打包的 `.app` 能找到它，拷到别的机器上就找不到了。
 
 设置文件在 macOS 上是 `~/Library/Application Support/orca-profile-studio/settings.json`，Windows 上是 `%APPDATA%\orca-profile-studio\settings.json`，其他平台是 `$XDG_CONFIG_HOME`（默认 `~/.config`）下的同名文件；`ORCA_STUDIO_SETTINGS` 可以指定别的路径。
 
 系统通知（只在没有窗口能显示错误时使用）需要从 `.app` 启动：GPUI 只在有 Bundle ID 时启用 macOS 通知中心，`cargo run` 时只输出到 stderr。第一次发通知时系统会请求授权。
 
-运行中也可以点工具栏的「Open…」换一个目录。下文的快捷键按 macOS 写，其他平台用 Ctrl 代替 ⌘；工具栏提示会按当前平台显示。
+**选择要分析的目录**：工具栏标题旁的「打开目录…」（⌘O，File 菜单里也有）可以随时换成任意目录，比如另一个 OrcaSlicer 检出、某个分支或某个已安装版本的预设；旁边是当前目录的路径，悬停可看完整路径。没有打开目录或加载失败时，页面中间也有同一个按钮。选中的不是预设目录时，会依次查找其中的 `resources/profiles`（OrcaSlicer 源码检出或 Windows/Linux 安装目录）、`profiles`（`resources` 目录）和 `Contents/Resources/profiles`（macOS 的 `.app`）；都没有时提示「没有厂商配置」，不会加载出空树。判断标准是至少有一个与 `<厂商>` 文件夹并列的 `<厂商>.json`。命令行的 `--profiles` 用同样的规则。想并排看两个版本时，⌘N 打开新窗口后各自选择目录（默认新窗口是空白的）。
+
+下文的快捷键按 macOS 写，其他平台用 Ctrl 代替 ⌘；工具栏提示会按当前平台显示。
 
 界面说明：
 - **左侧导航树**：厂商 → 机型（→ 该机型的打印机预设）、耗材、工艺、模板。树是虚拟化的，只渲染可见的行。有 warning 及以上级别问题的预设，行尾会显示警告图标。
@@ -123,10 +123,10 @@ profiles 目录按以下顺序确定：
   - 应用文案、问题描述和组件自带文字支持中英文；配置项始终显示键名，保存的值保持原样。
   - 切换语言保留未保存编辑、未应用文本、筛选与选择；批量预览需要重新生成。已显示的状态消息和底层技术错误详情可能保留原文。
   - 应用文案的中英对照在 [`locales/app.yml`](crates/profile-studio/locales/app.yml)，不需要修改代码即可调整译文。
-- **主题和窗口**：在 ⌘K 里运行「Theme: System / Light / Dark」切换主题，默认跟随系统。⌘N 或 File 菜单的「New Window」打开一个独立的新窗口，加载上次的目录。
+- **主题和窗口**：在 ⌘K 里运行「Theme: System / Light / Dark」切换主题，默认跟随系统。⌘N 或 File 菜单的「New Window」打开一个独立的新窗口；是否加载上次的目录跟随启动设置。
 - **关闭和退出**：原生关闭或 ⌘W 检查当前窗口，应用菜单 Quit（其他平台是 File 菜单的 Exit）或 ⌘Q 检查全部窗口；有未保存编辑或尚未 Apply 的输入时先确认，取消后继续编辑。确认期间其他窗口又新增未保存文件时会重新提示。系统直接终止/强制退出受 GPUI 平台 API 限制，无法取消。
 - **错误反馈**：设置读写、目录选择、打开新窗口失败时在窗口中显示通知，提供 Dismiss；设置保存失败不影响当前会话，恢复权限后可重试相同设置。
-- **记住的设置**：主题、上次的目录、侧栏宽度、问题面板的开关和高度、窗口大小，保存在上文所列的设置文件里。不带参数启动时，打开上次的目录。
+- **记住的设置**：主题、语言、上次的目录、启动时是否打开它、侧栏宽度、问题面板的开关和高度、窗口大小，保存在上文所列的设置文件里。
 - **后台加载**：加载在后台线程进行，刷新期间保留可操作的旧视图，完成后一次性替换。期间新增的编辑会一起迁移；新的加载请求会取代旧请求，刷新期间再次保存也会重新加载。刷新失败会保留旧视图和编辑，并提示重试。
 
 界面测试在 `crates/profile-studio/src/app.rs` 的 `tests` 模块里，用的是 gpui-kit 的 headless 测试：渲染真实界面，模拟点击，然后断言状态。
