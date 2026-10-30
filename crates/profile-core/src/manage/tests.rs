@@ -329,3 +329,34 @@ fn managing_through_a_symbolic_link_is_refused() {
     assert!(ManagementPlan::delete(&repo, &[child]).is_err());
     assert_eq!(fs::read_to_string(outside.path().join("file.json")).unwrap(), "{}");
 }
+
+#[test]
+fn manifest_sub_paths_use_slashes_for_nested_directories() {
+    let (dir, _) = fixture();
+    fs::create_dir_all(dir.path().join("Acme/process/deep/er")).unwrap();
+    fs::rename(dir.path().join("Acme/process/child.json"), dir.path().join("Acme/process/deep/er/child.json")).unwrap();
+    let manifest = dir.path().join("Acme.json");
+    let text = fs::read_to_string(&manifest).unwrap().replace("process/child.json", "process/deep/er/child.json");
+    fs::write(&manifest, text).unwrap();
+    let repo = Repository::load(dir.path()).unwrap();
+    clean(&repo);
+    let child = repo.find(PresetKind::Process, "child 0.4")[0];
+    assert_eq!(
+        repo.preset(child).path,
+        ["Acme", "process", "deep", "er", "child.json"].iter().collect::<std::path::PathBuf>()
+    );
+
+    let copy =
+        ManagementPlan::copy(&repo, vec![PresetDraft::copy(&repo, child, "copy 0.4", "copy.json")], None).unwrap();
+    let rename = ManagementPlan::rename(&repo, child, "renamed 0.4", "renamed.json", false).unwrap();
+    for (plan, written) in [(&copy, "process/deep/er/copy.json"), (&rename, "process/deep/er/renamed.json")] {
+        assert!(plan.is_ready(), "{:?}", plan.notices());
+        let manifest = plan.changes().find(|c| c.path() == std::path::Path::new("Acme.json")).unwrap().after().unwrap();
+        assert!(manifest.replace(' ', "").contains(&format!("\"sub_path\":\"{written}\"")), "{manifest}");
+        assert!(!manifest.contains('\\'), "{manifest}");
+    }
+    rename.apply().unwrap();
+    let loaded = Repository::load(dir.path()).unwrap();
+    clean(&loaded);
+    assert_eq!(loaded.find(PresetKind::Process, "renamed 0.4").len(), 1);
+}

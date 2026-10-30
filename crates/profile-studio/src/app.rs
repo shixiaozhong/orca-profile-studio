@@ -59,7 +59,7 @@ struct PaletteEntries {
 pub fn init(cx: &mut App) {
     crate::lifecycle::init(cx);
     cx.set_app_identity("org.orca-profile-studio.app", "Orca Profile Studio");
-    cx.bind_keys([KeyBinding::new("cmd-k", OpenPalette, None), KeyBinding::new("cmd-n", NewWindow, None)]);
+    cx.bind_keys([KeyBinding::new("secondary-k", OpenPalette, None), KeyBinding::new("secondary-n", NewWindow, None)]);
     // Each window loads the directory on its own; a new one opens the directory loaded last.
     cx.on_action(|_: &NewWindow, cx| open_window(settings::get(cx).profiles_dir.clone(), cx));
 }
@@ -116,7 +116,7 @@ pub struct StudioApp {
     issues: Option<Entity<IssuesView>>,
     issues_open: bool,
     _issues_events: Option<Subscription>,
-    /// The window's default focus target, so app shortcuts such as ⌘K always have a dispatch path.
+    /// The window's default focus target, so app shortcuts such as secondary-k always have a dispatch path.
     focus: FocusHandle,
     _focus_lost: Subscription,
     /// The tree / details split and the browser / issues split; their sizes are saved.
@@ -754,7 +754,7 @@ impl StudioApp {
                     .small()
                     .icon(IconName::Search)
                     .label(t!("app.search"))
-                    .tooltip(t!("app.search_hint"))
+                    .tooltip(t!("app.search_hint", key = crate::i18n::shortcut("secondary-k")))
                     .disabled(!matches!(self.state, LoadState::Ready(_)))
                     .on_click(cx.listener(|this, _, window, cx| this.open_palette(window, cx))),
             )
@@ -1425,7 +1425,7 @@ mod tests {
         // Inherited keys disappear when only this file's values are shown.
         cx.update_window(window.into(), |_, window, cx| {
             window.click("values-search", cx);
-            window.press("cmd-a", cx);
+            window.press("secondary-a", cx);
             window.press("backspace", cx);
         })
         .unwrap();
@@ -1467,7 +1467,7 @@ mod tests {
     fn find_key(window: WindowHandle<Root>, text: &str, cx: &mut TestAppContext) {
         cx.update_window(window.into(), |_, window, cx| {
             window.click("values-search", cx);
-            window.press("cmd-a", cx);
+            window.press("secondary-a", cx);
             window.input(text, cx);
         })
         .unwrap();
@@ -1517,7 +1517,7 @@ mod tests {
             window.render_frame(cx);
             assert_eq!(window.find("value-input").value(), Some("2"));
             window.click("value-input", cx);
-            window.press("cmd-a", cx);
+            window.press("secondary-a", cx);
             window.input("3", cx);
             window.press("enter", cx);
         })
@@ -1568,7 +1568,7 @@ mod tests {
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
             window.click("value-input", cx);
-            window.press("cmd-a", cx);
+            window.press("secondary-a", cx);
             window.input("4", cx);
             window.press("enter", cx);
         })
@@ -1587,11 +1587,11 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&file).unwrap(), expected, "Reload never writes unsaved edits");
     }
 
-    /// Opens the palette with ⌘K, types `query` and confirms the highlighted entry.
+    /// Opens the palette with secondary-k, types `query` and confirms the highlighted entry.
     fn run_palette(window: WindowHandle<Root>, query: &str, cx: &mut TestAppContext) {
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
-            window.press("cmd-k", cx);
+            window.press("secondary-k", cx);
         })
         .unwrap();
         cx.run_until_parked();
@@ -1609,7 +1609,7 @@ mod tests {
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
             window.click("value-input", cx);
-            window.press("cmd-a", cx);
+            window.press("secondary-a", cx);
             window.input(value, cx);
             window.press("enter", cx);
         })
@@ -2004,7 +2004,7 @@ mod tests {
         assert_eq!(rows(cx)[0][0], "enable_support");
 
         // Escape closes the palette without doing anything.
-        cx.update_window(window.into(), |_, window, cx| window.press("cmd-k", cx)).unwrap();
+        cx.update_window(window.into(), |_, window, cx| window.press("secondary-k", cx)).unwrap();
         cx.run_until_parked();
         assert!(dialog_open(cx));
         cx.update_window(window.into(), |_, window, cx| {
@@ -2420,7 +2420,7 @@ mod tests {
         .unwrap();
         cx.run_until_parked();
         cx.update_window(window.into(), |_, window, cx| {
-            window.press("cmd-a", cx);
+            window.press("secondary-a", cx);
             window.input(query, cx);
         })
         .unwrap();
@@ -2491,7 +2491,7 @@ mod tests {
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
             assert_eq!(window.find("save-status").label(), Some("Undid a batch change in 3 presets."));
-            window.press("cmd-shift-z", cx);
+            window.press("secondary-shift-z", cx);
         })
         .unwrap();
         cx.run_until_parked();
@@ -2602,7 +2602,7 @@ mod tests {
             let table = window.find("batch-preview").bounds();
             assert!(table.size.height > px(0.));
             assert!(table.top() >= window.find("batch-apply").bounds().bottom());
-            window.press("cmd-w", cx);
+            window.press("secondary-w", cx);
         })
         .unwrap();
         cx.run_until_parked();
@@ -2912,7 +2912,7 @@ mod tests {
             window.render_frame(cx);
             assert_eq!(window.find("models-name").value(), Some("Draft name"));
             assert_eq!(window.find("models-preview").label(), Some("预览变更…"));
-            window.press("cmd-w", cx);
+            window.press("secondary-w", cx);
         })
         .unwrap();
         cx.run_until_parked();
@@ -2963,10 +2963,10 @@ mod tests {
             window.render_frame(cx);
             window.click("ok", cx);
             assert!(app.read(cx).is_writing_files(cx));
-            window.press("cmd-w", cx);
+            window.press("secondary-w", cx);
             window.click("open", cx);
             window.click("reload", cx);
-            window.press("cmd-q", cx);
+            window.press("secondary-q", cx);
             assert_eq!(app.read(cx).load_generation, generation);
         })
         .unwrap();
@@ -3010,7 +3010,7 @@ mod tests {
         .unwrap();
         cx.run_until_parked();
         cx.update_window(window.into(), |_, window, cx| {
-            window.press("cmd-a", cx);
+            window.press("secondary-a", cx);
             window.input(label, cx);
         })
         .unwrap();
@@ -3028,7 +3028,7 @@ mod tests {
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
             window.click(id, cx);
-            window.press("cmd-a", cx);
+            window.press("secondary-a", cx);
             if text.is_empty() {
                 window.press("backspace", cx);
             } else {
@@ -3180,7 +3180,7 @@ mod tests {
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
             window.click(("row", 0usize), cx);
-            window.press("cmd-z", cx);
+            window.press("secondary-z", cx);
         })
         .unwrap();
         cx.run_until_parked();
@@ -3230,10 +3230,10 @@ mod tests {
             window.render_frame(cx);
             window.click("ok", cx);
             assert!(app.read(cx).is_writing_files(cx));
-            window.press("cmd-w", cx);
+            window.press("secondary-w", cx);
             window.click("open", cx);
             window.click("reload", cx);
-            window.press("cmd-q", cx);
+            window.press("secondary-q", cx);
             assert_eq!(app.read(cx).load_generation, generation);
         })
         .unwrap();
@@ -3294,15 +3294,15 @@ mod tests {
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
             window.click(("row", 0usize), cx);
-            window.press("cmd-z", cx);
+            window.press("secondary-z", cx);
         })
         .unwrap();
         cx.run_until_parked();
         assert_eq!(first_row(&app, cx), ("sparse_infill_density".into(), "15%".into(), "this file (edited)".into()));
-        cx.update_window(window.into(), |_, window, cx| window.press("cmd-shift-z", cx)).unwrap();
+        cx.update_window(window.into(), |_, window, cx| window.press("secondary-shift-z", cx)).unwrap();
         cx.run_until_parked();
         assert_eq!(first_row(&app, cx).1, "20%");
-        cx.update_window(window.into(), |_, window, cx| window.press("cmd-s", cx)).unwrap();
+        cx.update_window(window.into(), |_, window, cx| window.press("secondary-s", cx)).unwrap();
         cx.run_until_parked();
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
@@ -3313,7 +3313,7 @@ mod tests {
         .unwrap();
         cx.run_until_parked();
         assert_eq!(std::fs::read_to_string(dir.path().join("Acme/process/Acme 0.2.json")).unwrap(), CHILD);
-        cx.update_window(window.into(), |_, window, cx| window.press("cmd-s", cx)).unwrap();
+        cx.update_window(window.into(), |_, window, cx| window.press("secondary-s", cx)).unwrap();
         cx.run_until_parked();
         cx.update_window(window.into(), |_, window, cx| window.press("enter", cx)).unwrap();
         cx.run_until_parked();
@@ -3454,9 +3454,9 @@ mod tests {
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
             window.click("value-input", cx);
-            window.press("cmd-a", cx);
+            window.press("secondary-a", cx);
             window.input("9", cx);
-            window.press("cmd-w", cx);
+            window.press("secondary-w", cx);
         })
         .unwrap();
         cx.run_until_parked();
@@ -3465,7 +3465,7 @@ mod tests {
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
             assert_eq!(window.find("value-input").value(), Some("9"));
-            window.press("cmd-w", cx);
+            window.press("secondary-w", cx);
         })
         .unwrap();
         cx.run_until_parked();
@@ -3489,7 +3489,7 @@ mod tests {
             cx.windows().into_iter().find(|handle| *handle != first.into()).unwrap().downcast::<Root>().unwrap();
         cx.update_window(second.into(), |_, window, cx| {
             window.render_frame(cx);
-            window.press("cmd-q", cx);
+            window.press("secondary-q", cx);
         })
         .unwrap();
         cx.run_until_parked();
@@ -3500,7 +3500,7 @@ mod tests {
         click(dialog_window, "cancel", cx);
         assert_eq!(cx.windows().len(), 2);
         assert_eq!(first_row(&app, cx).1, "4");
-        cx.update_window(second.into(), |_, window, cx| window.press("cmd-q", cx)).unwrap();
+        cx.update_window(second.into(), |_, window, cx| window.press("secondary-q", cx)).unwrap();
         cx.run_until_parked();
         let base = catalog(&app, cx).repo.find(PresetKind::Process, "fdm_process_common")[0].index();
         app.read_with(cx, |app, _| app.edits.clone().unwrap()).update(cx, |edits, cx| {
@@ -3662,7 +3662,7 @@ mod tests {
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
             window.click("value-input", cx);
-            window.press("cmd-a", cx);
+            window.press("secondary-a", cx);
             window.input("4", cx);
             window.press("enter", cx);
         })

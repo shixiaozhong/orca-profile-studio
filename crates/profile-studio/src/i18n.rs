@@ -117,6 +117,11 @@ pub fn kind(kind: profile_core::PresetKind) -> String {
     }
 }
 
+/// A key binding as this platform writes it, e.g. `secondary-k` is ⌘K on macOS and Ctrl+K elsewhere.
+pub fn shortcut(binding: &str) -> String {
+    gpui_kit::component::kbd::Kbd::format(&gpui_kit::Keystroke::parse(binding).expect("valid key binding"))
+}
+
 pub fn history_message(redo: bool, count: usize) -> String {
     match (redo, count == 1) {
         (false, true) => t!("history.undo.one", count = count),
@@ -140,6 +145,12 @@ mod tests {
         assert_eq!(system_locale(Some("en-US")), "en");
         assert_eq!(system_locale(None), "en");
         assert_eq!(LanguagePreference::English.locale(), "en");
+    }
+
+    #[test]
+    fn formats_shortcuts_for_this_platform() {
+        let expected = if cfg!(target_os = "macos") { ["⌘K", "⇧⌘Z"] } else { ["Ctrl+K", "Ctrl+Shift+Z"] };
+        assert_eq!([super::shortcut("secondary-k"), super::shortcut("secondary-shift-z")], expected);
     }
 
     #[test]

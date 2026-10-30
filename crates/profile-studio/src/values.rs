@@ -26,9 +26,9 @@ const CONTEXT: &str = "ValuesView";
 
 pub fn init(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("cmd-z", UndoEdit, Some(CONTEXT)),
-        KeyBinding::new("cmd-shift-z", RedoEdit, Some(CONTEXT)),
-        KeyBinding::new("cmd-s", SaveEdits, Some(CONTEXT)),
+        KeyBinding::new("secondary-z", UndoEdit, Some(CONTEXT)),
+        KeyBinding::new("secondary-shift-z", RedoEdit, Some(CONTEXT)),
+        KeyBinding::new("secondary-s", SaveEdits, Some(CONTEXT)),
     ]);
 }
 
@@ -548,7 +548,7 @@ impl ValuesView {
                     .small()
                     .accessibility_label(t!("values.undo"))
                     .icon(IconName::Undo2)
-                    .tooltip(t!("values.undo_shortcut"))
+                    .tooltip(t!("values.undo_shortcut", key = crate::i18n::shortcut("secondary-z")))
                     .disabled(!can_undo)
                     .on_click(cx.listener(|this, _, _, cx| this.undo(cx))),
             )
@@ -557,7 +557,7 @@ impl ValuesView {
                     .small()
                     .accessibility_label(t!("values.redo"))
                     .icon(IconName::Redo2)
-                    .tooltip(t!("values.redo_shortcut"))
+                    .tooltip(t!("values.redo_shortcut", key = crate::i18n::shortcut("secondary-shift-z")))
                     .disabled(!can_redo)
                     .on_click(cx.listener(|this, _, _, cx| this.redo(cx))),
             )

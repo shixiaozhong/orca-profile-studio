@@ -6,7 +6,7 @@ OrcaSlicer 系统配置文件（`resources/profiles`）的浏览、校验与编�
 
 > 这是个人维护的非官方工具，与 OrcaSlicer 项目、SoftFever 和 Snapmaker 均无隶属关系，也未获得它们的认可。仓库里没有从 OrcaSlicer 导出或复制的文件，工具只读取用户指定目录里的 profile 文件。本项目尚未选定 license。
 
-目前完成了 M0 到 M16：
+目前完成了 M0 到 M17：
 - M0：不依赖界面的 core 库，加一个命令行工具；
 - M0.5：从 OrcaSlicer 导出的配置项 schema（已在 M16 中移除）；
 - M1：用 gpui-kit 写的桌面浏览器；
@@ -24,7 +24,8 @@ OrcaSlicer 系统配置文件（`resources/profiles`）的浏览、校验与编�
 - M13：机型的新建、复制、修改、重命名和删除，同步厂商清单与机器预设引用；
 - M14：检测与继承值相同的覆盖值，将兄弟预设的共同值提到父项，预览所有受影响子孙；
 - M15：GitHub Actions 持续集成，在 Linux 和 macOS 上跑格式、lint、全部测试和真实数据回归；
-- M16：移除 schema，工具只分析 profile 文件本身。
+- M16：移除 schema，工具只分析 profile 文件本身；
+- M17：打包成可双击启动的 macOS 应用，为 Windows 版做好快捷键、设置路径和清单路径的跨平台准备。
 
 ## 结构
 
@@ -32,7 +33,8 @@ OrcaSlicer 系统配置文件（`resources/profiles`）的浏览、校验与编�
 crates/
 ├── profile-core/    # 加载、继承解析、校验；不依赖任何 GUI
 ├── profile-tool/    # 命令行：stats / check / resolve
-└── profile-studio/  # gpui-kit 桌面应用
+└── profile-studio/  # gpui-kit 桌面应用；resources/icon.png 是应用图标
+scripts/             # bundle-macos.sh 打包 macOS 应用，icon.swift 绘制图标
 docs/roadmap.md      # 开发路线图
 docs/reference/      # 配置格式说明（profile_format_spec.md）和参考统计脚本
 AGENTS.md            # 给 Codex 的项目说明
@@ -41,16 +43,34 @@ CLAUDE.md            # 给 Claude Code 的项目说明，和 AGENTS.md 内容保
 
 ## 桌面应用
 
+开发时直接用 cargo 启动：
+
 ```bash
-cargo run -p profile-studio -- ../OrcaSlicer/resources/profiles
+cargo run --release -p profile-studio -- ../OrcaSlicer/resources/profiles
 ```
+
+也可以打包成 macOS 应用，之后双击启动：
+
+```bash
+scripts/bundle-macos.sh            # 生成 target/release/bundle/Orca Profile Studio.app
+scripts/bundle-macos.sh --install  # 同时复制到 ~/Applications/
+```
+
+脚本做 release 构建，生成图标和 `Info.plist`，并做本地的 ad-hoc 签名（不做公证，不用于分发）。除了 `--install` 之外只写 `target/`。图标源文件是 `crates/profile-studio/resources/icon.png`，由 `swift scripts/icon.swift <输出路径>` 绘制。
 
 profiles 目录按以下顺序确定：
 1. 命令行第一个参数；
 2. 环境变量 `ORCA_PROFILES_DIR`；
-3. 和本仓库同级的 `../OrcaSlicer` 目录。
+3. 上次打开的目录（记在设置文件里）；
+4. 编译时和本仓库同级的 `../OrcaSlicer/resources/profiles`。
 
-运行中也可以点工具栏的「Open…」换一个目录。
+从 Finder 或 Dock 启动时没有终端的环境变量，`ORCA_PROFILES_DIR` 和 `ORCA_STUDIO_SETTINGS` 都不生效，通常打开上次的目录。第 4 条用的是编译时的源码路径：从这个检出打包的 `.app` 能找到它，拷到别的机器上就找不到了，这时用工具栏的「Open…」选一次即可。
+
+设置文件在 macOS 上是 `~/Library/Application Support/orca-profile-studio/settings.json`，Windows 上是 `%APPDATA%\orca-profile-studio\settings.json`，其他平台是 `$XDG_CONFIG_HOME`（默认 `~/.config`）下的同名文件；`ORCA_STUDIO_SETTINGS` 可以指定别的路径。
+
+系统通知（只在没有窗口能显示错误时使用）需要从 `.app` 启动：GPUI 只在有 Bundle ID 时启用 macOS 通知中心，`cargo run` 时只输出到 stderr。第一次发通知时系统会请求授权。
+
+运行中也可以点工具栏的「Open…」换一个目录。下文的快捷键按 macOS 写，其他平台用 Ctrl 代替 ⌘；工具栏提示会按当前平台显示。
 
 界面说明：
 - **左侧导航树**：厂商 → 机型（→ 该机型的打印机预设）、耗材、工艺、模板。树是虚拟化的，只渲染可见的行。有 warning 及以上级别问题的预设，行尾会显示警告图标。
@@ -104,9 +124,9 @@ profiles 目录按以下顺序确定：
   - 切换语言保留未保存编辑、未应用文本、筛选与选择；批量预览需要重新生成。已显示的状态消息和底层技术错误详情可能保留原文。
   - 应用文案的中英对照在 [`locales/app.yml`](crates/profile-studio/locales/app.yml)，不需要修改代码即可调整译文。
 - **主题和窗口**：在 ⌘K 里运行「Theme: System / Light / Dark」切换主题，默认跟随系统。⌘N 或 File 菜单的「New Window」打开一个独立的新窗口，加载上次的目录。
-- **关闭和退出**：原生关闭或 ⌘W 检查当前窗口，应用菜单 Quit 或 ⌘Q 检查全部窗口；有未保存编辑或尚未 Apply 的输入时先确认，取消后继续编辑。确认期间其他窗口又新增未保存文件时会重新提示。系统直接终止/强制退出受 GPUI 平台 API 限制，无法取消。
+- **关闭和退出**：原生关闭或 ⌘W 检查当前窗口，应用菜单 Quit（其他平台是 File 菜单的 Exit）或 ⌘Q 检查全部窗口；有未保存编辑或尚未 Apply 的输入时先确认，取消后继续编辑。确认期间其他窗口又新增未保存文件时会重新提示。系统直接终止/强制退出受 GPUI 平台 API 限制，无法取消。
 - **错误反馈**：设置读写、目录选择、打开新窗口失败时在窗口中显示通知，提供 Dismiss；设置保存失败不影响当前会话，恢复权限后可重试相同设置。
-- **记住的设置**：主题、上次的目录、侧栏宽度、问题面板的开关和高度、窗口大小，保存在 `~/Library/Application Support/orca-profile-studio/settings.json`（可用 `ORCA_STUDIO_SETTINGS` 指定别的路径）。不带参数启动时，打开上次的目录。
+- **记住的设置**：主题、上次的目录、侧栏宽度、问题面板的开关和高度、窗口大小，保存在上文所列的设置文件里。不带参数启动时，打开上次的目录。
 - **后台加载**：加载在后台线程进行，刷新期间保留可操作的旧视图，完成后一次性替换。期间新增的编辑会一起迁移；新的加载请求会取代旧请求，刷新期间再次保存也会重新加载。刷新失败会保留旧视图和编辑，并提示重试。
 
 界面测试在 `crates/profile-studio/src/app.rs` 的 `tests` 模块里，用的是 gpui-kit 的 headless 测试：渲染真实界面，模拟点击，然后断言状态。

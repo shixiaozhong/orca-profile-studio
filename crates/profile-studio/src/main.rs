@@ -52,12 +52,15 @@ fn main() {
 }
 
 /// The first argument, else `ORCA_PROFILES_DIR`, else the directory loaded last, else an
-/// OrcaSlicer checkout next to this repository.
+/// OrcaSlicer checkout next to this repository (the path it was built from, so a copied app
+/// bundle loses it). Apps started from Finder have no terminal environment.
 fn initial_profiles_dir(last: Option<PathBuf>) -> Option<PathBuf> {
     std::env::args_os()
-        .nth(1)
+        .skip(1)
+        // Older macOS versions pass a process serial number to apps launched from Finder.
+        .find(|arg| !arg.to_string_lossy().starts_with("-psn_"))
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("ORCA_PROFILES_DIR").map(PathBuf::from))
+        .or_else(|| std::env::var_os("ORCA_PROFILES_DIR").filter(|dir| !dir.is_empty()).map(PathBuf::from))
         .or_else(|| last.filter(|dir| dir.is_dir()))
         .or_else(|| {
             let sibling = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../OrcaSlicer/resources/profiles");
@@ -66,19 +69,21 @@ fn initial_profiles_dir(last: Option<PathBuf>) -> Option<PathBuf> {
 }
 
 pub fn set_menus(cx: &mut App) {
-    cx.set_menus([
-        Menu {
+    let mut file = vec![
+        MenuItem::action(t!("menu.new_window"), app::NewWindow),
+        MenuItem::action(t!("menu.close_window"), lifecycle::CloseWindow),
+    ];
+    let mut menus = Vec::new();
+    // macOS keeps Quit in the application menu; other platforms end the File menu with Exit.
+    if cfg!(target_os = "macos") {
+        menus.push(Menu {
             name: "Orca Profile Studio".into(),
             items: vec![MenuItem::action(t!("menu.quit"), lifecycle::Quit)],
             disabled: false,
-        },
-        Menu {
-            name: t!("common.file").into(),
-            items: vec![
-                MenuItem::action(t!("menu.new_window"), app::NewWindow),
-                MenuItem::action(t!("menu.close_window"), lifecycle::CloseWindow),
-            ],
-            disabled: false,
-        },
-    ]);
+        });
+    } else {
+        file.extend([MenuItem::separator(), MenuItem::action(t!("menu.exit"), lifecycle::Quit)]);
+    }
+    menus.push(Menu { name: t!("common.file").into(), items: file, disabled: false });
+    cx.set_menus(menus);
 }

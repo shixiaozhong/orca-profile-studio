@@ -15,6 +15,7 @@ crates/
 └── profile-studio/  # gpui-kit desktop app
 docs/roadmap.md      # roadmap: stages, design decisions, done criteria
 docs/reference/      # profile format spec + Python reference stats script
+scripts/             # bundle-macos.sh (.app bundle), icon.swift (draws the icon source PNG)
 AGENTS.md            # the Codex counterpart of this file
 ```
 
@@ -31,6 +32,7 @@ cargo run --release -p profile-tool -- resolve "Generic ABS @U1 0.2 nozzle"
 cargo run --release -p profile-tool -- search "nozzle_temperature 270"
 cargo run --release -p profile-tool -- compat "0.07mm DETAIL @CORE One 0.25"
 cargo run -p profile-studio -- ../OrcaSlicer/resources/profiles
+scripts/bundle-macos.sh [--install]   # target/release/bundle/Orca Profile Studio.app
 ```
 
 The only expected build warning is a future-incompatibility note from the third-party `block` crate.
@@ -55,6 +57,9 @@ from the package directory).
 - A child replaces whole keys (arrays are not merged element-wise). The only cross-vendor parent
   source is OrcaFilamentLibrary's filaments.
 - Lookups use the preset's own `name`, not the manifest entry name or file name.
+- Manifest `sub_path`s go through `profile-core`'s `sub_path` module (M17): written with `/` on every
+  platform, converted to native paths at load, matched by path components, case-folded in `/` form
+  for collision checks. Never compare or write them via `to_string_lossy`/`to_str`.
 - UTF-8 BOM is tolerated (nlohmann::json skips it; serde_json does not) but reported.
 - No schema (M16): the project analyses profile files only. It has no option types, defaults,
   labels or value checks from OrcaSlicer's sources; a key no file in the chain sets has no value.
@@ -196,10 +201,15 @@ from the package directory).
 - Saving writes into the profiles directory, i.e. the OrcaSlicer checkout. UI tests that save use a
   temporary fixture (`editable_fixture` in `app.rs`), never the real profiles.
 - App preferences live in the `SettingsStore` global (`settings.rs`), saved on every change to
-  `~/Library/Application Support/orca-profile-studio/settings.json` or `ORCA_STUDIO_SETTINGS`. UI tests
+  `orca-profile-studio/settings.json` under the platform's config directory (`settings_path`: macOS
+  Application Support, Windows `%APPDATA%`, else XDG) or to `ORCA_STUDIO_SETTINGS`. UI tests
   open windows through `open_with_settings(cx, dir, None)`, which keeps settings in memory, so they
   never touch the user's file. Resizable splits keep an `Entity<ResizableState>`; its `Resized`
   event (also emitted by `resize_panel`) is where sizes are saved.
+- Key bindings and test key presses use `secondary-` (⌘ on macOS, Ctrl elsewhere), never `cmd-`;
+  UI text shows a shortcut through `i18n::shortcut(..)`, never a literal ⌘. Quit lives in the app
+  menu on macOS and at the end of File elsewhere. System notifications only work from the `.app`
+  (GPUI needs a bundle identifier); `cargo run` falls back to stderr.
 - Shortcuts only dispatch when something is focused: `StudioApp` focuses its root `FocusHandle` at
   creation; `cx.on_focus_lost` restores the nearest surviving focus ancestor, falling back to the root. Never
   request focus from `render`.
@@ -234,11 +244,10 @@ from the package directory).
 
 [docs/roadmap.md](docs/roadmap.md) (Chinese) is the roadmap: stages and status, key design decisions
 of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
-M1–M16 (M15: CI on GitHub Actions, Linux and macOS, real-data regression from a cached sparse
-checkout of the public OrcaSlicer fork at the pinned commit; M16: schema removed, profiles only).
-Next: M17 macOS app bundle plus
-cross-platform prep (secondary- key bindings, per-platform settings path, `/` in manifest
-sub_paths), then M18 Windows build and portable zip (CI Windows job plus the user's own machine). Git diff is pending (待定) and the OrcaSlicer upgrade check is
+M1–M17 (M15: CI on GitHub Actions, Linux and macOS, real-data regression from a cached sparse
+checkout of the public OrcaSlicer fork at the pinned commit; M16: schema removed, profiles only;
+M17: `.app` bundle script, secondary- key bindings, per-platform menus and settings path, `/` in
+manifest sub_paths). Next: M18 Windows build and portable zip (CI Windows job plus the user's own machine). Git diff is pending (待定) and the OrcaSlicer upgrade check is
 deferred (暂缓); pending and deferred items get no M number until the user decides to do them.
 The G-code viewer and OrcaSlicer sync automation are deferred.
 When a stage is finished, move it to "已完成" there with its design decisions, mark it ✅, and update

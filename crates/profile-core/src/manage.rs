@@ -11,6 +11,7 @@ use std::path::{Component, Path, PathBuf};
 
 use serde_json::{Value, json};
 
+use crate::sub_path;
 use crate::{Document, PresetId, PresetKind, PresetMeta, RawValue, Repository, Severity, VendorId};
 
 #[derive(Debug, thiserror::Error)]
@@ -208,7 +209,7 @@ impl ManagementPlan {
             for preset in repo.presets().iter().filter(|preset| preset.vendor == vendor && preset.kind == kind) {
                 let sub = preset.path.strip_prefix(&info.name).map_err(|_| invalid("Invalid vendor path"))?;
                 let ix = array(&doc, key)?.len();
-                doc.array_insert(key, ix, &json!({"name":preset.name(),"sub_path":sub.to_string_lossy()}))?;
+                doc.array_insert(key, ix, &json!({"name":preset.name(),"sub_path":sub_path::to_manifest(sub)}))?;
             }
             self.notice(false, "The filament library manifest is made explicit to preserve parent-before-child order.");
         }
@@ -267,12 +268,8 @@ impl ManagementPlan {
                 |p| p.path.parent().unwrap().to_owned(),
             )
             .join(file);
-        let folded = path.to_string_lossy().to_lowercase();
-        if self
-            .snapshot
-            .keys()
-            .chain(self.changes.keys())
-            .any(|existing| existing.to_string_lossy().to_lowercase() == folded)
+        let folded = sub_path::folded(&path);
+        if self.snapshot.keys().chain(self.changes.keys()).any(|existing| sub_path::folded(existing) == folded)
             || self.root.join(&path).exists()
         {
             return Err(invalid(format!("{} already exists", path.display())));
@@ -366,7 +363,7 @@ impl ManagementPlan {
         let key = draft.kind.list_key();
         let ix = array(&manifest, key)?.len();
         let sub = path.strip_prefix(&repo.vendor(draft.vendor).name).map_err(|_| invalid("Invalid vendor path"))?;
-        manifest.array_insert(key, ix, &json!({"name":draft.name,"sub_path":sub.to_string_lossy()}))?;
+        manifest.array_insert(key, ix, &json!({"name":draft.name,"sub_path":sub_path::to_manifest(sub)}))?;
         self.put(path, Some(doc.into_text()))?;
         self.put(manifest_path, Some(manifest.into_text()))?;
         Ok(())
@@ -391,9 +388,9 @@ impl ManagementPlan {
         }
         let path = preset.path.parent().unwrap().join(file);
         // A case-only rename names the source file itself on case-insensitive file systems.
-        let folded = path.to_string_lossy().to_lowercase();
-        if folded != preset.path.to_string_lossy().to_lowercase()
-            && (plan.snapshot.keys().any(|existing| existing.to_string_lossy().to_lowercase() == folded)
+        let folded = sub_path::folded(&path);
+        if folded != sub_path::folded(&preset.path)
+            && (plan.snapshot.keys().any(|existing| sub_path::folded(existing) == folded)
                 || plan.root.join(&path).exists())
         {
             return Err(invalid("The destination file already exists"));
@@ -420,7 +417,7 @@ impl ManagementPlan {
         let ix = manifest_index(repo, preset, &manifest)?;
         manifest.array_set_member(key, ix, "name", &RawValue::Str(name.into()))?;
         let sub = path.strip_prefix(&repo.vendor(preset.vendor).name).map_err(|_| invalid("Invalid vendor path"))?;
-        manifest.array_set_member(key, ix, "sub_path", &RawValue::Str(sub.to_string_lossy().into()))?;
+        manifest.array_set_member(key, ix, "sub_path", &RawValue::Str(sub_path::to_manifest(sub)))?;
         plan.put(preset.path.clone(), None)?;
         if path != preset.path {
             plan.moved.insert(preset.path.clone(), path.clone());
@@ -640,7 +637,9 @@ fn manifest_index(repo: &Repository, preset: &crate::Preset, doc: &Document) -> 
     let matches: Vec<_> = array(doc, preset.kind.list_key())?
         .into_iter()
         .enumerate()
-        .filter(|(_, item)| item.get("sub_path").and_then(Value::as_str) == sub.to_str())
+        .filter(|(_, item)| {
+            item.get("sub_path").and_then(Value::as_str).is_some_and(|listed| sub_path::names(listed, sub))
+        })
         .map(|(ix, _)| ix)
         .collect();
     if matches.len() != 1 {

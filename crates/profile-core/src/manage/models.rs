@@ -1,5 +1,6 @@
 //! Machine models have their own identity and fields; file transactions are shared with presets.
 use super::{ManageError, ManagementPlan, array, check_filename, check_name, invalid, set_meta};
+use crate::sub_path;
 use crate::{Document, PresetKind, RawValue, Repository, VendorId};
 use serde_json::{Value, json};
 use std::{
@@ -96,10 +97,9 @@ impl ModelPlan {
             None => Path::new(&vendor.name).join("machine").join(filename),
         };
         let old_path = editing.map(|ix| &repo.models()[ix].path);
-        let folded = path.to_string_lossy().to_lowercase();
-        if old_path.is_none_or(|p| p.to_string_lossy().to_lowercase() != folded)
-            && (files.snapshot.keys().any(|p| p.to_string_lossy().to_lowercase() == folded)
-                || files.root.join(&path).exists())
+        let folded = sub_path::folded(&path);
+        if old_path.is_none_or(|p| sub_path::folded(p) != folded)
+            && (files.snapshot.keys().any(|p| sub_path::folded(p) == folded) || files.root.join(&path).exists())
         {
             return Err(invalid("The destination file already exists"));
         }
@@ -217,12 +217,13 @@ impl ModelPlan {
                 files.moved.insert(old.path.clone(), path.clone());
             }
         }
-        let sub = path.strip_prefix(&vendor.name).map_err(|_| invalid("Invalid vendor path"))?.to_string_lossy();
+        let sub = path.strip_prefix(&vendor.name).map_err(|_| invalid("Invalid vendor path"))?;
+        let sub = sub_path::to_manifest(sub);
         if let Some(ix) = old_entry {
             let name_key = object_key(&entries[ix], "name").unwrap();
             let path_key = object_key(&entries[ix], "sub_path").unwrap();
             manifest.array_set_member(&list_key, ix, &name_key, &RawValue::Str(draft.name.clone()))?;
-            manifest.array_set_member(&list_key, ix, &path_key, &RawValue::Str(sub.into()))?;
+            manifest.array_set_member(&list_key, ix, &path_key, &RawValue::Str(sub.clone()))?;
         } else {
             manifest.array_insert(&list_key, entries.len(), &json!({"name":draft.name,"sub_path":sub}))?;
         }
@@ -301,7 +302,7 @@ fn model_entry(repo: &Repository, model: usize, entries: &[Value]) -> Result<usi
     let matching = entries
         .iter()
         .enumerate()
-        .filter(|(_, e)| field_ci(e, "sub_path") == sub.to_str())
+        .filter(|(_, e)| field_ci(e, "sub_path").is_some_and(|listed| sub_path::names(listed, sub)))
         .map(|(ix, _)| ix)
         .collect::<Vec<_>>();
     if matching.len() != 1 {

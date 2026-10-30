@@ -20,6 +20,7 @@ mod promote;
 mod repository;
 mod search;
 mod stats;
+mod sub_path;
 
 pub use compat::{CompatibilityIndex, Verdict};
 pub use condition::{Condition, ConditionError, Value, Variable};

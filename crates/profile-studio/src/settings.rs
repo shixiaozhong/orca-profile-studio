@@ -4,6 +4,7 @@
 //! file right away; a missing or unreadable file means defaults. An unreadable file is copied aside
 //! before the first save replaces it, or left alone (no saving) when that copy fails.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
@@ -71,16 +72,21 @@ impl Settings {
 
 /// `ORCA_STUDIO_SETTINGS`, else the platform's configuration directory.
 pub fn default_path() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("ORCA_STUDIO_SETTINGS") {
+    settings_path(std::env::consts::OS, |name| std::env::var_os(name).filter(|value| !value.is_empty()))
+}
+
+/// macOS: `~/Library/Application Support`; Windows: `%APPDATA%`; others: `$XDG_CONFIG_HOME`, else
+/// `~/.config`. `var` reads one environment variable; empty values count as unset.
+fn settings_path(os: &str, var: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    if let Some(path) = var("ORCA_STUDIO_SETTINGS") {
         return Some(PathBuf::from(path));
     }
-    let home = PathBuf::from(std::env::var_os("HOME")?);
-    let base = if cfg!(target_os = "macos") {
-        home.join("Library/Application Support")
-    } else {
-        std::env::var_os("XDG_CONFIG_HOME").map_or_else(|| home.join(".config"), PathBuf::from)
+    let base = match os {
+        "macos" => PathBuf::from(var("HOME")?).join("Library").join("Application Support"),
+        "windows" => PathBuf::from(var("APPDATA")?),
+        _ => var("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| Some(PathBuf::from(var("HOME")?).join(".config")))?,
     };
-    Some(base.join("orca-profile-studio/settings.json"))
+    Some(base.join("orca-profile-studio").join("settings.json"))
 }
 
 /// The settings of this run and where they are saved; `path` is `None` in tests.
@@ -172,7 +178,37 @@ pub fn set_theme(theme: ThemePreference, window: &mut Window, cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Settings, ThemePreference, open};
+    use super::{Settings, ThemePreference, open, settings_path};
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+
+    #[test]
+    fn picks_the_settings_file_per_platform() {
+        let env = |vars: &'static [(&str, &str)]| {
+            move |name: &str| vars.iter().find(|(key, _)| *key == name).map(|(_, value)| OsString::from(value))
+        };
+        let path = |parts: &[&str]| parts.iter().collect::<PathBuf>();
+        let home = env(&[("HOME", "/home/me"), ("APPDATA", "C:/Users/me/AppData/Roaming")]);
+        assert_eq!(
+            settings_path("macos", home),
+            Some(path(&["/home/me", "Library", "Application Support", "orca-profile-studio", "settings.json"]))
+        );
+        assert_eq!(
+            settings_path("windows", home),
+            Some(path(&["C:/Users/me/AppData/Roaming", "orca-profile-studio", "settings.json"]))
+        );
+        assert_eq!(
+            settings_path("linux", home),
+            Some(path(&["/home/me", ".config", "orca-profile-studio", "settings.json"]))
+        );
+        let xdg = env(&[("HOME", "/home/me"), ("XDG_CONFIG_HOME", "/xdg")]);
+        assert_eq!(settings_path("linux", xdg), Some(path(&["/xdg", "orca-profile-studio", "settings.json"])));
+        // Windows does not fall back to HOME; the override wins everywhere.
+        assert_eq!(settings_path("windows", env(&[("HOME", "/home/me")])), None);
+        assert_eq!(settings_path("macos", env(&[])), None);
+        let custom = env(&[("ORCA_STUDIO_SETTINGS", "/tmp/s.json"), ("HOME", "/home/me")]);
+        assert_eq!(settings_path("windows", custom), Some(PathBuf::from("/tmp/s.json")));
+    }
 
     #[test]
     fn round_trips_and_tolerates_bad_files() {

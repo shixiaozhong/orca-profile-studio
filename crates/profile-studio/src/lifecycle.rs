@@ -14,7 +14,7 @@ use crate::app::StudioApp;
 actions!(lifecycle, [Quit, CloseWindow]);
 
 pub fn init(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new("cmd-q", Quit, None), KeyBinding::new("cmd-w", CloseWindow, None)]);
+    cx.bind_keys([KeyBinding::new("secondary-q", Quit, None), KeyBinding::new("secondary-w", CloseWindow, None)]);
     cx.on_action(|_: &Quit, cx| cx.defer(|cx| request_quit(cx, None)));
 }
 

@@ -1,4 +1,4 @@
-//! The command palette (⌘K): app commands plus global search over presets, options and values.
+//! The command palette (secondary-k): app commands plus global search over presets, options and values.
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::command::{CommandGroup, CommandItem};

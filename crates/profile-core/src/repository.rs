@@ -361,7 +361,7 @@ impl Repository {
 
     fn load_machine_models(&mut self, vendor: VendorId, vendor_dir: &Path, items: &[ManifestItem]) {
         for item in items {
-            let path = vendor_dir.join(&item.sub_path);
+            let path = vendor_dir.join(crate::sub_path::to_path(&item.sub_path));
             self.listed.insert(path.clone());
             let Some((object, _)) = self.read_object(vendor, &path) else {
                 continue;
@@ -411,7 +411,9 @@ impl Repository {
         // Read everything first so a parent listed after its child can be told apart from a missing one.
         let parsed: Vec<ParsedPreset> = items
             .iter()
-            .filter_map(|item| self.read_preset(vendor, vendor_dir.join(&item.sub_path), &item.list_name))
+            .filter_map(|item| {
+                self.read_preset(vendor, vendor_dir.join(crate::sub_path::to_path(&item.sub_path)), &item.list_name)
+            })
             .collect();
         let listed_names: HashSet<String> = parsed.iter().map(|preset| preset.meta.name.clone()).collect();
         let is_library = self.vendor(vendor).name == FILAMENT_LIBRARY;
@@ -716,11 +718,11 @@ fn discover_library_filaments(root: &Path, vendor_dir: &Path) -> Vec<ManifestIte
     for (dir, recursive) in groups {
         let mut files = Vec::new();
         collect_json_files(&dir, recursive, &mut files);
-        files.sort_by_cached_key(|file| (library_priority(file), generic_path(file)));
+        files.sort_by_cached_key(|file| (library_priority(file), crate::sub_path::to_manifest(file)));
         for file in files {
             let Ok(relative) = file.strip_prefix(&vendor_root) else { continue };
             let list_name = file.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
-            items.push(ManifestItem { list_name, sub_path: generic_path(relative) });
+            items.push(ManifestItem { list_name, sub_path: crate::sub_path::to_manifest(relative) });
         }
     }
     items
@@ -754,10 +756,6 @@ fn collect_json_files(dir: &Path, recursive: bool, out: &mut Vec<PathBuf>) {
 
 fn is_json(path: &Path) -> bool {
     path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
-}
-
-fn generic_path(path: &Path) -> String {
-    path.components().map(|part| part.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")
 }
 
 fn is_valid_version(version: &str) -> bool {

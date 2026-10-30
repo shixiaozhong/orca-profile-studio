@@ -234,14 +234,14 @@ values.undo:
   en: "Undo edit"
   zh-CN: "撤销修改"
 values.undo_shortcut:
-  en: "Undo (⌘Z)"
-  zh-CN: "撤销（⌘Z）"
+  en: "Undo (%{key})"
+  zh-CN: "撤销（%{key}）"
 values.redo:
   en: "Redo edit"
   zh-CN: "重做修改"
 values.redo_shortcut:
-  en: "Redo (⇧⌘Z)"
-  zh-CN: "重做（⇧⌘Z）"
+  en: "Redo (%{key})"
+  zh-CN: "重做（%{key}）"
 values.edit:
   en: "Edit"
   zh-CN: "编辑"
@@ -557,6 +557,9 @@ manage.busy:
 menu.quit:
   en: "Quit Orca Profile Studio"
   zh-CN: "退出 Orca Profile Studio"
+menu.exit:
+  en: "Exit"
+  zh-CN: "退出"
 menu.new_window:
   en: "New Window…"
   zh-CN: "新建窗口…"
@@ -966,8 +969,8 @@ app.search:
   en: "Search…"
   zh-CN: "搜索…"
 app.search_hint:
-  en: "Search presets, options and values; run commands (⌘K)"
-  zh-CN: "搜索预设、配置项和值，或运行命令（⌘K）"
+  en: "Search presets, options and values; run commands (%{key})"
+  zh-CN: "搜索预设、配置项和值，或运行命令（%{key}）"
 app.open_folder:
   en: "Open…"
   zh-CN: "打开…"

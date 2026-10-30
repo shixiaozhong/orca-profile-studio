@@ -25,8 +25,8 @@ OrcaSlicer 的加载语义以 [profile_format_spec.md](reference/profile_format_
 | M13 | ✅ | 新建、复制、修改、重命名、删除机型，同步清单与机器引用 | `95359a7` |
 | M14 | ✅ | 冗余覆盖值 info 检测、提到父项、未选子孙影响预览与整组撤销 | `7edab54` |
 | M15 | ✅ | 持续集成：GitHub Actions 上跑格式、lint、全部测试和真实数据回归 | `d64af19` |
-| M16 | ✅ | 移除 schema：工具只分析 profile 文件，删除内嵌的 schema.json 及依赖它的功能 | 待补 |
-| M17 | 计划中 | 打包成可双击启动的 macOS 应用，为 Windows 做好跨平台准备 | |
+| M16 | ✅ | 移除 schema：工具只分析 profile 文件，删除内嵌的 schema.json 及依赖它的功能 | `ab40649` |
+| M17 | ✅ | 打包成可双击启动的 macOS 应用，为 Windows 做好跨平台准备 | 待补 |
 | M18 | 计划中 | Windows 版：在 Windows 上编译、测试并打包成免安装 zip | |
 | — | 待定 | 和 Git 对比：工作区相对 HEAD 改了哪些预设、哪些键 | |
 | — | 暂缓 | 2D G-code 分层查看器 | |
@@ -439,30 +439,28 @@ M0.5 排在 M1 之后才做，编号沿用最初的规划。
 
 ---
 
-## 后续阶段
-
-M0–M16 已完成。接下来依次是 M17：打包成 macOS 应用并做好跨平台准备；M18：Windows 版。「和 Git 对比」暂时待定，OrcaSlicer 升级检查自动化仍在「暂缓」；它们都不占用阶段编号。
-
 ### M17：打包成 macOS 应用，做好跨平台准备
 
-**范围**
-- 生成可以双击启动的 `Orca Profile Studio.app`：应用图标、`Info.plist`（Bundle ID 沿用代码里的 `org.orca-profile-studio.app`、版本号取自 `Cargo.toml`）、release 构建。脚本可选 `--install`，把 `.app` 复制到 `~/Applications/`。
-- 不带参数启动时沿用现在的规则：先用上次的目录，再找旁边的 OrcaSlicer 检出；从 Finder 启动没有 `ORCA_PROFILES_DIR` 时也能正常工作。
-- 系统通知能可靠送达（M9 记录过：普通 `cargo run` 不保证投递，需要受信任的 `.app`）。
-- 为 M18 的 Windows 版做好在 Mac 上就能完成和测试的准备：
-  - 快捷键改用 GPUI 的 `secondary-` 写法（macOS 上是 Cmd，其他平台是 Ctrl），菜单和退出处理不再假设只有 macOS；
-  - 设置文件位置按平台选择：macOS 用 `~/Library/Application Support`，Windows 用 `%APPDATA%`，其他平台用 XDG；
-  - 清单里的 `sub_path` 读写一律用 `/`，路径的比较和查重不依赖字符串形式的分隔符，写回清单时绝不出现 `\`。
+**范围**：`scripts/bundle-macos.sh` 生成可以双击启动的 `Orca Profile Studio.app`（`--install` 复制到 `~/Applications/`）。同时完成 M18 在 Mac 上就能做和测的准备：快捷键、菜单、设置文件位置和清单 `sub_path` 不再假设只有 macOS。
 
-**设计要点**
-- 用仓库里的脚本（例如 `scripts/bundle-macos.sh`）完成打包，不依赖额外安装的 cargo 子命令；图标从一张 1024×1024 的 PNG 用系统自带的 `sips` / `iconutil` 生成 `.icns`，没有图标源文件时先生成占位图标。脚本只写 `target/` 下的产物（`--install` 除外）。
-- 本地使用，不做签名公证和分发；需要时再说。
-- 「旁边的 OrcaSlicer 检出」用的是编译时的源码路径：从这个检出编译的 `.app` 能找到，拷到别的机器上会失效，文档里说明。
-- 从 Finder 启动时没有终端环境变量，`ORCA_LOCALIZATION_DIR` 这类覆盖只在命令行启动时有效，文档里说明。
+**关键设计决定**
 
-**依赖**：无。
+- **仓库内脚本打包**：不依赖额外的 cargo 子命令。脚本做 `--locked` release 构建，按 `cargo pkgid` 的版本号写 `Info.plist`（Bundle ID `org.orca-profile-studio.app` 与代码里的 `set_app_identity` 一致；`CFBundleLocalizations` 列出 en / zh-Hans，让系统对话框跟随系统语言；最低 macOS 11），用 `sips` / `iconutil` 从 1024×1024 的 PNG 生成 `.icns`，最后做 ad-hoc 签名并校验。只写 `target/`（`--install` 除外）；不做公证和分发。
+- **图标**：`crates/profile-studio/resources/icon.png` 是提交在仓库里的源文件，由 `scripts/icon.swift`（CoreGraphics，无第三方依赖）绘制：圆角方块上叠三层菱形，表示继承链。源文件缺失时脚本先在 `target/` 里重新绘制一张。
+- **系统通知**：GPUI 只在主 bundle 有 Bundle ID 时启用 `UNUserNotificationCenter`（否则系统会直接终止进程），所以 `cargo run` 永远不投递，`.app` 才会投递；第一次发通知时请求授权。应用只在没有窗口能显示错误时使用系统通知，窗口内的错误通知不受影响。
+- **启动目录**：从 Finder 启动没有终端环境变量，按"上次的目录 → 编译时旁边的 OrcaSlicer 检出"打开；后者是编译时的源码路径，`.app` 拷到别的机器上会失效。空的 `ORCA_PROFILES_DIR` 当作未设置；旧版 macOS 从 Finder 启动时传入的 `-psn_…` 参数被忽略。
+- **快捷键**：所有绑定改用 `secondary-`（macOS 上是 ⌘，其他平台是 Ctrl）。工具栏提示里的快捷键不再写死 ⌘，而是用 `i18n::shortcut` 按平台格式化（⌘K / Ctrl+K）。测试也按 `secondary-` 发送按键，在 Windows 上会落到 Ctrl，与 gpui-kit 输入框在非 macOS 平台上的 Ctrl+A 全选一致。
+- **菜单和退出**：macOS 把 Quit 放在应用菜单；其他平台在 File 菜单末尾放 Exit（同一个 `Quit` 动作，同样检查所有窗口的未保存编辑）。关掉最后一个窗口时退出，所有平台相同。
+- **设置文件位置**：`settings_path(os, var)` 是不读真实环境的纯函数，三种平台在任何机器上都能测：macOS `~/Library/Application Support`，Windows `%APPDATA%`（不回退到 `HOME`），其他平台 `$XDG_CONFIG_HOME`，否则 `~/.config`；`ORCA_STUDIO_SETTINGS` 优先，空值当作未设置。
+- **清单 `sub_path`**：`profile-core` 的 `sub_path` 模块集中处理。写回清单时一律用 `/` 连接路径组件；加载时把 `sub_path` 转成本平台的路径形式；查找清单条目按路径组件比较（`filament//a.json` 与 `filament/a.json` 视为同一个）；大小写不敏感的查重用 `/` 形式的小写字符串，不受分隔符影响。新建、复制、重命名预设和机型都走这套规则。
 
-**完成标准**：脚本在本机生成 `.app`，双击能打开上次的 profiles 目录，设置和中文翻译正常，系统通知能显示；快捷键、设置路径和 `sub_path` 的改动有测试；README 写明打包和启动方法。
+**验证**：147 个 Rust 测试（core 66、真实数据回归 8、studio 73）通过，clippy 无警告，Python 参考脚本 `--check` 通过。新增的测试覆盖快捷键格式、三种平台的设置路径、`sub_path` 的写回与比较，以及嵌套目录中复制、重命名预设后清单只出现 `/`；只在 Windows 上编译的反斜杠测试留给 M18 的 CI。脚本在本机生成 `.app`，签名校验通过；用 `open` 启动（与双击相同，没有终端环境）时，LaunchServices 识别到 Bundle ID，主窗口按记住的尺寸打开。窗口内容和真实系统通知的显示由用户验证：系统通知只在没有窗口能显示错误时才会出现。
+
+---
+
+## 后续阶段
+
+M0–M17 已完成。接下来是 M18：Windows 版。「和 Git 对比」暂时待定，OrcaSlicer 升级检查自动化仍在「暂缓」；它们都不占用阶段编号。
 
 ### M18：Windows 版
 
