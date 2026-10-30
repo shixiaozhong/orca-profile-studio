@@ -145,7 +145,8 @@ pub struct ManagementPlan {
 
 impl ManagementPlan {
     fn new(repo: &Repository) -> Result<Self, ManageError> {
-        let root = repo.root().canonicalize()?;
+        // Not `\\?\` on Windows: verbatim paths reject `/` and show up in messages.
+        let root = dunce::canonicalize(repo.root())?;
         let snapshot = transaction::snapshot(&root)?;
         // Refuse stale source data: every file the load read must still have the same bytes.
         for (path, loaded) in repo.sources() {

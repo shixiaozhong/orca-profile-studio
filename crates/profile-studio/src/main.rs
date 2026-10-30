@@ -1,3 +1,6 @@
+// Release builds on Windows start without a console window; debug builds keep it for stderr.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 rust_i18n::i18n!("locales", fallback = "en");
 
 // GPUI elements accept owned strings; rust-i18n returns a Cow.

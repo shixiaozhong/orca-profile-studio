@@ -5357,6 +5357,7 @@ dependencies = [
 name = "profile-core"
 version = "0.1.0"
 dependencies = [
+ "dunce",
  "indexmap",
  "regex",
  "serde",
@@ -5369,6 +5370,8 @@ dependencies = [
 name = "profile-studio"
 version = "0.1.0"
 dependencies = [
+ "dunce",
+ "embed-resource",
  "gpui-kit",
  "indexmap",
  "profile-core",

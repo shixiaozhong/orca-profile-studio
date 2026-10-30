@@ -666,7 +666,11 @@ mod tests {
                         path.display(),
                         member.key
                     );
-                    mismatches.push(format!("{}: {}", path.strip_prefix(&dir).unwrap().display(), member.key));
+                    mismatches.push(format!(
+                        "{}: {}",
+                        crate::sub_path::to_manifest(path.strip_prefix(&dir).unwrap()),
+                        member.key
+                    ));
                 }
             }
         }

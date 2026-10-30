@@ -1,0 +1,2 @@
+# Byte for byte: the Windows readme keeps its BOM and CRLF line endings on every checkout.
+crates/profile-studio/resources/windows/README.txt -text

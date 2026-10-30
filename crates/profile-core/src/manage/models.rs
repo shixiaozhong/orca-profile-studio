@@ -332,7 +332,7 @@ fn resource_notices(files: &mut ManagementPlan, vendor: &str, name: &str, doc: &
             files.notice(true, format!("{key} must be a relative resource path inside the vendor directory."));
             continue;
         }
-        if !files.root.join(vendor).join(&asset).is_file() {
+        if !files.root.join(vendor).join(sub_path::to_path(&asset)).is_file() {
             let fallback =
                 if key == "hotend_model" { " OrcaSlicer also falls back to profiles/hotend.stl." } else { "" };
             files.notice(false, format!("{key}: {vendor}/{asset} is absent from this profiles directory. OrcaSlicer first checks its user data vendor directory.{fallback}"));
@@ -340,7 +340,8 @@ fn resource_notices(files: &mut ManagementPlan, vendor: &str, name: &str, doc: &
     }
     let cover = format!("{name}_cover.png");
     if !relative_asset(&cover) || !files.root.join(vendor).join(&cover).is_file() {
-        let fallback = files.root.parent().map(|resources| resources.join("web/image/printer").join(&cover));
+        let fallback =
+            files.root.parent().map(|resources| resources.join("web").join("image").join("printer").join(&cover));
         let exists = relative_asset(&cover) && fallback.as_ref().is_some_and(|p| p.is_file());
         files.notice(false, if exists {
             format!("Cover {vendor}/{cover} is absent; the setup wizard can use resources/web/image/printer/{cover}.")
