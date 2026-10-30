@@ -11,9 +11,10 @@ orca-profile-studio browses, validates and edits OrcaSlicer's system profiles
 ```
 crates/
 ├── profile-core/    # loading, inheritance resolution, validation; no GUI dependencies
-├── profile-tool/    # CLI: stats / check / resolve
+├── profile-tool/    # CLI: stats / check / resolve / search / compat / compat-check
 └── profile-studio/  # gpui-kit desktop app
 docs/roadmap.md      # roadmap: stages, design decisions, done criteria
+docs/user-guide.md   # user guide (Chinese): every UI feature and CLI command; README stays an overview
 docs/reference/      # profile format spec + Python reference stats script
 scripts/             # bundle-macos.sh (.app), package-windows.ps1 (zip), icon.swift / icon-windows.sh (icons)
 AGENTS.md            # this file (Codex); CLAUDE.md is the Claude Code counterpart
@@ -236,7 +237,7 @@ from the package directory).
 
 - `rustfmt.toml`: `max_width = 120`, `use_small_heuristics = "Max"`. Run `cargo fmt` and keep
   clippy clean.
-- Identifiers, comments and CLI strings in English; README is in Chinese. App UI strings live in
+- Identifiers, comments and CLI strings in English; README and the user guide are in Chinese. App UI strings live in
   `crates/profile-studio/locales/app.yml` (en / zh-CN), accessed through `t!`; keep element IDs in English.
 - Commit messages: conventional style (`feat: …`, `fix: …`, `docs: …`) with a short bullet body,
   ending with a blank line and the trailer `Co-Authored-By: Codex (<model>) <noreply@openai.com>`,
