@@ -2455,10 +2455,12 @@ mod tests {
         click(window, "batch-preview-button", cx);
         assert_eq!(batch_rows(&app, cx).len(), 3);
         assert!(batch_rows(&app, cx).iter().all(|r| r[2] == "5 — this file"));
-        click(window, "batch-review-Acme/process/fdm_process_common.json", cx);
+        // Paths are shown in the platform's form.
+        let common = Path::new("Acme").join("process").join("fdm_process_common.json").display().to_string();
+        click(window, format!("batch-review-{common}").leak(), cx);
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
-            assert_eq!(window.find("batch-row-detail").label(), Some("Acme/process/fdm_process_common.json"));
+            assert_eq!(window.find("batch-row-detail").label(), Some(common.as_str()));
             window.press("escape", cx);
         })
         .unwrap();

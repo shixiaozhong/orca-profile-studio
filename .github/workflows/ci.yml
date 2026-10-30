@@ -90,7 +90,7 @@ jobs:
       - name: Clippy
         run: cargo clippy --locked ${{ matrix.packages }} --all-targets -- -D warnings
       - name: Tests including real profiles
-        run: cargo test --locked ${{ matrix.packages }}
+        run: cargo test --locked --no-fail-fast ${{ matrix.packages }}
       - name: Independent Python regression counts
         run: |
           ${{ matrix.python }} -I docs/reference/profile_format_stats.py "$ORCA_PROFILES_DIR" --check
