@@ -4,6 +4,7 @@ description = "Loading, inheritance resolution and validation for OrcaSlicer sys
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 
 [dependencies]
 dunce.workspace = true

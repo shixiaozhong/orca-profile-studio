@@ -31,6 +31,7 @@ cargo build --release --locked -p profile-studio
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "target/release/$executable" "$app/Contents/MacOS/$executable"
+cp LICENSE "$app/Contents/Resources/LICENSE"
 
 # The icon set needs every size from 16 to 512 points at 1× and 2×.
 iconset="$bundle_dir/AppIcon.iconset"

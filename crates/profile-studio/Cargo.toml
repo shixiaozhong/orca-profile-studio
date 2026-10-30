@@ -4,6 +4,7 @@ description = "Desktop browser for OrcaSlicer system profiles"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 
 [dependencies]
 profile-core.workspace = true

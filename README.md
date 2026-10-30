@@ -1,144 +1,146 @@
 <div align="center">
   <img src="crates/profile-studio/resources/icon.png" alt="Orca Profile Studio" width="120" />
   <h1>Orca Profile Studio</h1>
-  <p><em>看清、检查、安全地修改 OrcaSlicer 系统预设的桌面工具</em></p>
+  <p><em>A desktop tool to read, check and safely edit OrcaSlicer's system profiles</em></p>
+  <p>English · <a href="README_CN.md">中文</a></p>
   <p>
-    <a href="docs/user-guide.md">使用手册</a> ·
-    <a href="docs/reference/profile_format_spec.md">配置格式说明</a> ·
-    <a href="docs/roadmap.md">路线图</a>
+    <a href="docs/user-guide.md">User guide</a> ·
+    <a href="docs/reference/profile_format_spec.md">Profile format</a> ·
+    <a href="docs/roadmap.md">Roadmap</a>
   </p>
   <a href="https://github.com/shixiaozhong/orca-profile-studio/actions/workflows/ci.yml"><img src="https://github.com/shixiaozhong/orca-profile-studio/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey?style=flat-square" alt="Platform">
   <img src="https://img.shields.io/badge/rust-1.95%2B-orange?style=flat-square" alt="Rust 1.95+">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License: MIT"></a>
 </div>
 
-<!-- 截图：放到 docs/images/ 后在这里引用，例如主界面 + Values 页 -->
+<!-- Screenshot: add it under docs/images/ and reference it here, e.g. the main window with the Values tab -->
 
-> 个人维护的非官方工具，与 OrcaSlicer 项目、SoftFever 和 Snapmaker 均无隶属关系，也未获得它们的认可。仓库里没有从 OrcaSlicer 导出或复制的文件，工具只读取你指定目录里的预设文件。
+> An unofficial tool maintained by an individual. It is not affiliated with or endorsed by the OrcaSlicer project, SoftFever or Snapmaker. The repository contains no files exported or copied from OrcaSlicer; the tool only reads the profile files in the folder you choose.
 
-## 为什么
+## Why
 
-OrcaSlicer 的系统预设（`resources/profiles`）是一大批相互继承的 JSON 文件：57 个厂商、约 7,100 个预设，最深 6 层继承，再加上 14,000 多条兼容记录和条件表达式。想知道一个预设的实际值，要沿着 `inherits` 一层层翻文件；清单顺序写错、父项找不到时，OrcaSlicer 只写一条日志就跳过，甚至整个厂商都不加载；改一个名字，要同步清单、继承和各处兼容列表。
+OrcaSlicer's system profiles (`resources/profiles`) are thousands of JSON files that inherit from each other: 57 vendors, about 7,100 presets, inheritance chains up to six levels deep, and more than 14,000 compatibility entries plus condition expressions. Finding a preset's actual value means following `inherits` from file to file. When a manifest is out of order or a parent is missing, OrcaSlicer logs a line and skips the preset, or refuses the whole vendor. Renaming one preset means updating manifests, parents and compatibility lists by hand.
 
-Orca Profile Studio 按 OrcaSlicer 自己的加载规则解析这些文件，把最终值、问题和兼容性都摆在眼前，修改时只动真正变化的那几行，所有写盘操作都先预览、可撤销。
+Orca Profile Studio parses these files with OrcaSlicer's own loading rules and puts the effective values, the problems and the compatibility in front of you. Edits change only the values that changed, and every write is previewed and can be undone.
 
-## 快速开始
+## Quick start
 
-需要 [Rust](https://rustup.rs) 1.95+，以及一份 OrcaSlicer 预设：源码检出、已安装的 OrcaSlicer，或单独的 `resources/profiles` 目录都可以。
+You need [Rust](https://rustup.rs) 1.95+ and a set of OrcaSlicer profiles: a source checkout, an installed OrcaSlicer, or a plain `resources/profiles` folder all work.
 
 ```bash
 git clone https://github.com/shixiaozhong/orca-profile-studio.git
 cd orca-profile-studio
-cargo run --release -p profile-studio                    # 启动后点「打开目录…」（⌘O）
-cargo run --release -p profile-studio -- ../OrcaSlicer   # 或者直接指定目录
+cargo run --release -p profile-studio                    # then "Open folder…" (⌘O)
+cargo run --release -p profile-studio -- ../OrcaSlicer   # or pass the folder directly
 ```
 
 <details>
-<summary>打包成 macOS 应用</summary>
+<summary>Build a macOS app</summary>
 
 ```bash
-scripts/bundle-macos.sh             # 生成 target/release/bundle/Orca Profile Studio.app
-scripts/bundle-macos.sh --install   # 同时复制到 ~/Applications/
+scripts/bundle-macos.sh             # builds target/release/bundle/Orca Profile Studio.app
+scripts/bundle-macos.sh --install   # and copies it to ~/Applications/
 ```
 
-本地使用的 ad-hoc 签名，不做公证。只有从 `.app` 启动时 macOS 的系统通知才可用。
+The bundle is signed ad hoc for local use and is not notarized. macOS system notifications only work when the app is started from the `.app`.
 
 </details>
 
 <details>
-<summary>打包成 Windows 免安装 zip</summary>
+<summary>Build a portable Windows zip</summary>
 
-在 Windows 上用 MSVC 工具链（不支持从 Mac 交叉编译）：
+On Windows with the MSVC toolchain (cross-compiling from a Mac is not supported):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1
 ```
 
-生成 `target\release\package\orca-profile-studio-<版本>-windows-<x64|arm64>.zip`，解压后双击 `Orca Profile Studio.exe` 即可。exe 没有签名，SmartScreen 拦截时点「更多信息」→「仍要运行」。
+This builds `target\release\package\orca-profile-studio-<version>-windows-<x64|arm64>.zip`. Unzip it and run `Orca Profile Studio.exe`; nothing is installed. The executable is not signed, so SmartScreen may ask you to confirm with "More info" → "Run anyway".
 
 </details>
 
 <details>
-<summary>命令行工具</summary>
+<summary>Command-line tool</summary>
 
 ```bash
 cargo run --release -p profile-tool -- --profiles ../OrcaSlicer check
 ```
 
-`--profiles` 也可以用环境变量 `ORCA_PROFILES_DIR` 代替。
+`--profiles` can also come from the `ORCA_PROFILES_DIR` environment variable.
 
 </details>
 
-## 功能
+## Features
 
-- **最终值和来源**：每个键的最终值来自继承链的哪一层，每一层写了什么，被覆盖的值一目了然
-- **结构检查**：清单、继承、重名、机型与喷嘴规格、兼容性条件、文件编码等 20 多类问题，级别按 OrcaSlicer 的实际加载行为划分，加载从不中断
-- **兼容性**：按 OrcaSlicer 的规则算出每个耗材、工艺能在哪些打印机上选到，以及原因；与 OrcaSlicer 自己的判定对照约 400 万个组合，0 处差异
-- **全局搜索**：⌘K 同时搜预设名、配置键和文件里写的值，例如 `nozzle_temperature 270`
-- **预设对比**：两个同类型预设并排对比最终值和来源，可以跨厂商，包含未保存的修改
-- **保留格式的编辑**：保存时只替换变化的值，缩进、数组写法、BOM 和换行都不动；撤销、重做，保存前先预览
-- **批量编辑**：给一组预设设置或删除键、追加或移除数组元素，逐个预览，整组撤销；把兄弟预设的相同值一步提到父项
-- **预设和机型管理**：新建、复制（含整组复制）、重命名、删除，自动同步清单、继承和各处引用；事务式写入，失败回滚
-- **任意版本**：打开任意目录，识别 OrcaSlicer 检出、安装目录和 `.app`；多窗口并排看不同版本
-- **命令行**：`check`、`resolve`、`search`、`compat` 等子命令，`check` 可以直接放进 CI
-- **中英文界面**：跟随系统或手动切换；亮色、暗色和跟随系统的主题
+- **Effective values and their source**: see which level of the inheritance chain sets each key, what every level wrote, and what was overridden
+- **Structural checks**: 20+ kinds of problems in manifests, inheritance, duplicates, printer models and nozzle variants, compatibility conditions and file encoding, ranked by how OrcaSlicer actually behaves when loading; loading never stops at the first error
+- **Compatibility**: which printers each filament and process can be selected on, and why, computed with OrcaSlicer's rules and matched against OrcaSlicer's own verdicts on about 4 million combinations with zero differences
+- **Global search**: ⌘K searches preset names, option keys and the values files set, e.g. `nozzle_temperature 270`
+- **Side-by-side comparison**: compare the effective values and sources of two presets of the same kind, across vendors, including unsaved edits
+- **Format-preserving edits**: saving replaces only the changed values and keeps indentation, array layout, BOM and line endings; undo, redo and a preview before every save
+- **Batch edits**: set or remove a key, add or remove array items across many presets with a per-preset preview and group undo; promote a value shared by siblings to their parent in one step
+- **Preset and printer model management**: create, copy (including whole groups), rename and delete, with manifests, parents and references updated for you; writes are transactional and roll back on failure
+- **Any version**: open any folder, including an OrcaSlicer checkout, an installation or a `.app`; use several windows to look at versions side by side
+- **Command line**: `check`, `resolve`, `search`, `compat` and more; `check` fits straight into CI
+- **English and Chinese**: follows the system language or a manual choice; light, dark and system themes
 
-## 平台
+## Platforms
 
-| 平台 | 桌面应用 | 命令行 | 打包 |
+| Platform | Desktop app | CLI | Package |
 |---|---|---|---|
-| macOS | ✅ | ✅ | `.app`（`scripts/bundle-macos.sh`） |
-| Windows | ✅ | ✅ | 免安装 zip（`scripts/package-windows.ps1`） |
+| macOS | ✅ | ✅ | `.app` (`scripts/bundle-macos.sh`) |
+| Windows | ✅ | ✅ | portable zip (`scripts/package-windows.ps1`) |
 | Linux | — | ✅ | — |
 
-三个平台都在 CI 上跑测试和真实数据回归；桌面应用的界面测试在 macOS 和 Windows 上跑。
+CI runs the tests and the real-data regression on all three; the desktop UI tests run on macOS and Windows.
 
-## 使用
+## Usage
 
-| 操作 | macOS | Windows |
+| Action | macOS | Windows |
 |---|---|---|
-| 打开目录 | `⌘O` | `Ctrl+O` |
-| 搜索与命令面板 | `⌘K` | `Ctrl+K` |
-| 保存（先预览） | `⌘S` | `Ctrl+S` |
-| 撤销 / 重做 | `⌘Z` / `⇧⌘Z` | `Ctrl+Z` / `Ctrl+Shift+Z` |
-| 新窗口 | `⌘N` | `Ctrl+N` |
-| 关闭窗口 / 退出 | `⌘W` / `⌘Q` | `Ctrl+W` / `Ctrl+Q` |
+| Open folder | `⌘O` | `Ctrl+O` |
+| Search and commands | `⌘K` | `Ctrl+K` |
+| Save (with preview) | `⌘S` | `Ctrl+S` |
+| Undo / Redo | `⌘Z` / `⇧⌘Z` | `Ctrl+Z` / `Ctrl+Shift+Z` |
+| New window | `⌘N` | `Ctrl+N` |
+| Close window / Quit | `⌘W` / `⌘Q` | `Ctrl+W` / `Ctrl+Q` |
 
-| 子命令 | 作用 |
+| Command | What it does |
 |---|---|
-| `stats` | 厂商、机型、预设数量，继承深度，问题汇总 |
-| `check` | 列出问题，可按厂商和级别筛选；有 error 时退出码为 1 |
-| `resolve <预设>` | 继承链和每个键的最终值 |
-| `search <查询>` | 搜索预设、配置键和文件里写的值 |
-| `compat <预设>` | 兼容的打印机及原因，或一台打印机能用的工艺和耗材 |
-| `compat-check <表>` | 和 OrcaSlicer 导出的兼容性表逐项对照 |
+| `stats` | Counts of vendors, models and presets, inheritance depth, problems by code |
+| `check` | Lists problems, filtered by vendor and severity; exits with 1 when there are errors |
+| `resolve <preset>` | The inheritance chain and every key's effective value |
+| `search <query>` | Searches presets, option keys and the values files set |
+| `compat <preset>` | Compatible printers and why, or the processes and filaments a printer accepts |
+| `compat-check <table>` | Compares compatibility with a table exported by OrcaSlicer |
 
-每个界面功能和子命令的详细说明见[使用手册](docs/user-guide.md)。
+The [user guide](docs/user-guide.md) covers every feature of the app and every command.
 
-## 设计原则
+## Design principles
 
-- **复刻 OrcaSlicer 的加载语义**：厂商、分类和清单顺序，整键覆盖，跨厂商继承的唯一来源，BOM 的处理，都与 OrcaSlicer 一致，规则和源码出处写在[配置格式说明](docs/reference/profile_format_spec.md)里
-- **只分析预设文件本身**：不内嵌 OrcaSlicer 的配置项定义（类型、默认值、取值范围），不和某个 OrcaSlicer 版本绑定
-- **写盘前一定先预览**：所有修改先进入可撤销的会话，确认后才事务式写入
-- **只报告，不替你修数据**：检查出的问题只列出来，不自动修改任何配置
+- **Mirror OrcaSlicer's loading rules**: vendor, section and manifest order, whole-key overrides, the single cross-vendor parent source and BOM handling all follow OrcaSlicer; the rules and their source references are in the [profile format notes](docs/reference/profile_format_spec.md) (in Chinese)
+- **Analyze the profile files only**: no built-in copy of OrcaSlicer's option definitions (types, defaults, ranges), so the tool is not tied to one OrcaSlicer version
+- **Preview before writing**: every change goes into an undoable session and is written transactionally only after you confirm
+- **Report, never repair**: problems are listed, never fixed automatically
 
-## 常见问题
+## FAQ
 
-- **会改动我的 OrcaSlicer 检出吗？** 只在你确认保存或确认文件操作时写入，而且只写你打开的那个目录。建议在 Git 检出里使用，随时可以用 `git diff` 查看、用 Git 还原。
-- **为什么有些键没有值？** 整条继承链都没写的键，默认值在 OrcaSlicer 的 C++ 源码里。本工具只读预设文件，所以这些键不显示。
-- **会报告未知键、类型错误或超出范围的值吗？** 不会。这需要 OrcaSlicer 的配置项定义，本工具有意不依赖它，只做结构和兼容性检查。
-- **支持用户预设或 SLA 打印机吗？** 不支持，只处理 `resources/profiles` 下的系统预设。
-- **有 Linux 桌面版吗？** 目前没有，Linux 上只有命令行工具。
-- **怎么对比两个 OrcaSlicer 版本的预设？** ⌘N 打开新窗口，在两个窗口里分别打开不同的目录。
+- **Will it change my OrcaSlicer checkout?** Only when you confirm a save or a file operation, and only inside the folder you opened. Use it on a Git checkout so `git diff` shows every change and Git can undo it.
+- **Why do some keys have no value?** A key that no file in the inheritance chain sets takes its default from OrcaSlicer's C++ sources. This tool only reads profile files, so such keys are not shown.
+- **Does it report unknown keys, wrong types or out-of-range values?** No. That needs OrcaSlicer's option definitions, which the tool deliberately does without; it checks structure and compatibility.
+- **Does it handle user presets or SLA printers?** No, only the system profiles under `resources/profiles`.
+- **Is there a Linux desktop app?** Not yet; on Linux only the command-line tool is available.
+- **How do I compare the profiles of two OrcaSlicer versions?** Press ⌘N for a new window and open a different folder in each.
 
-## 文档
+## Docs
 
-- [使用手册](docs/user-guide.md)：每个界面功能、设置、Windows 版说明、命令行和问题类型
-- [配置格式说明](docs/reference/profile_format_spec.md)：OrcaSlicer 预设的格式和加载规则，附源码出处
-- [路线图](docs/roadmap.md)：各阶段的范围、关键设计决定和完成标准
-- [AGENTS.md](AGENTS.md)：开发约定和实现细节（`CLAUDE.md` 内容相同）
+- [User guide](docs/user-guide.md) ([中文](docs/user-guide_CN.md)): every feature of the app, settings, Windows notes, the command line and the problem types
+- [Profile format](docs/reference/profile_format_spec.md) (in Chinese): the format and loading rules of OrcaSlicer's profiles, with source references
+- [Roadmap](docs/roadmap.md) (in Chinese): the scope, key design decisions and done criteria of each stage
+- [AGENTS.md](AGENTS.md): development conventions and implementation notes; `CLAUDE.md` has the same content
 
-## 开发
+## Development
 
 ```bash
 cargo fmt --all --check
@@ -149,27 +151,27 @@ python3 -I docs/reference/profile_format_stats.py ../OrcaSlicer/resources/profil
 
 ```
 crates/
-├── profile-core/    # 加载、继承解析、校验、兼容性、搜索、格式保留的写回、事务式文件管理
-├── profile-tool/    # 命令行
-└── profile-studio/  # 桌面应用（GPUI + gpui-kit）
-scripts/             # macOS / Windows 打包和图标
-docs/                # 使用手册、路线图、配置格式说明和独立的 Python 统计脚本
+├── profile-core/    # loading, inheritance, checks, compatibility, search, format-preserving writes, transactions
+├── profile-tool/    # command-line tool
+└── profile-studio/  # desktop app (GPUI + gpui-kit)
+scripts/             # macOS / Windows packaging and icons
+docs/                # user guide, roadmap, profile format notes and an independent Python stats script
 ```
 
-真实数据回归测试读取 `ORCA_PROFILES_DIR`（默认是和本仓库同级的 `../OrcaSlicer/resources/profiles`），期望的数字对应 OrcaSlicer `953509c23f`；Python 脚本用一份独立实现核对同样的统计。[CI](.github/workflows/ci.yml) 在 Linux、macOS 和 Windows 上跑格式检查、clippy、全部测试和真实数据回归，数据按锁定的提交从公开的 OrcaSlicer fork 稀疏检出，缺数据时直接失败。
+The real-data regression tests read `ORCA_PROFILES_DIR` (by default `../OrcaSlicer/resources/profiles` next to this repository) and expect the numbers of OrcaSlicer `953509c23f`; the Python script checks the same statistics with an independent implementation. [CI](.github/workflows/ci.yml) runs formatting, clippy, all tests and the real-data regression on Linux, macOS and Windows, with the profiles sparse-checked out from a public OrcaSlicer fork at a pinned commit; missing data fails the run instead of skipping it.
 
-## 背景
+## Background
 
-OrcaSlicer 的预设文件太多了，又层层继承，平时不管是查一个值还是改一组预设，都要在一堆 JSON 文件之间来回翻，看起来累，改起来也容易漏。所以我想做一个工具，专门解决看、查、改这几件事。
+OrcaSlicer has a lot of profile files, layered through inheritance. Whether I wanted to look up one value or change a group of presets, I ended up jumping between piles of JSON files: tiring to read and easy to get wrong when editing. So I set out to build a tool for exactly that: reading, checking and editing.
 
-同时，我一直想用一用 [GPUI](https://gpui.rs) 这个框架，就把这个工具当成练手项目：从不依赖界面的核心库和命令行开始，逐步做成带编辑、批量操作、文件管理、多语言和跨平台打包的桌面应用。各阶段的取舍记录在[路线图](docs/roadmap.md)里。
+I had also wanted to try [GPUI](https://gpui.rs) for a while, so this became my practice project: it started as a core library and a command-line tool without any UI, and grew step by step into a desktop app with editing, batch operations, file management, two languages and packages for two platforms. The trade-offs of each stage are recorded in the [roadmap](docs/roadmap.md).
 
-## 致谢
+## Acknowledgements
 
-- [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer)：本工具分析的预设格式和加载规则都来自它
-- [GPUI](https://gpui.rs)：Zed 的 UI 框架，桌面应用的基础
-- [GPUI Kit](https://gpui-kit.com)：界面组件，以及它的 Coding Guides 和 Design Guides
+- [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer): the profile format and loading rules this tool analyzes come from it
+- [GPUI](https://gpui.rs): Zed's UI framework, the foundation of the desktop app
+- [GPUI Kit](https://gpui-kit.com): the UI components, and its Coding Guides and Design Guides
 
 ## License
 
-尚未选定 license。
+MIT License. Feel free to use it and to contribute.

@@ -1,157 +1,159 @@
-# 使用手册
+# User guide
 
-本文是 Orca Profile Studio 桌面应用和命令行工具的详细说明。项目介绍、安装和设计原则见 [README](../README.md)。
+English · [中文](user-guide_CN.md)
 
-快捷键按 macOS 写，Windows 上用 Ctrl 代替 ⌘；工具栏提示会按当前平台显示。
+This guide covers every feature of the Orca Profile Studio desktop app and the command-line tool. For the project overview, installation and design principles, see the [README](../README.md).
 
-## 目录
+Shortcuts are written for macOS; on Windows use Ctrl instead of ⌘. Toolbar tooltips show the shortcut for the current platform.
 
-- [打开预设目录](#打开预设目录)
-- [浏览](#浏览)
-- [编辑与保存](#编辑与保存)
-- [预设对比](#预设对比)
-- [问题面板](#问题面板)
-- [兼容性](#兼容性)
-- [搜索和命令面板](#搜索和命令面板)
-- [批量编辑](#批量编辑)
-- [提到父项](#提到父项)
-- [预设管理](#预设管理)
-- [机型管理](#机型管理)
-- [语言、主题和窗口](#语言主题和窗口)
-- [设置与启动](#设置与启动)
-- [Windows 版说明](#windows-版说明)
-- [命令行工具](#命令行工具)
-- [问题类型](#问题类型)
+## Contents
 
-## 打开预设目录
+- [Opening a profiles folder](#opening-a-profiles-folder)
+- [Browsing](#browsing)
+- [Editing and saving](#editing-and-saving)
+- [Comparing presets](#comparing-presets)
+- [Issues panel](#issues-panel)
+- [Compatibility](#compatibility)
+- [Search and command palette](#search-and-command-palette)
+- [Batch edits](#batch-edits)
+- [Promoting to the parent](#promoting-to-the-parent)
+- [Managing presets](#managing-presets)
+- [Managing printer models](#managing-printer-models)
+- [Language, theme and windows](#language-theme-and-windows)
+- [Settings and startup](#settings-and-startup)
+- [Windows notes](#windows-notes)
+- [Command-line tool](#command-line-tool)
+- [Problem types](#problem-types)
 
-- 工具栏标题旁的「打开目录…」（⌘O，File 菜单里也有）可以随时换成任意目录：另一个 OrcaSlicer 检出、某个分支，或者某个已安装版本自带的预设。旁边显示当前目录的路径，悬停可看完整路径。
-- 选中的不是预设目录时，依次查找其中的 `resources/profiles`（OrcaSlicer 源码检出，或 Windows/Linux 安装目录）、`profiles`（`resources` 目录）和 `Contents/Resources/profiles`（macOS 的 `.app`）。都没有时提示「没有厂商配置」，不会加载出一棵空树。判断标准是至少有一个与 `<厂商>` 文件夹并列的 `<厂商>.json`。
-- 默认启动时显示起始页，有「打开目录…」和「打开上次的目录」两个按钮，以及「启动时打开上次的目录」勾选框。
-- 想并排看两个版本时，⌘N 打开新窗口（默认是空白的），在里面选另一个目录。
-- 有未保存的编辑时打开其他目录，会先确认是否丢弃；取消选择或取消确认都保留现有内容。
+## Opening a profiles folder
 
-## 浏览
+- "Open folder…" next to the title in the toolbar (⌘O, also in the File menu) switches to any folder at any time: another OrcaSlicer checkout, another branch, or the profiles that ship with an installed version. The current path is shown next to it; hover to see all of it.
+- If the chosen folder is not a profiles folder itself, the app looks inside it for `resources/profiles` (an OrcaSlicer source checkout, or a Windows/Linux installation), `profiles` (the `resources` folder) and `Contents/Resources/profiles` (a macOS `.app`). If none of them exists, it says the folder has no vendor profiles instead of loading an empty tree. A profiles folder has at least one `<Vendor>.json` beside a `<Vendor>` folder.
+- By default the app starts on a start page with "Open folder…", "Open last folder" and the "Open the last folder at startup" checkbox.
+- To look at two versions side by side, press ⌘N for a new window (empty by default) and open the other folder there.
+- If there are unsaved edits, opening another folder asks whether to discard them first; cancelling the folder choice or the confirmation keeps everything as it is.
 
-- **左侧导航树**：厂商 → 机型（→ 该机型的打印机预设）、耗材、工艺、模板。树是虚拟化的，只渲染可见的行。有 warning 及以上级别问题的预设，行尾显示警告图标。
-- **右侧详情**：选中厂商、机型或预设后，显示文件信息、继承链、关键字段的最终值，以及该项的校验问题。
-- **Values 页**：表格列出继承链上的文件写过的全部键，列有键名、最终值和来源层（本文件或第 n 层祖先）。整条链都没写的键不显示：它们的默认值在 OrcaSlicer 源码里，本工具不读取。
-  - 可以按键名搜索，或只看本文件设置的键；点列头排序。
-  - 选中一行，下方列出继承链上设置过这个键的每一层和它的值，被覆盖的值显示为删除线，还有相关的问题（如与继承值相同的覆盖值）。
-- **后台加载**：加载在后台线程进行，刷新期间保留可操作的旧视图，完成后一次性替换。新的加载请求会取代旧请求；刷新失败时保留旧视图和编辑，并提示重试。
+## Browsing
 
-## 编辑与保存
+- **Navigation tree** (left): vendors → printer models (→ their printer presets), filaments, processes and templates. The tree is virtualized and renders only the visible rows. Presets with warnings or worse show a warning icon.
+- **Details** (right): for a vendor, model or preset, the file information, the inheritance chain, the effective values of key fields and its problems.
+- **Values tab**: a table of every key that any file in the inheritance chain sets, with its effective value and its source (this file or the n-th ancestor). Keys that no file sets are not shown: their defaults live in OrcaSlicer's source code, which this tool does not read.
+  - Filter by key, or show only the keys this file sets; click a column header to sort.
+  - Select a row to see every level that sets the key and its value there, with overridden values struck through, along with related problems (such as an override equal to the inherited value).
+- **Background loading**: loading runs on a background thread. During a refresh the previous view stays usable and is replaced in one step when the new data is ready. A newer load supersedes an older one; if a refresh fails, the previous view and your edits are kept and you can retry.
 
-- 在 Values 页选中一行就可以修改预设自己的值。继承来的值先点「Override」再修改；「Reset to inherited」删掉本文件的值，恢复继承。
-- 控件按值的形态选择：单个字符串用单行输入框，数组在多行文本框里一行一个元素，含换行的文本（如 G-code）原样编辑。值不按 OrcaSlicer 的类型校验。
-- 修改过的键和预设标有铅笔图标。⌘Z / ⇧⌘Z 撤销和重做；⌘S 或「Save…」打开保存预览，Enter 确认后才写盘，Escape 取消。只保存已经 Apply 的编辑。
-- 保存时只替换变化的值，文件的缩进、数组写法、BOM、换行（CRLF/LF）和末尾换行都保持原样。文件在加载后被外部改过时拒绝保存。
-- 保存后在后台自动刷新：继承这个预设的其他预设（包括跨厂商继承公共耗材库的预设）、搜索、问题和兼容性一起更新。Reload 同样保留未保存的编辑、撤销/重做历史、当前选中项、标签页和 Values 筛选。
-- 有编辑或历史记录的文件被外部改动、删除或无法加载时，暂停数据替换，保留旧视图和所有编辑，并在窗口中提示。点「Review files…」查看具体文件：可以恢复磁盘文件后重试 Reload，也可以明确放弃这些文件的编辑和历史、采用磁盘版本，其他文件的编辑仍然保留。
+## Editing and saving
 
-## 预设对比
+- Select a row in the Values tab to edit the preset's own value. For an inherited value, click "Override" first; "Reset to inherited" removes this file's value so the inherited one applies again.
+- The editor follows the shape of the value: a single-line input for a string, a multi-line box with one item per line for an array, and verbatim editing for text with line breaks (such as G-code). Values are not checked against OrcaSlicer's option types.
+- Edited keys and presets show a pencil icon. ⌘Z / ⇧⌘Z undo and redo. ⌘S or "Save…" opens a save preview: Enter writes the files, Escape cancels. Only applied edits are saved.
+- Saving replaces only the changed values and keeps the file's indentation, array layout, BOM, line endings (CRLF/LF) and final newline. A file changed by someone else since loading is not overwritten.
+- After saving, the data refreshes in the background: presets that inherit from the saved one (including other vendors' presets that inherit from the shared filament library), search, problems and compatibility all update. Reload keeps unsaved edits, undo/redo history, the selection, the tab and the Values filter in the same way.
+- If a file with edits or history is changed, deleted or becomes unreadable outside the app, the refresh pauses: the previous view and all edits are kept and the window says so. "Review files…" lists the files. Restore them and Reload again, or explicitly discard the edits and history of those files and take the version on disk; edits in other files are kept.
 
-- 在 Values 页点「Compare with…」，搜索并选择另一个同类型预设，支持跨厂商和模板。
-- 左右并排列出最终值和来源，默认只显示差异；关闭「Only differences」也能看到值相同、来源不同的键。一边没写这个键时显示为「(missing)」。
-- 可以按键名搜索、点列头排序；选中一行后，下方显示两边的继承层。
-- 对比包含两边各自未保存的编辑，标题中会标明。按原始值比较：字符串与数组、数组顺序、同一个数的不同写法都算差异。
-- 对比页只读，点「Back to values」返回后保留原有的编辑、筛选和选择。
+## Comparing presets
 
-## 问题面板
+- In the Values tab, click "Compare with…" and pick another preset of the same kind, from any vendor or a template.
+- The effective values and sources are listed side by side, showing only differences by default; turn off "Only differences" to also see keys with the same value but a different source. A key one side does not set shows as "(missing)".
+- Filter by key or sort by column; select a row to see the inheritance levels of both sides below.
+- The comparison includes each side's unsaved edits, noted in the title. Values are compared as written: a string versus an array, a different array order or a different spelling of the same number all count as differences.
+- The comparison is read-only; "Back to values" returns with your edits, filter and selection unchanged.
 
-- 点工具栏的「Issues」，或在 ⌘K 里运行「Show issues」，窗口底部打开可调高度的问题列表。
-- 默认显示 warning 及以上；可以按最低严重级别、问题代码、厂商筛选，也可以按文字筛选。
-- 选中一行（点击或用 ↑↓）就跳到对应的预设；问题涉及某个键时，打开 Values 页并定位到这个键，焦点留在列表里。
+## Issues panel
 
-## 兼容性
+- Click "Issues" in the toolbar, or run "Show issues" from ⌘K, to open a resizable list of problems at the bottom of the window.
+- It shows warnings and above by default; filter by minimum severity, problem code, vendor or text.
+- Selecting a row (by click or ↑↓) jumps to the preset. If the problem is about a key, the Values tab opens on that key while focus stays in the list.
 
-预设的 Overview 里有「Compatibility」一节：
+## Compatibility
 
-- 耗材和工艺列出条件表达式（如果有）和兼容的打印机，以及每台兼容的原因（条件、列表或没有限制）；
-- 打印机列出兼容的工艺和耗材数量。
+The preset's Overview has a "Compatibility" section:
 
-规则和 OrcaSlicer 一致：条件表达式、`compatible_printers` 列表、公共耗材库的排除机制，见[配置格式说明](reference/profile_format_spec.md)第 6 节。
+- for filaments and processes, the condition expression (if any) and the compatible printers, with the reason for each (condition, list or no restriction);
+- for printers, how many processes and filaments they accept.
 
-## 搜索和命令面板
+The rules match OrcaSlicer: condition expressions, `compatible_printers` lists and the shared filament library's exclusions, as described in section 6 of the [profile format notes](reference/profile_format_spec.md) (in Chinese).
 
-- 按 ⌘K 或点工具栏的「Search…」。
-- 可以搜预设（名称、别名、`setting_id`、`filament_id`）、配置键，以及文件里写的值。查询里的每个词都要出现，比如 `nozzle_temperature 270` 会找出把它设成 270 的文件。
-- 回车跳到选中的结果：预设在树上展开并选中；值和配置键打开 Values 页并筛选到这个键。
-- 也可以运行命令：重新加载、打开目录、新窗口、切换 Overview / Values、语言、主题、启动设置等。
-- 只搜已加载的数据；保存后自动更新搜索索引，未保存的编辑不参与搜索。
+## Search and command palette
 
-## 批量编辑
+- Press ⌘K or click "Search…" in the toolbar.
+- Search presets (name, alias, `setting_id`, `filament_id`), option keys and the values files set. Every word must match: `nozzle_temperature 270` finds the files that set it to 270.
+- Enter jumps to the selected result: a preset is revealed and selected in the tree; a value or key opens the Values tab filtered to that key.
+- Commands run from here too: reload, open a folder, new window, switch between Overview and Values, language, theme, startup behavior and more.
+- Only loaded data is searched. The index updates after saving; unsaved edits are not searched.
 
-- 工具栏或 ⌘K 的「Batch edit」打开独立视图。
-- 按类型、厂商、搜索词、机型、问题代码筛选，勾选同类型预设，再选择键与操作：Set value、Remove key (inherit)、Add item、Remove item。可选的键是这一类预设实际写过的键。
-- 元素操作适用于数组值（如 `compatible_printers`），保留每个预设自己列表里的其他元素，已有的元素不重复追加。继承来的列表需要修改时建立本地覆盖，预览会明确标出；同时选中的父项改完后子项已经继承到目标值时跳过，不写多余的覆盖值。
-- Preview 展示前后值、来源、新出现的多余覆盖值，以及受影响的子孙数量；点预设名查看完整详情。Apply batch 只修改编辑会话，Save… 确认后才写盘。改变输入、选择、编辑或 Reload 后要重新预览。
-- Undo batch / Redo batch 或 ⌘Z / ⇧⌘Z 整组撤销和重做；在 Values 页撤销属于批次的一步时也会整组撤销。
+## Batch edits
 
-## 提到父项
+- "Batch edit" in the toolbar or ⌘K opens a separate view.
+- Filter by kind, vendor, text, printer model and problem code, tick presets of one kind, then choose a key and an operation: Set value, Remove key (inherit), Add item or Remove item. The keys offered are the ones presets of that kind actually set.
+- Item operations work on array values (such as `compatible_printers`): other items in each preset's own list are kept and an existing item is not added twice. An inherited list that needs a change becomes a local override, clearly marked in the preview. A child that already inherits the target value from a selected parent is skipped, so no redundant override is written.
+- Preview shows the old and new values, their sources, newly redundant overrides and how many descendants are affected; click a preset name for the full details. "Apply batch" changes only the edit sessions; nothing is written until you confirm "Save…". Changing the input, the selection or the edits, or reloading, requires a new preview.
+- "Undo batch" / "Redo batch" or ⌘Z / ⇧⌘Z undo and redo the whole group; undoing one of its steps in the Values tab also undoes the whole group.
 
-- 在批量编辑中选至少两个同父项、同类型的预设，选择键和「提到父项 / Promote to parent」。所选预设必须各自写有完全相同的值。
-- 预览列出父项、所选子项，以及最终值会因此变化的所有未选子孙。未选子孙的文件不会被改写，影响数量在摘要中明确显示；不能提升到其他厂商（包括公共耗材库）的父项。
-- 应用后把值写到父项并删除子项的覆盖，整批可以一步撤销/重做。
-- 「与继承值相同的覆盖值」（`redundant-override`）是 info 级提示：在问题面板选「所有级别」并按此代码筛选即可查看。检测只报告，不会自动修改任何配置。
+## Promoting to the parent
 
-## 预设管理
+- In batch edit, select at least two presets of the same kind with the same parent, then choose a key and "Promote to parent". Every selected preset must set exactly the same value.
+- The preview lists the parent, the selected children and every unselected descendant whose effective value would change. Unselected descendants are not rewritten, and the summary states how many are affected. Promoting into a parent of another vendor (including the shared filament library) is refused.
+- Applying writes the value to the parent and removes the children's overrides; the whole change undoes and redoes in one step.
+- An override equal to the inherited value (`redundant-override`) is reported at info level: choose "All severities" in the issues panel and filter by that code. It is only reported, never removed automatically.
 
-- 点工具栏的「Presets」，或在 ⌘K 里运行「Manage presets」。
-- 支持新建、复制、批量复制、重命名、删除预设。上方表格按类型、厂商、搜索词和打印机型号筛选并勾选预设。
-- 批量复制用一条名称替换规则（如 `0.4 nozzle` → `0.2 nozzle`）生成新的名字和文件名；组内的父项被复制时，新子项继承新父项。还可以对所有副本统一设置几个键（每行一个 `key = value`）。
-- 重命名同时更新清单、`inherits`、各厂商的 `compatible_printers` / `compatible_prints`、默认工艺和耗材，以及机型的 `default_materials`；可以选择把旧名记进 `renamed_from`。
-- 每次操作先预览全部文件改动和提示，确认后整批写入，失败会回滚。会新增 error 或 fatal 问题、删除还有子项的父项、或删除后会清空某个兼容列表时，阻止写入。有未保存的编辑时不能进入预设管理。
+## Managing presets
 
-## 机型管理
+- Click "Presets" in the toolbar, or run "Manage presets" from ⌘K.
+- Create, copy, copy in groups, rename and delete presets. The table at the top filters by kind, vendor, text and printer model, and you tick the presets to work on.
+- A group copy derives new names and file names from one replacement rule (for example `0.4 nozzle` → `0.2 nozzle`); when a parent in the group is copied too, the new children inherit from the new parent. You can also set a few keys on every copy (one `key = value` per line).
+- Renaming also updates the manifest, `inherits`, every vendor's `compatible_printers` / `compatible_prints`, default processes and filaments, and printer models' `default_materials`; optionally the old name is recorded in `renamed_from`.
+- Every operation first previews all file changes and notes, then writes them as one batch that rolls back on failure. It refuses to write if it would add an error or fatal problem, delete a parent that still has children, or empty a compatibility list. Preset management is unavailable while there are unsaved edits.
 
-- 在预设管理顶部点「机型管理 / Machine models」，或通过 ⌘K 打开。
-- 从空白新建或复制现有机型，编辑名称、型号 ID、分号分隔的喷嘴规格与默认耗材，以及热床、贴图和热端的资源路径。
-- 修改或重命名会同步厂商清单和同厂商的 `printer_model` 引用。仍有机器引用时禁止删除；移除正在使用的喷嘴规格也会阻止写入。资源文件只检查和提醒，不复制或删除。
-- 先预览，Enter 确认后整批写入，失败回滚。新建机型后，可以继续用批量复制创建机器预设，再用批量编辑追加兼容列表。
+## Managing printer models
 
-## 语言、主题和窗口
+- Click "Machine models" at the top of preset management, or open it from ⌘K.
+- Create a model from scratch or copy an existing one, and edit its name, model ID, semicolon-separated nozzle variants and default materials, and the bed, texture and hotend resource paths.
+- Changes and renames update the vendor manifest and the vendor's `printer_model` references. A model still referenced by printers cannot be deleted, and removing a nozzle variant that is in use is refused. Resource files are only checked and noted, never copied or deleted.
+- Preview first, then Enter writes everything as one batch that rolls back on failure. After creating a model, use a group copy to create its printer presets and a batch edit to extend compatibility lists.
 
-- **语言**：默认跟随系统，⌘K 中搜索「Language」或「语言」可以选 English、中文或跟随系统，所有窗口同步切换。应用文案和问题描述有中英文；配置键始终显示原名，值保持原样。切换语言保留未保存的编辑、未应用的输入、筛选与选择。译文在 [`locales/app.yml`](../crates/profile-studio/locales/app.yml)。
-- **主题**：⌘K 里运行「Theme: System / Light / Dark」，默认跟随系统。
-- **多窗口**：⌘N 打开独立的新窗口，每个窗口可以打开不同的目录。
-- **关闭和退出**：原生关闭或 ⌘W 检查当前窗口，⌘Q 检查全部窗口；有未保存的编辑或尚未 Apply 的输入时先确认。确认期间其他窗口又新增未保存文件时会重新提示。系统直接终止或强制退出无法拦截。
-- **错误反馈**：设置读写、目录选择、打开新窗口失败时在窗口中显示通知，带 Dismiss 按钮；设置保存失败不影响当前会话。没有窗口能显示错误时（例如第一个窗口创建失败），改用系统通知并输出到 stderr；macOS 的系统通知只在从 `.app` 启动时可用。
+## Language, theme and windows
 
-## 设置与启动
+- **Language**: follows the system by default. Search "Language" (or "语言") in ⌘K to choose English, Chinese or the system language; all windows switch together. The app's text and problem descriptions are translated; option keys always show their raw names and values stay as written. Switching keeps unsaved edits, unapplied input, filters and selections. The translations live in [`locales/app.yml`](../crates/profile-studio/locales/app.yml).
+- **Theme**: run "Theme: System / Light / Dark" from ⌘K; the system appearance is the default.
+- **Windows**: ⌘N opens an independent window, and each window can open a different folder.
+- **Closing and quitting**: the close button or ⌘W checks the current window, ⌘Q checks all windows; unsaved edits or unapplied input ask for confirmation first. If another window gains unsaved files while the confirmation is open, you are asked again. A forced quit or system termination cannot be intercepted.
+- **Errors**: failures to read or write settings, choose a folder or open a window show a notification in the window with a Dismiss button; a failed settings write does not affect the current session. When no window can show an error (for example if the first window fails to open), the app falls back to a system notification and stderr. On macOS, system notifications only work when the app is started from the `.app`.
 
-- 记住的设置：主题、语言、上次的目录、启动时是否打开它、侧栏宽度、问题面板的开关和高度、窗口大小。
-- 设置文件：macOS 是 `~/Library/Application Support/orca-profile-studio/settings.json`，Windows 是 `%APPDATA%\orca-profile-studio\settings.json`，其他平台是 `$XDG_CONFIG_HOME`（默认 `~/.config`）下的同名文件。环境变量 `ORCA_STUDIO_SETTINGS` 可以指定别的路径（从 Finder 或 Dock 启动时没有终端的环境变量，它不生效）。设置文件损坏时先备份成 `settings.json.invalid` 再覆盖。
-- 启动时会直接打开目录的情况：
-  1. 命令行的第一个参数指定了目录，如 `cargo run --release -p profile-studio -- ../OrcaSlicer`；
-  2. 勾选了「启动时打开上次的目录」（起始页的勾选框，或 ⌘K 里的「启动时：打开上次的目录 / 不打开目录」）时，打开上次的目录；还没有打开过目录时，打开编译时和本仓库同级的 `../OrcaSlicer/resources/profiles`。这个路径是编译时的源码路径，`.app` 拷到别的机器上就找不到了。
-- 同一个启动设置也决定 ⌘N 新窗口是空白的还是打开上次的目录。
-- 桌面应用不读取 `ORCA_PROFILES_DIR`，它只给命令行工具和测试用。
+## Settings and startup
 
-## Windows 版说明
+- Remembered settings: theme, language, the last folder, whether to open it at startup, the sidebar width, whether the issues panel is open and its height, and the window size.
+- Settings file: `~/Library/Application Support/orca-profile-studio/settings.json` on macOS, `%APPDATA%\orca-profile-studio\settings.json` on Windows, and the same name under `$XDG_CONFIG_HOME` (default `~/.config`) elsewhere. The `ORCA_STUDIO_SETTINGS` environment variable chooses another path (it has no effect when the app starts from Finder or the Dock, which have no terminal environment). A damaged settings file is backed up as `settings.json.invalid` before it is overwritten.
+- A folder opens at startup when:
+  1. the first command-line argument names one, e.g. `cargo run --release -p profile-studio -- ../OrcaSlicer`;
+  2. "Open the last folder at startup" is on (the start page checkbox, or "Startup: open the last folder / open no folder" in ⌘K): the last folder opens, or, before any folder has been opened, `../OrcaSlicer/resources/profiles` next to this repository at build time. That path is fixed when the app is built, so a `.app` copied to another machine will not find it.
+- The same setting decides whether a ⌘N window starts empty or opens the last folder.
+- The desktop app does not read `ORCA_PROFILES_DIR`; only the command-line tool and the tests do.
 
-- Windows 版没有菜单栏：新窗口、关闭、退出用 Ctrl+N / Ctrl+W / Ctrl+Q，其余操作在工具栏和 Ctrl+K 里；关掉最后一个窗口时退出。
-- exe 没有签名，第一次运行时 SmartScreen 可能拦截，点「更多信息」→「仍要运行」。release 版不弹出控制台窗口。
-- 路径显示为普通的 `D:\…` 形式。清单里的 `sub_path` 写回时一律用 `/`。
-- 保存保留文件原有的换行和 BOM，所以 Git 的 `core.autocrlf` 设成什么都不会产生额外差异。
-- 预设管理优先用硬链接原子地安装文件；在不支持硬链接的盘（FAT/exFAT U 盘、部分网络盘）上改为新建文件再写入，同样不会覆盖已有文件。
+## Windows notes
 
-## 命令行工具
+- There is no menu bar on Windows: use Ctrl+N / Ctrl+W / Ctrl+Q for new window, close and quit; everything else is in the toolbar and Ctrl+K. Closing the last window quits.
+- The executable is not signed, so SmartScreen may block the first run: choose "More info" → "Run anyway". Release builds open no console window.
+- Paths are shown in the usual `D:\…` form. Manifest `sub_path`s are always written with `/`.
+- Saving keeps each file's line endings and BOM, so Git's `core.autocrlf` setting produces no extra differences.
+- Preset management installs files atomically with hard links where possible; on drives without hard links (FAT/exFAT USB drives, some network shares) it creates a new file and writes it instead, which still never overwrites an existing file.
 
-`--profiles <目录>` 指定预设目录，也可以用环境变量 `ORCA_PROFILES_DIR`。和桌面应用一样，可以直接给 OrcaSlicer 的检出、安装目录或 `.app`。
+## Command-line tool
+
+`--profiles <folder>` selects the profiles folder; the `ORCA_PROFILES_DIR` environment variable works too. As in the app, an OrcaSlicer checkout, installation or `.app` is accepted.
 
 ```bash
 export ORCA_PROFILES_DIR=../OrcaSlicer/resources/profiles
 ```
 
-| 子命令 | 作用 |
+| Command | What it does |
 |---|---|
-| `stats` | 厂商、机型、各类预设数量，继承深度分布，值的形态统计，问题按代码汇总 |
-| `check` | 按问题代码列出校验问题；`--vendor` 只看一个厂商，`--min` 设最低级别，`--limit` 限制每类条数 |
-| `resolve <预设>` | 预设的继承链，以及继承链上的文件设置过的每个键的最终值；`--key` 只看某个键 |
-| `search <查询>` | 和 ⌘K 同一套搜索：预设、配置键和文件里写的值 |
-| `compat <预设>` | 耗材或工艺兼容的打印机，以及每台兼容的原因；对打印机列出它兼容的工艺和耗材 |
-| `compat-check <表>` | 和 OrcaSlicer 导出的兼容性表逐项对照 |
+| `stats` | Counts of vendors, models and presets of each kind, inheritance depth, value shapes, problems by code |
+| `check` | Problems grouped by code; `--vendor` for one vendor, `--min` for the lowest severity, `--limit` per code |
+| `resolve <preset>` | The inheritance chain and the effective value of every key a file in it sets; `--key` for one key |
+| `search <query>` | The same search as ⌘K: presets, option keys and the values files set |
+| `compat <preset>` | For a filament or process, the compatible printers and why; for a printer, the processes and filaments it accepts |
+| `compat-check <table>` | Compares compatibility with a table exported by OrcaSlicer |
 
 ```bash
 cargo run --release -p profile-tool -- stats
@@ -161,32 +163,32 @@ cargo run --release -p profile-tool -- search "nozzle_temperature 270"
 cargo run --release -p profile-tool -- compat "0.07mm DETAIL @CORE One 0.25"
 ```
 
-`check` 默认在出现 `error` 及以上级别的问题时返回退出码 1（用 `--fail-on` 调整），可以直接放进 CI，在合并配置改动前拦住问题。
+`check` exits with status 1 when a problem of `error` severity or worse is shown (adjust with `--fail-on`), so it can guard profile changes in CI before they are merged.
 
-`compat-check` 用的表由 OrcaSlicer 仓库里的 `Snapmaker_Orca_compat_export` 导出（命令见 [`AGENTS.md`](../AGENTS.md)）。在 OrcaSlicer `953509c23f` 的数据上，约 400 万个（预设，打印机）组合全部一致。
+The table for `compat-check` is exported by `Snapmaker_Orca_compat_export` in the OrcaSlicer repository (see [`AGENTS.md`](../AGENTS.md) for the commands). On the profiles of OrcaSlicer `953509c23f`, all of about 4 million (preset, printer) pairs agree.
 
-## 问题类型
+## Problem types
 
-加载从不中断，所有偏差都记成问题，按 OrcaSlicer 实际的加载行为分为四级：
+Loading never stops at the first problem. Every deviation becomes a problem with one of four severities, based on how OrcaSlicer actually behaves:
 
-| 级别 | 含义 |
+| Severity | Meaning |
 |---|---|
-| `fatal` | OrcaSlicer 会因此拒绝加载整个厂商 |
-| `error` | OrcaSlicer 会记错误日志，但继续加载 |
-| `warning` | 能加载，但很可能不是作者的本意 |
-| `info` | 仅供参考 |
+| `fatal` | OrcaSlicer refuses to load the whole vendor |
+| `error` | OrcaSlicer logs an error and carries on |
+| `warning` | Loads, but is probably not what the author intended |
+| `info` | For information only |
 
-检查的内容按类别：
+What is checked, by category:
 
-| 类别 | 问题 |
+| Category | Problems |
 |---|---|
-| 文件 | 无法读取或不是合法 JSON、UTF-8 BOM、缺少 `name`、元数据或值的 JSON 类型不对、预设的 `type` 与所在分类不符 |
-| 清单 | 条目格式错误、列出的文件不存在、清单名与预设名不一致、清单外的孤立文件、厂商版本号格式错误 |
-| 继承 | 父项找不到、父项排在子项之后、同厂商重名、跨厂商重名、`instantiation` 取值异常、`from` 不是 `system` |
-| 机型 | 打印机缺少或写错 `printer_model`、`printer_variant` 不在机型的喷嘴规格里、机型没有喷嘴规格、耗材缺少 `filament_id` |
-| 兼容性 | `compatible_printers` 指向不存在的打印机、条件表达式无法解析或求值失败 |
-| 冗余 | 与继承值完全相同的覆盖值（`redundant-override`，info 级） |
+| Files | Unreadable or invalid JSON, a UTF-8 BOM, a missing `name`, metadata or values of the wrong JSON type, a `type` that does not match the section the file is listed in |
+| Manifests | Malformed entries, listed files that do not exist, a manifest name that differs from the preset's name, orphan files not listed anywhere, a malformed vendor version |
+| Inheritance | A parent that cannot be found, a parent listed after its child, duplicate names within a vendor or across vendors, an invalid `instantiation`, a `from` other than `system` |
+| Printer models | A missing or unknown `printer_model`, a `printer_variant` that is not one of the model's nozzle variants, a model without nozzle variants, a filament without `filament_id` |
+| Compatibility | `compatible_printers` naming a printer that does not exist, a condition expression that cannot be parsed or evaluated |
+| Redundancy | An override equal to the inherited value (`redundant-override`, info level) |
 
-每个问题代码和它的级别见 [`crates/profile-core/src/issue.rs`](../crates/profile-core/src/issue.rs)，加载规则见[配置格式说明](reference/profile_format_spec.md)。
+Every problem code and its severity are listed in [`crates/profile-core/src/issue.rs`](../crates/profile-core/src/issue.rs); the loading rules are in the [profile format notes](reference/profile_format_spec.md) (in Chinese).
 
-本工具不读取 OrcaSlicer 的配置项定义（类型、默认值、取值范围），所以不报告未知键、类型错误或超出范围这类问题。
+This tool does not read OrcaSlicer's option definitions (types, defaults, ranges), so it does not report unknown keys, wrong types or out-of-range values.

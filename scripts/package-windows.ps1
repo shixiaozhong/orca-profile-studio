@@ -24,6 +24,7 @@ foreach ($old in @($dir, $zip)) { if (Test-Path $old) { Remove-Item -Recurse -Fo
 New-Item -ItemType Directory -Force $dir | Out-Null
 Copy-Item (Join-Path $root 'target\release\profile-studio.exe') (Join-Path $dir 'Orca Profile Studio.exe')
 Copy-Item (Join-Path $root 'crates\profile-studio\resources\windows\README.txt') (Join-Path $dir 'README.txt')
+Copy-Item (Join-Path $root 'LICENSE') (Join-Path $dir 'LICENSE.txt')
 Compress-Archive -Path $dir -DestinationPath $zip
 
 $exe = Get-Item (Join-Path $dir 'Orca Profile Studio.exe')

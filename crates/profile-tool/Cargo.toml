@@ -4,6 +4,7 @@ description = "Command-line inspector and validator for OrcaSlicer system profil
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 
 [dependencies]
 profile-core.workspace = true

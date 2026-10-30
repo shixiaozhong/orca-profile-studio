@@ -14,7 +14,7 @@ crates/
 ├── profile-tool/    # CLI: stats / check / resolve / search / compat / compat-check
 └── profile-studio/  # gpui-kit desktop app
 docs/roadmap.md      # roadmap: stages, design decisions, done criteria
-docs/user-guide.md   # user guide (Chinese): every UI feature and CLI command; README stays an overview
+docs/user-guide.md   # user guide (English; user-guide_CN.md Chinese): every UI feature and CLI command
 docs/reference/      # profile format spec + Python reference stats script
 scripts/             # bundle-macos.sh (.app), package-windows.ps1 (zip), icon.swift / icon-windows.sh (icons)
 AGENTS.md            # this file (Codex); CLAUDE.md is the Claude Code counterpart
@@ -237,7 +237,10 @@ from the package directory).
 
 - `rustfmt.toml`: `max_width = 120`, `use_small_heuristics = "Max"`. Run `cargo fmt` and keep
   clippy clean.
-- Identifiers, comments and CLI strings in English; README and the user guide are in Chinese. App UI strings live in
+- Identifiers, comments and CLI strings in English. `README.md` (English, shown by default) and `README_CN.md`
+  (Chinese) carry the same content: change both together, each written as natural text in its language
+  rather than a literal translation. The user guide follows the same rule (`docs/user-guide.md` /
+  `docs/user-guide_CN.md`); the roadmap and format notes are in Chinese only. App UI strings live in
   `crates/profile-studio/locales/app.yml` (en / zh-CN), accessed through `t!`; keep element IDs in English.
 - Commit messages: conventional style (`feat: …`, `fix: …`, `docs: …`) with a short bullet body,
   ending with a blank line and the trailer `Co-Authored-By: Codex (<model>) <noreply@openai.com>`,
@@ -245,12 +248,13 @@ from the package directory).
   sure of the model name, write `Co-Authored-By: Codex <noreply@openai.com>`. Commit only when
   asked. The remote `origin` is the public GitHub repository
   `shixiaozhong/orca-profile-studio`; push only when asked.
-- One task, one commit: code, tests and docs (roadmap, README, AGENTS.md/CLAUDE.md) go together.
+- One task, one commit: code, tests and docs (roadmap, both READMEs, both user guides, AGENTS.md/CLAUDE.md) go together.
   A commit cannot contain its own hash (amending changes it), so never make a follow-up commit
   just to record a hash. Put the stage in the subject instead (`feat: … (M10)`), leave the
   roadmap's 提交 cell as `待补`, and fill it with the short hash (`git log --grep '(M10)'`) in
   the next commit that edits the roadmap anyway.
-- `Cargo.toml` deliberately has no `license` field; the user has not chosen one.
+- MIT licensed: `LICENSE` at the root (copied into the `.app` and the Windows zip) and
+  `license = "MIT"` in the workspace package, inherited by every crate.
 - `rust-version = "1.95"` matches GPUI's use of `std::hint::cold_path`; CI checks the locked workspace
   on Linux, macOS and Windows. serde-saphyr and smol_str already require 1.89. The local toolchain is 1.97.
 
@@ -265,7 +269,7 @@ M18: Windows CI job and portable zip). No stage is planned next. Git diff is pen
 deferred (暂缓); pending and deferred items get no M number until the user decides to do them.
 The G-code viewer and OrcaSlicer sync automation are deferred.
 When a stage is finished, move it to "已完成" there with its design decisions, mark it ✅, and update
-the status line in README, all in the stage's own commit (see the commit rule above for the 提交 column).
+the roadmap paragraph in both READMEs, all in the stage's own commit (see the commit rule above for the 提交 column).
 The user committing a stage is its acceptance: there is no separate "awaiting validation" status.
 
 Changing the compat exporter is work in another repository (`../OrcaSlicer`); confirm with the user first.
