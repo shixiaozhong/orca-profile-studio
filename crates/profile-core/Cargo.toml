@@ -6,6 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+dunce.workspace = true
 indexmap.workspace = true
 regex.workspace = true
 serde.workspace = true

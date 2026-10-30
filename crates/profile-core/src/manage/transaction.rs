@@ -145,8 +145,7 @@ pub(super) fn apply(plan: &ManagementPlan, fail_after: Option<usize>) -> Result<
                     fs::create_dir(&dir)?;
                     created_dirs.push(dir);
                 }
-                // hard_link is an atomic no-clobber installation on the same filesystem.
-                fs::hard_link(stage.path().join(format!("{ix}.new")), &target)?;
+                install(&stage.path().join(format!("{ix}.new")), &target)?;
                 installed.push(target);
             }
         }
@@ -160,7 +159,7 @@ pub(super) fn apply(plan: &ManagementPlan, fail_after: Option<usize>) -> Result<
             }
         }
         for (target, backup) in backups.into_iter().rev() {
-            if let Err(err) = fs::hard_link(&backup, &target) {
+            if let Err(err) = install(&backup, &target) {
                 rollback.push(err.to_string());
             }
         }
@@ -180,9 +179,53 @@ pub(super) fn apply(plan: &ManagementPlan, fail_after: Option<usize>) -> Result<
     Ok(())
 }
 
+/// Puts `source` at `target` without replacing an existing file. A hard link does it atomically on
+/// the same file system; where links are unsupported (FAT/exFAT drives, some network shares) the
+/// bytes are copied into a newly created file instead.
+fn install(source: &Path, target: &Path) -> std::io::Result<()> {
+    install_with(|source, target| fs::hard_link(source, target), source, target)
+}
+
+fn install_with(link: fn(&Path, &Path) -> std::io::Result<()>, source: &Path, target: &Path) -> std::io::Result<()> {
+    match link(source, target) {
+        Err(err) if err.kind() != std::io::ErrorKind::AlreadyExists => {
+            let mut file = fs::OpenOptions::new().write(true).create_new(true).open(target)?;
+            std::io::Write::write_all(&mut file, &fs::read(source)?).inspect_err(|_| {
+                let _ = fs::remove_file(target);
+            })
+        }
+        result => result,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Lock;
+    use super::{Lock, install_with};
+    use std::io::{Error, ErrorKind};
+    use std::path::Path;
+
+    #[test]
+    fn installing_never_replaces_an_existing_file_with_or_without_hard_links() {
+        let unsupported = |_: &Path, _: &Path| Err(Error::new(ErrorKind::Unsupported, "no hard links"));
+        for linked in [true, false] {
+            let install = |source: &Path, target: &Path| {
+                if linked {
+                    install_with(|source, target| std::fs::hard_link(source, target), source, target)
+                } else {
+                    install_with(unsupported, source, target)
+                }
+            };
+            let dir = tempfile::tempdir().unwrap();
+            let (source, target, other) =
+                (dir.path().join("staged"), dir.path().join("target"), dir.path().join("other"));
+            std::fs::write(&source, "new").unwrap();
+            std::fs::write(&other, "other").unwrap();
+            install(&source, &target).unwrap();
+            assert_eq!(std::fs::read_to_string(&target).unwrap(), "new");
+            assert_eq!(install(&other, &target).unwrap_err().kind(), ErrorKind::AlreadyExists);
+            assert_eq!(std::fs::read_to_string(&target).unwrap(), "new");
+        }
+    }
 
     #[test]
     fn the_write_lock_is_per_folder_and_leaves_no_file_behind() {

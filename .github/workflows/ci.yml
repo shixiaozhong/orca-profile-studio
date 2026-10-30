@@ -36,9 +36,17 @@ jobs:
           - name: Linux core and CLI
             os: ubuntu-24.04
             packages: -p profile-core -p profile-tool
+            python: python3
           - name: macOS workspace and UI
             os: macos-15
             packages: --workspace
+            python: python3
+          # Git's default core.autocrlf=true on Windows runners is kept on purpose: profiles then
+          # check out with CRLF, as on a typical Windows machine.
+          - name: Windows workspace and UI
+            os: windows-2025
+            packages: --workspace
+            python: python
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -83,7 +91,12 @@ jobs:
         run: cargo test --locked ${{ matrix.packages }}
       - name: Independent Python regression counts
         run: |
-          python3 -I docs/reference/profile_format_stats.py "$ORCA_PROFILES_DIR" --check
+          ${{ matrix.python }} -I docs/reference/profile_format_stats.py "$ORCA_PROFILES_DIR" --check
+      # Builds the portable zip (not uploaded) and checks the embedded version resource.
+      - name: Windows package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package-windows.ps1
 
   msrv:
     name: MSRV / ${{ matrix.os }}
@@ -97,6 +110,8 @@ jobs:
             packages: -p profile-core -p profile-tool
           - os: macos-15
             packages: --workspace
+          - os: windows-2025
+            packages: --workspace
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -104,7 +119,8 @@ jobs:
       - name: Install minimum supported Rust
         id: msrv
         run: |
-          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["rust-version"])')
+          version=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
+          test -n "$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           rustup toolchain install "$version" --profile minimal --no-self-update
           rustup default "$version"

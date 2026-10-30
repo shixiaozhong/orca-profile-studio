@@ -11,6 +11,7 @@ rust-version = "1.95"
 profile-core = { path = "crates/profile-core" }
 anyhow = "1"
 gpui-kit = "=0.8.0"
+dunce = "1"
 clap = { version = "4", features = ["derive", "env"] }
 indexmap = { version = "2", features = ["serde"] }
 regex = "1"

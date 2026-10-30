@@ -240,8 +240,9 @@ impl StudioApp {
 
     /// Loads `dir` on the background executor; a newer request supersedes a running one.
     fn load(&mut self, dir: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        // Absolute and without `..`, so the saved setting does not depend on where the app started.
-        let dir = dir.canonicalize().or_else(|_| std::path::absolute(&dir)).unwrap_or(dir);
+        // Absolute, without `..` and (on Windows) without the `\\?\` prefix, so the saved setting and the
+        // displayed paths do not depend on where the app started.
+        let dir = dunce::canonicalize(&dir).or_else(|_| std::path::absolute(&dir)).unwrap_or(dir);
         let refreshing = self.profiles_dir.as_ref() == Some(&dir) && matches!(self.state, LoadState::Ready(_));
         self.load_generation += 1;
         let generation = self.load_generation;
@@ -458,7 +459,7 @@ impl StudioApp {
         if !self.may_leave_during_write(window, cx) {
             return;
         }
-        let dir = dir.canonicalize().or_else(|_| std::path::absolute(&dir)).unwrap_or(dir);
+        let dir = dunce::canonicalize(&dir).or_else(|_| std::path::absolute(&dir)).unwrap_or(dir);
         let dirty = self.unsaved_files(cx).len();
         if dirty == 0 || self.profiles_dir.as_ref() == Some(&dir) {
             self.load(dir, window, cx);
@@ -1442,7 +1443,11 @@ mod tests {
 
     /// A vendor with one template and one selectable process, in a temporary directory.
     fn editable_fixture() -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
+        editable_fixture_in(&std::env::temp_dir())
+    }
+
+    fn editable_fixture_in(parent: &Path) -> tempfile::TempDir {
+        let dir = tempfile::tempdir_in(parent).unwrap();
         let write = |path: &str, text: &str| {
             let path = dir.path().join(path);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -2118,18 +2123,14 @@ mod tests {
         cx.update(|cx| assert_eq!(crate::settings::get(cx).theme, ThemePreference::Dark));
     }
 
-    /// `path` written relative to the current directory.
-    fn pathdiff_relative(path: &Path) -> PathBuf {
-        let current = std::env::current_dir().unwrap();
-        let depth = current.components().count() - 1;
-        let up: PathBuf = std::iter::repeat_n("..", depth).collect();
-        up.join(path.strip_prefix("/").unwrap())
-    }
-
     #[gpui_kit::test]
     fn layout_is_restored_and_saved(cx: &mut TestAppContext) {
         let _locale = crate::i18n::test_locale();
-        let dir = editable_fixture();
+        // Inside the workspace, so a relative path reaches it (on Windows the temp directory can be
+        // on another drive). Tests run from the package directory.
+        let fixtures = Path::new("../../target/test-fixtures");
+        std::fs::create_dir_all(fixtures).unwrap();
+        let dir = editable_fixture_in(fixtures);
         let settings_dir = tempfile::tempdir().unwrap();
         let path = settings_dir.path().join("settings.json");
         let saved = crate::settings::Settings {
@@ -2141,7 +2142,7 @@ mod tests {
         saved.save(&path).unwrap();
 
         // A relative directory is saved as an absolute path.
-        let relative = pathdiff_relative(dir.path());
+        let relative = fixtures.join(dir.path().file_name().unwrap());
         let (window, app) = open_with_settings(cx, relative, Some(path.clone()));
         cx.run_until_parked();
         cx.update_window(window.into(), |_, window, cx| window.render_frame(cx)).unwrap();
@@ -2163,7 +2164,7 @@ mod tests {
         click(window, "toggle-issues", cx);
         let stored = crate::settings::Settings::load(&path).unwrap();
         assert!(!stored.issues_open);
-        assert_eq!(stored.profiles_dir, Some(dir.path().canonicalize().unwrap()));
+        assert_eq!(stored.profiles_dir, Some(dunce::canonicalize(dir.path()).unwrap()));
         assert_eq!(stored.sidebar_width, Some(320.));
         assert_eq!(stored.issues_height, Some(240.));
     }
@@ -2793,7 +2794,7 @@ mod tests {
         management_input(window, "models-family", "Family", cx);
         let unsaved = app.read_with(cx, |app, cx| app.unsaved_files(cx));
         assert_eq!(unsaved.len(), 1, "{unsaved:?}");
-        assert!(unsaved[0].starts_with(dir.path().canonicalize().unwrap().join("Acme/machine")), "{unsaved:?}");
+        assert!(unsaved[0].starts_with(dunce::canonicalize(dir.path()).unwrap().join("Acme/machine")), "{unsaved:?}");
     }
 
     #[gpui_kit::test]
@@ -3354,7 +3355,7 @@ mod tests {
         cx.simulate_path_prompt_response(|_| Some(vec![other.path().to_path_buf()]));
         cx.run_until_parked();
         click(window, "ok", cx);
-        assert_eq!(catalog(&app, cx).repo.root(), other.path().canonicalize().unwrap());
+        assert_eq!(catalog(&app, cx).repo.root(), dunce::canonicalize(other.path()).unwrap());
         assert_eq!(std::fs::read_to_string(dir.path().join("Acme/process/Acme 0.2.json")).unwrap(), CHILD);
     }
 
