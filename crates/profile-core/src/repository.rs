@@ -3,13 +3,14 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
 
 use crate::compat::{CompatibilityIndex, Verdict};
 use crate::issue::{Issue, IssueKind};
-use crate::json::{fingerprint, read_json};
+use crate::json::{JsonError, fingerprint, parse_json};
 use crate::model::{MachineModel, Preset, PresetId, PresetKind, PresetMeta, RawValue, Vendor, VendorId, derived_alias};
 
 /// The shared filament library. It loads first and is the only cross-vendor inheritance source.
@@ -90,6 +91,8 @@ pub struct Repository {
     /// Content fingerprint of every JSON file the load looked at, relative to `root`; `None` when
     /// the file did not exist or could not be read.
     sources: HashMap<PathBuf, Option<u64>>,
+    /// Contents read ahead by [`prefetch`], relative to `root`; taken while loading, empty after.
+    prefetched: HashMap<PathBuf, Vec<u8>>,
 }
 
 struct ManifestItem {
@@ -117,11 +120,13 @@ impl Repository {
     pub fn load(root: impl AsRef<Path>) -> Result<Self, LoadError> {
         let root = root.as_ref().to_path_buf();
         let vendor_names = vendor_names(&root)?;
-        let mut repo = Repository { root, ..Default::default() };
+        let prefetched = prefetch(&root, &vendor_names);
+        let mut repo = Repository { root, prefetched, ..Default::default() };
         let mut library = HashMap::new();
         for name in &vendor_names {
             repo.load_vendor(name, &mut library);
         }
+        repo.prefetched = HashMap::new();
         repo.check_cross_vendor_duplicates();
         repo.check_compatible_printers();
         repo.find_orphans();
@@ -548,19 +553,30 @@ impl Repository {
     }
 
     fn read_object(&mut self, vendor: VendorId, path: &Path) -> Option<(Map<String, Value>, bool)> {
-        let full_path = self.root.join(path);
-        if !full_path.is_file() {
-            self.sources.insert(path.to_owned(), None);
-            self.issue(vendor, path, None, IssueKind::ListedFileMissing);
-            return None;
-        }
-        let file = match read_json(&full_path) {
-            Ok(file) => {
-                self.sources.insert(path.to_owned(), Some(file.fingerprint));
-                file
+        let bytes = match self.prefetched.remove(path) {
+            Some(bytes) => bytes,
+            None => {
+                // Not read ahead: outside the vendor folders, missing, or unreadable.
+                let full_path = self.root.join(path);
+                if !full_path.is_file() {
+                    self.sources.insert(path.to_owned(), None);
+                    self.issue(vendor, path, None, IssueKind::ListedFileMissing);
+                    return None;
+                }
+                match fs::read(&full_path) {
+                    Ok(bytes) => bytes,
+                    Err(err) => {
+                        self.sources.insert(path.to_owned(), None);
+                        self.issue(vendor, path, None, IssueKind::FileUnreadable(JsonError::from(err).to_string()));
+                        return None;
+                    }
+                }
             }
+        };
+        self.sources.insert(path.to_owned(), Some(fingerprint(&bytes)));
+        let file = match parse_json(&bytes) {
+            Ok(file) => file,
             Err(err) => {
-                self.sources.insert(path.to_owned(), fs::read(&full_path).ok().map(|bytes| fingerprint(&bytes)));
                 self.issue(vendor, path, None, IssueKind::FileUnreadable(err.to_string()));
                 return None;
             }
@@ -757,6 +773,40 @@ fn library_priority(file: &Path) -> u8 {
     } else {
         3
     }
+}
+
+/// Reads the vendor indexes and every JSON file in the vendor folders on several threads, keyed by
+/// path relative to `root`. Loading still parses them one at a time in manifest order; this only
+/// overlaps the per-file cost of opening and reading, which dominates a first load with cold
+/// caches or an antivirus scanning each file (Windows Defender). Unreadable files are left out
+/// and read again where they are needed, which reports the error.
+fn prefetch(root: &Path, vendor_names: &[String]) -> HashMap<PathBuf, Vec<u8>> {
+    let mut files: Vec<PathBuf> = vendor_names.iter().map(|name| PathBuf::from(format!("{name}.json"))).collect();
+    for name in vendor_names {
+        let mut found = Vec::new();
+        collect_json_files(&root.join(name), true, &mut found);
+        files.extend(found.into_iter().filter_map(|file| file.strip_prefix(root).ok().map(Path::to_path_buf)));
+    }
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(2, 16);
+    // Each thread takes the next unread file, so slow files (a cold folder, a long scan) do not
+    // leave the other threads idle the way fixed shares would.
+    let next = AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut read = Vec::new();
+                    while let Some(path) = files.get(next.fetch_add(1, Ordering::Relaxed)) {
+                        if let Ok(bytes) = fs::read(root.join(path)) {
+                            read.push((path.clone(), bytes));
+                        }
+                    }
+                    read
+                })
+            })
+            .collect();
+        workers.into_iter().flat_map(|worker| worker.join().unwrap_or_default()).collect()
+    })
 }
 
 fn collect_json_files(dir: &Path, recursive: bool, out: &mut Vec<PathBuf>) {
