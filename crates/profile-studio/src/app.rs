@@ -25,6 +25,7 @@ use profile_core::Severity;
 
 use crate::batch::{BatchEvent, BatchView};
 use crate::catalog::Catalog;
+use crate::compare::{CompareEvent, CompareOrigin, CompareView};
 use crate::details::{self, Compatibility, severity_color};
 use crate::edits::{Edits, EditsEvent, RefreshConflict};
 use crate::issues::{IssuesEvent, IssuesView};
@@ -34,7 +35,7 @@ use crate::palette::{self, AppCommand, Target};
 use crate::references::{self, GroupKey, ReferenceList};
 use crate::settings::{self, ThemePreference};
 use crate::tree::{self as nav, Node, kind_icon};
-use crate::values::ValuesView;
+use crate::values::{CompareRequest, ValuesView};
 
 enum LoadState {
     /// No profiles directory chosen yet.
@@ -105,6 +106,12 @@ pub struct StudioApp {
     preset_tab: PresetTab,
     /// The values table of the selected preset; created when the Values tab is first shown.
     values: Option<Entity<ValuesView>>,
+    _values_events: Option<Subscription>,
+    /// The preset comparison, shown in place of the browser, batch edit or preset management it
+    /// was opened from; created when first opened.
+    comparison: Option<Entity<CompareView>>,
+    comparing: bool,
+    _comparison_events: Option<Subscription>,
     management: Option<Entity<ManagementView>>,
     models: Option<Entity<ModelsView>>,
     managing_models: bool,
@@ -225,6 +232,10 @@ impl StudioApp {
             selected: None,
             preset_tab: PresetTab::Overview,
             values: None,
+            _values_events: None,
+            comparison: None,
+            comparing: false,
+            _comparison_events: None,
             management: None,
             models: None,
             managing_models: false,
@@ -273,6 +284,7 @@ impl StudioApp {
             self.state = LoadState::Loading(dir.clone());
             self.selected = None;
             self.values = None;
+            self.comparison = None;
             self.management = None;
             self.models = None;
             self._model_events = None;
@@ -281,6 +293,7 @@ impl StudioApp {
             self.managing = false;
             self.managing_models = false;
             self.batching = false;
+            self.comparing = false;
             self._management_events = None;
             self.edits = None;
             self._edit_events = None;
@@ -389,6 +402,9 @@ impl StudioApp {
         if let Some(batch) = &self.batch {
             batch.update(cx, |batch, cx| batch.refresh(&catalog, window, cx));
         }
+        if let Some(comparison) = &self.comparison {
+            comparison.update(cx, |comparison, cx| comparison.refresh(&catalog, window, cx));
+        }
         self.compatibility = match self.selected {
             Some(Node::Preset(preset)) => Some(Compatibility::compute(&catalog, preset)),
             _ => None,
@@ -430,6 +446,9 @@ impl StudioApp {
             }
             if let Some(batch) = &self.batch {
                 batch.update(cx, |view, cx| view.refresh_language(window, cx));
+            }
+            if let Some(comparison) = &self.comparison {
+                comparison.update(cx, |view, cx| view.refresh_language(window, cx));
             }
             self.tree.update(cx, |tree, cx| {
                 let expanded = nav::expanded_nodes(tree);
@@ -645,8 +664,13 @@ impl StudioApp {
                 _ => None,
             };
             let view = cx.new(|cx| BatchView::new(catalog, edits, initial, window, cx));
-            self._batch_events = Some(cx.subscribe(&view, |this, _, _: &BatchEvent, cx| {
-                this.batching = false;
+            self._batch_events = Some(cx.subscribe_in(&view, window, |this, _, event: &BatchEvent, window, cx| {
+                match event {
+                    BatchEvent::Close => this.batching = false,
+                    BatchEvent::Compare(presets) => {
+                        this.open_comparison(presets.clone(), CompareOrigin::Batch, window, cx)
+                    }
+                }
                 cx.notify();
             }));
             self.batch = Some(view);
@@ -654,7 +678,42 @@ impl StudioApp {
         self.managing = false;
         self.managing_models = false;
         self.batching = true;
+        self.comparing = false;
         self.batch.as_ref().unwrap().update(cx, |batch, cx| batch.focus(window, cx));
+        cx.notify();
+    }
+
+    /// Compares the preset of the Values tab, keeping the presets already compared with it.
+    fn compare_from_values(&mut self, preset: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let presets = match &self.comparison {
+            Some(comparison) if comparison.read(cx).presets().first() == Some(&preset) => {
+                comparison.read(cx).presets().to_vec()
+            }
+            _ => vec![preset],
+        };
+        self.open_comparison(presets, CompareOrigin::Values, window, cx);
+    }
+
+    fn open_comparison(
+        &mut self,
+        presets: Vec<usize>,
+        origin: CompareOrigin,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (LoadState::Ready(catalog), Some(edits)) = (&self.state, &self.edits) else { return };
+        match &self.comparison {
+            Some(comparison) => comparison.update(cx, |view, cx| view.open(presets, origin, window, cx)),
+            None => {
+                let view = cx.new(|cx| CompareView::new(catalog, edits, presets, origin, window, cx));
+                self._comparison_events = Some(cx.subscribe(&view, |this, _, CompareEvent::Close, cx| {
+                    this.comparing = false;
+                    cx.notify();
+                }));
+                self.comparison = Some(view);
+            }
+        }
+        self.comparing = true;
         cx.notify();
     }
 
@@ -693,7 +752,7 @@ impl StudioApp {
                 match event {
                     ManagementEvent::Applied => this.reload(window, cx),
                     ManagementEvent::Close => this.managing_models = false,
-                    ManagementEvent::Models => {}
+                    ManagementEvent::Models | ManagementEvent::Compare(_) => {}
                 }
                 cx.notify();
             }));
@@ -701,6 +760,7 @@ impl StudioApp {
         }
         self.managing = false;
         self.batching = false;
+        self.comparing = false;
         self.managing_models = true;
         self.models.as_ref().unwrap().update(cx, |view, cx| view.focus(window, cx));
         cx.notify();
@@ -730,6 +790,9 @@ impl StudioApp {
                     ManagementEvent::Applied => this.reload(window, cx),
                     ManagementEvent::Models => this.open_models(window, cx),
                     ManagementEvent::Close => this.managing = false,
+                    ManagementEvent::Compare(presets) => {
+                        this.open_comparison(presets.clone(), CompareOrigin::Presets, window, cx)
+                    }
                 }
                 cx.notify();
             }));
@@ -738,6 +801,7 @@ impl StudioApp {
         self.managing = true;
         self.managing_models = false;
         self.batching = false;
+        self.comparing = false;
         cx.notify();
     }
 
@@ -896,6 +960,11 @@ impl StudioApp {
     }
 
     fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {
+        if self.comparing
+            && let Some(comparison) = &self.comparison
+        {
+            return comparison.clone().into_any_element();
+        }
         if self.managing_models
             && let Some(models) = &self.models
         {
@@ -1069,6 +1138,10 @@ impl StudioApp {
         let (LoadState::Ready(catalog), Some(edits)) = (&self.state, &self.edits) else { return None };
         let (catalog, edits) = (catalog.clone(), edits.clone());
         let values = cx.new(|cx| ValuesView::new(&catalog, &edits, preset, window, cx));
+        self._values_events =
+            Some(cx.subscribe_in(&values, window, |this, _, request: &CompareRequest, window, cx| {
+                this.compare_from_values(request.0, window, cx);
+            }));
         self.values = Some(values.clone());
         Some(values)
     }
@@ -1084,6 +1157,7 @@ impl StudioApp {
         self.managing = false;
         self.managing_models = false;
         self.batching = false;
+        self.comparing = false;
         self.preset_tab = tab;
         self.sync_values(window, cx);
         cx.notify();
@@ -1169,6 +1243,7 @@ impl StudioApp {
                 self.managing = false;
                 self.managing_models = false;
                 self.batching = false;
+                self.comparing = false;
                 self.select_node(Node::Preset(preset), true, window, cx);
             }
             Target::Option(key) => {
@@ -1202,6 +1277,7 @@ impl StudioApp {
         self.managing = false;
         self.managing_models = false;
         self.batching = false;
+        self.comparing = false;
         let LoadState::Ready(catalog) = &self.state else { return };
         if self.issues.is_none() {
             let catalog = catalog.clone();
@@ -1637,7 +1713,8 @@ mod tests {
         cx.run_until_parked();
     }
 
-    fn click(window: WindowHandle<Root>, id: &'static str, cx: &mut TestAppContext) {
+    fn click(window: WindowHandle<Root>, id: impl Into<gpui_kit::ElementId>, cx: &mut TestAppContext) {
+        let id = id.into();
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
             window.click(id, cx);
@@ -2615,19 +2692,23 @@ mod tests {
         cx.update_window(window.into(), |_, window, cx| window.click(("row", 0usize), cx)).unwrap();
         cx.run_until_parked();
         run_palette(window, "语言 English", cx);
-        let values = app.read_with(cx, |app, _| app.values.clone().unwrap());
-        let comparison = values.read_with(cx, |v, _| v.comparison().clone());
+        let comparison = app.read_with(cx, |app, _| app.comparison.clone().unwrap());
         let rows = comparison.read_with(cx, |v, cx| v.table().read(cx).dump(cx).1);
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0][..4], ["wall_loops", "4", "2", "this file"]);
+        assert_eq!(rows[0], ["wall_loops", "4", "2"]);
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
             assert_eq!(window.find("compare-search").value(), Some("wall_loops"));
             assert_eq!(window.find("compare-detail").label(), Some("wall_loops"));
+            assert_eq!(window.find(("layers-0", 0usize)).label(), Some("this file: 4"));
         })
         .unwrap();
         run_palette(window, "Language: 中文", cx);
-        assert_eq!(comparison.read_with(cx, |v, cx| v.table().read(cx).dump(cx).1[0][3].clone()), "本文件");
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find(("layers-0", 0usize)).label(), Some("本文件: 4"));
+        })
+        .unwrap();
     }
 
     #[gpui_kit::test]
@@ -2697,6 +2778,54 @@ mod tests {
         dir
     }
 
+    #[gpui_kit::test]
+    fn batch_and_management_compare_their_selection_and_return(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
+        let dir = batch_fixture();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        let repo = &catalog(&app, cx).repo;
+        let processes: Vec<usize> = ["fdm_process_common", "Acme 0.2", "Acme 0.3"]
+            .map(|name| repo.find(PresetKind::Process, name)[0].index())
+            .into();
+        let compared = |cx: &mut TestAppContext| {
+            app.read_with(cx, |app, cx| app.comparison.as_ref().unwrap().read(cx).presets().to_vec())
+        };
+        run_palette(window, "Acme 0.2", cx);
+        run_palette(window, "batch edit", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("compare-selected").disabled(), Some(true), "one selected preset");
+        })
+        .unwrap();
+        click(window, "manage-select-shown", cx);
+        click(window, "compare-selected", cx);
+        assert_eq!(compared(cx), processes);
+        let rows = app.read_with(cx, |app, cx| app.comparison.as_ref().unwrap().read(cx).table().read(cx).dump(cx).1);
+        let printers = rows.iter().find(|row| row[0] == "compatible_printers").unwrap();
+        assert_eq!(printers[1..], [r#"["fdm_process_common.json"]"#, r#"["Acme 0.2.json"]"#, r#"["Acme 0.3.json"]"#]);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("close-comparison").label(), Some("Back to batch edit"));
+        })
+        .unwrap();
+        click(window, "close-comparison", cx);
+        app.read_with(cx, |app, _| assert!(app.batching && !app.comparing));
+
+        click(window, "batch-close", cx);
+        click(window, "manage-presets", cx);
+        click(window, "manage-select-shown", cx);
+        click(window, "compare-selected", cx);
+        assert_eq!(compared(cx), processes);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("close-comparison").label(), Some("Back to presets"));
+        })
+        .unwrap();
+        click(window, "close-comparison", cx);
+        app.read_with(cx, |app, _| assert!(app.managing && !app.comparing));
+    }
+
     fn batch_select(window: WindowHandle<Root>, control: &'static str, query: &str, cx: &mut TestAppContext) {
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
@@ -2741,7 +2870,7 @@ mod tests {
         assert!(batch_rows(&app, cx).iter().all(|r| r[2] == "5 — this file"));
         // Paths are shown in the platform's form.
         let common = Path::new("Acme").join("process").join("fdm_process_common.json").display().to_string();
-        click(window, format!("batch-review-{common}").leak(), cx);
+        click(window, gpui_kit::SharedString::from(format!("batch-review-{common}")), cx);
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
             assert_eq!(window.find("batch-row-detail").label(), Some(common.as_str()));
@@ -4052,17 +4181,21 @@ mod tests {
         .unwrap();
         cx.run_until_parked();
         click(window, "compare-with", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("compare-empty").label(), Some(t!("compare.start").as_str()));
+        })
+        .unwrap();
         choose_comparison(window, "fdm_process_common", cx);
-        let values = app.read_with(cx, |app, _| app.values.clone()).unwrap();
-        let compare = values.read_with(cx, |values, _| values.comparison().clone());
+        let compare = app.read_with(cx, |app, _| app.comparison.clone()).unwrap();
         let dump = |cx: &mut TestAppContext| compare.read_with(cx, |view, cx| view.table().read(cx).dump(cx).1);
         let rows = dump(cx);
         let wall = rows.iter().find(|row| row[0] == "wall_loops").expect("edited wall count differs");
-        // The template does not set the key, so its side is missing rather than a default.
-        assert_eq!(wall[1..], ["4", "(missing)", "this file", "—"]);
+        // The template does not set the key, so its column is missing rather than a default.
+        assert_eq!(wall[1..], ["4", "(missing)"]);
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
-            assert!(window.find("compare-left-title").label().unwrap().contains("unsaved changes"));
+            assert!(window.find(("compare-preset", child.index())).label().unwrap().contains("unsaved changes"));
             window.click("compare-search", cx);
             window.input("wall_loops", cx);
         })
@@ -4074,8 +4207,8 @@ mod tests {
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
             assert_eq!(window.find("compare-detail").label(), Some("wall_loops"));
-            assert_eq!(window.find(("Left", 0usize)).label(), Some("this file: 4"));
-            assert!(window.try_find(("Right", 0usize)).is_none());
+            assert_eq!(window.find(("layers-0", 0usize)).label(), Some("this file: 4"));
+            assert!(window.try_find(("layers-1", 0usize)).is_none());
         })
         .unwrap();
         // Editing the other side refreshes an open comparison, including the empty-results case.
@@ -4088,7 +4221,11 @@ mod tests {
         assert!(dump(cx).is_empty());
         click(window, "only-differences", cx);
         assert_eq!(dump(cx).len(), 1);
-        assert_eq!(dump(cx)[0][4], "this file");
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find(("layers-1", 0usize)).label(), Some("this file: 4"));
+        })
+        .unwrap();
         click(window, "reload", cx);
         assert_eq!(dump(cx).len(), 1, "comparison filter and visibility survive refresh");
         assert_eq!(dump(cx)[0][1], "4");
@@ -4099,8 +4236,15 @@ mod tests {
             assert_eq!(window.find("only-differences").checked(), Some(false));
         })
         .unwrap();
+        assert!(app.read_with(cx, |app, _| app.comparing), "the toolbar's reload keeps the comparison open");
         click(window, "close-comparison", cx);
         assert_eq!(first_row(&app, cx).1, "4", "returning preserves the edit and filter");
+        // Reopening from the same preset keeps the other compared presets.
+        click(window, "compare-with", cx);
+        assert_eq!(compare.read_with(cx, |view, _| view.presets().to_vec()), [child.index(), base.index()]);
+        click(window, ("compare-remove", base.index()), cx);
+        assert_eq!(compare.read_with(cx, |view, _| view.presets().to_vec()), [child.index()]);
+        assert!(dump(cx).is_empty());
         assert_eq!(std::fs::read_to_string(dir.path().join("Acme/process/Acme 0.2.json")).unwrap(), CHILD);
     }
 
@@ -4125,13 +4269,14 @@ mod tests {
         cx.run_until_parked();
         click(window, "compare-with", cx);
         choose_comparison(window, "Snapmaker / Generic ABS —", cx);
-        let values = app.read_with(cx, |app, _| app.values.clone()).unwrap();
-        let compare = values.read_with(cx, |values, _| values.comparison().clone());
+        choose_comparison(window, "Snapmaker / Generic ABS @U1 0.6 nozzle", cx);
+        let compare = app.read_with(cx, |app, _| app.comparison.clone()).unwrap();
         let rows = compare.read_with(cx, |view, cx| view.table().read(cx).dump(cx).1);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0][0], "compatible_printers");
         assert!(rows[0][1].contains("0.2 nozzle"));
         assert!(rows[0][2].contains("0.4 nozzle"));
+        assert!(rows[0][3].contains("0.6 nozzle"));
         cx.update_window(window.into(), |_, window, cx| {
             window.render_frame(cx);
             window.click(("row", 0usize), cx);

@@ -15,6 +15,7 @@ use gpui_kit::*;
 use profile_core::{PresetId, PresetKind};
 
 use crate::catalog::Catalog;
+use crate::compare::MAX_PRESETS;
 
 #[derive(Clone)]
 #[non_exhaustive]
@@ -103,6 +104,11 @@ impl TableDelegate for PresetSelection {
         }
     }
 }
+
+/// Asks the window to compare the selected presets, in load order.
+pub struct CompareSelected(pub Vec<usize>);
+
+impl EventEmitter<CompareSelected> for PresetPicker {}
 
 pub struct PresetPicker {
     catalog: Arc<Catalog>,
@@ -375,6 +381,8 @@ impl Render for PresetPicker {
             arg1 = delegate.visible.len(),
             arg2 = if self.model_task.is_some() { t!("picker.filtering") } else { String::new() }
         );
+        let selected = self.selected(cx).len();
+        let comparable = (2..=MAX_PRESETS).contains(&selected);
         v_flex()
             .size_full()
             .gap_2()
@@ -444,7 +452,18 @@ impl Render for PresetPicker {
                                 cx.notify();
                             })
                         }),
-                    )),
+                    ))
+                    .child(
+                        Button::new("compare-selected")
+                            .small()
+                            .label(t!("picker.compare"))
+                            .tooltip(t!("picker.compare_hint", arg0 = MAX_PRESETS))
+                            .disabled(!comparable)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let presets = this.selected(cx).into_iter().map(PresetId::index).collect();
+                                cx.emit(CompareSelected(presets));
+                            })),
+                    ),
             )
             .child(div().id("manage-preset-table").flex_1().min_h_0().child(DataTable::new(&self.table).stripe(true)))
             .text_color(cx.theme().foreground)

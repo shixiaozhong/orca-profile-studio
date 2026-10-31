@@ -377,39 +377,21 @@ compare.count:
 common.missing:
   en: "(missing)"
   zh-CN: "（缺失）"
-compare.left_value:
-  en: "Left value"
-  zh-CN: "左侧值"
-compare.right_value:
-  en: "Right value"
-  zh-CN: "右侧值"
-compare.left_source:
-  en: "Left source"
-  zh-CN: "左侧来源"
-compare.right_source:
-  en: "Right source"
-  zh-CN: "右侧来源"
 compare.unsaved:
   en: " (unsaved changes)"
   zh-CN: "（有未保存修改）"
 compare.select_hint:
-  en: "Select a key to inspect both inheritance chains."
-  zh-CN: "选择一个键，查看两侧的继承链。"
+  en: "Select a key to inspect every inheritance chain."
+  zh-CN: "选择一个键，查看每个预设的继承链。"
 compare.different:
   en: "Different values"
   zh-CN: "值不同"
 compare.equal:
   en: "Equal values"
   zh-CN: "值相同"
-compare.left:
-  en: "Left"
-  zh-CN: "左侧"
-compare.right:
-  en: "Right"
-  zh-CN: "右侧"
 compare.start:
-  en: "Choose a preset above to start comparing."
-  zh-CN: "在上方选择预设以开始对比。"
+  en: "Add at least one more preset of the same kind to compare."
+  zh-CN: "再添加至少一个同类型的预设，开始对比。"
 compare.no_differences:
   en: "No differing values. Turn off Only differences to inspect their sources."
   zh-CN: "没有不同的值。关闭“仅差异”可查看来源。"
@@ -417,11 +399,11 @@ compare.empty:
   en: "No keys match the current filters."
   zh-CN: "没有符合当前筛选条件的键。"
 compare.preset:
-  en: "Compare with preset"
-  zh-CN: "对比预设"
+  en: "Add a preset to compare"
+  zh-CN: "添加要对比的预设"
 compare.choose:
-  en: "Choose a preset of the same kind…"
-  zh-CN: "选择同类型的预设…"
+  en: "Add a preset of the same kind…"
+  zh-CN: "添加同类型的预设…"
 compare.search:
   en: "Search vendor or preset"
   zh-CN: "搜索厂商或预设"
@@ -432,8 +414,32 @@ compare.only_differences:
   en: "Only differences"
   zh-CN: "仅差异"
 compare.note:
-  en: "Read-only · Includes unsaved changes. Saving refreshes inherited values. String/array differences are included."
-  zh-CN: "只读 · 包含未保存的修改，保存后更新继承值。字符串与数组的类型差异也计入对比。"
+  en: "Read-only · Includes unsaved changes · Values that differ from preset 1 are highlighted. String/array differences are included."
+  zh-CN: "只读 · 包含未保存的修改 · 与第 1 个预设不同的值会突出显示，字符串与数组的类型差异也计入。"
+compare.title:
+  en: "Compare presets"
+  zh-CN: "对比预设"
+compare.base:
+  en: "base"
+  zh-CN: "基准"
+compare.remove:
+  en: "Remove %{name} from the comparison"
+  zh-CN: "从对比中移除 %{name}"
+compare.full:
+  en: "Up to %{arg0} presets"
+  zh-CN: "最多 %{arg0} 个预设"
+compare.back_batch:
+  en: "Back to batch edit"
+  zh-CN: "返回批量编辑"
+compare.back_presets:
+  en: "Back to presets"
+  zh-CN: "返回预设管理"
+picker.compare:
+  en: "Compare selected"
+  zh-CN: "对比所选"
+picker.compare_hint:
+  en: "Compare 2 to %{arg0} selected presets side by side"
+  zh-CN: "并排对比 2 到 %{arg0} 个所选预设"
 editor.value:
   en: "Value for %{arg0}"
   zh-CN: "%{arg0} 的值"

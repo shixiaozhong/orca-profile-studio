@@ -146,16 +146,30 @@ fn compares_snapmaker_abs_nozzle_variants() {
         .copied()
         .find(|&id| repo.vendor(repo.preset(id).vendor).name == "Snapmaker")
         .unwrap();
-    let rows = repo.diff(left, right).unwrap();
+    let rows = repo.diff(&[left, right]).unwrap();
+    let value = |row: &profile_core::KeyDiff<'_>, ix: usize| {
+        row.traces[ix].as_ref().map(|trace| trace.effective().value.as_scalar().unwrap().to_owned())
+    };
+    let origin = |row: &profile_core::KeyDiff<'_>, ix: usize| row.traces[ix].as_ref().unwrap().effective().origin;
     let changed: Vec<_> = rows.iter().filter(|row| row.is_different()).collect();
     assert_eq!(changed.iter().map(|row| row.key).collect::<Vec<_>>(), ["compatible_printers"]);
-    assert_eq!(changed[0].left.as_ref().unwrap().effective().value.as_scalar(), Some("Snapmaker U1 (0.2 nozzle)"));
-    assert_eq!(changed[0].right.as_ref().unwrap().effective().value.as_scalar(), Some("Snapmaker U1 (0.4 nozzle)"));
+    assert_eq!(value(changed[0], 0).as_deref(), Some("Snapmaker U1 (0.2 nozzle)"));
+    assert_eq!(value(changed[0], 1).as_deref(), Some("Snapmaker U1 (0.4 nozzle)"));
     let temperature = rows.iter().find(|row| row.key == "nozzle_temperature").unwrap();
-    assert_eq!(temperature.left.as_ref().unwrap().effective().value.as_scalar(), Some("270"));
-    assert_eq!(temperature.right.as_ref().unwrap().effective().value.as_scalar(), Some("270"));
-    assert_eq!(temperature.left.as_ref().unwrap().effective().origin, Origin::Preset(left));
-    assert_eq!(temperature.right.as_ref().unwrap().effective().origin, Origin::Preset(right));
+    assert_eq!(value(temperature, 0).as_deref(), Some("270"));
+    assert_eq!(value(temperature, 1).as_deref(), Some("270"));
+    assert_eq!(origin(temperature, 0), Origin::Preset(left));
+    assert_eq!(origin(temperature, 1), Origin::Preset(right));
+
+    // All four U1 nozzle variants differ from the 0.2 nozzle one only in compatible_printers.
+    let variants: Vec<_> = ["0.2", "0.6", "0.8"]
+        .iter()
+        .map(|nozzle| repo.find(PresetKind::Filament, &format!("Generic ABS @U1 {nozzle} nozzle"))[0])
+        .chain([right])
+        .collect();
+    let rows = repo.diff(&variants).unwrap();
+    let changed: Vec<_> = rows.iter().filter(|row| row.is_different()).map(|row| row.key).collect();
+    assert_eq!(changed, ["compatible_printers"]);
 }
 
 #[test]

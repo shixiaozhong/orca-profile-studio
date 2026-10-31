@@ -78,7 +78,7 @@ cargo run --release -p profile-tool -- --profiles ../OrcaSlicer check
 - **Compatibility**: which printers each filament and process can be selected on, and why, computed with OrcaSlicer's rules and matched against OrcaSlicer's own verdicts on about 4 million combinations with zero differences
 - **Global search**: ⌘K searches preset names, option keys and the values files set, e.g. `nozzle_temperature 270`
 - **Used by**: what inherits from a preset and which compatibility lists, default presets and printer models name it, own or inherited, one click away
-- **Side-by-side comparison**: compare the effective values and sources of two presets of the same kind, across vendors, including unsaved edits
+- **Side-by-side comparison**: compare the effective values of up to eight presets of the same kind, such as one filament's nozzle variants, across vendors and including unsaved edits
 - **Format-preserving edits**: saving replaces only the changed values and keeps indentation, array layout, BOM and line endings; undo, redo and a preview before every save
 - **Batch edits**: set or remove a key, add or remove array items across many presets with a per-preset preview and group undo; promote a value shared by siblings to their parent in one step
 - **Preset and printer model management**: create, copy (including whole groups), rename and delete, with manifests, parents and references updated for you; writes are transactional and roll back on failure

@@ -200,6 +200,12 @@ from the package directory).
   templates), and `ambiguous` covers selectable duplicates. The studio's `ReferenceList`
   (`references.rs`) is computed with `Compatibility` on selection and refresh, never in render; it
   ignores unsaved edits and says so. Clicks go through `StudioApp::open_reference`.
+- Multi-column comparison (M20): `Repository::diff` / `diff_with` take N presets (`KeyDiff::traces`,
+  `differs_from_first`); the first is the base. `StudioApp` owns one `CompareView` (`compare.rs`),
+  shown in place of the body while `comparing`; the views it covers keep their state, so Back
+  returns to its origin. Entry points emit events: `values::CompareRequest`, and
+  `preset_picker::CompareSelected` forwarded as `BatchEvent::Compare` / `ManagementEvent::Compare`.
+  Every mode switch that sets `batching` also clears `comparing`.
 - Localization (M12): `i18n::set_language` switches the process-wide locale and defers an in-place
   refresh of all windows. Never reload profiles or rebase Edits just to translate a view. Preserve
   retained input entities, enum values, selection and undo history; update labels/placeholders and
@@ -268,11 +274,11 @@ from the package directory).
 
 [docs/roadmap.md](docs/roadmap.md) (Chinese) is the roadmap: stages and status, key design decisions
 of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
-M1–M19 (M15: CI on GitHub Actions, real-data regression from a cached sparse checkout of the
+M1–M20 (M15: CI on GitHub Actions, real-data regression from a cached sparse checkout of the
 public OrcaSlicer fork at the pinned commit; M16: schema removed, profiles only; M17: `.app` bundle
 script, secondary- key bindings, per-platform menus and settings path, `/` in manifest sub_paths;
-M18: Windows CI job and portable zip; M19: reverse references). Planned next: M20 multi-column
-comparison, M21 compatibility matrix. The OrcaSlicer upgrade check is deferred (暂缓); pending and
+M18: Windows CI job and portable zip; M19: reverse references; M20: multi-column comparison).
+Planned next: M21 compatibility matrix. The OrcaSlicer upgrade check is deferred (暂缓); pending and
 deferred items get no M number until the user decides to do them.
 When a stage is finished, move it to "已完成" there with its design decisions, mark it ✅, and update
 the roadmap paragraph in both READMEs, all in the stage's own commit (see the commit rule above for the 提交 column).

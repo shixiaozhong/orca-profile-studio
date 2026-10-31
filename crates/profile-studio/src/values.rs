@@ -15,7 +15,6 @@ use gpui_kit::*;
 use profile_core::{Origin, RawValue, Severity};
 
 use crate::catalog::Catalog;
-use crate::compare::CompareView;
 use crate::details::{format_value, severity_color};
 use crate::edits::Edits;
 use crate::value_editor::{ValueEditor, ValueEditorEvent};
@@ -291,10 +290,13 @@ pub struct ValuesView {
     editor_subscription: Option<Subscription>,
     status: Option<(bool, String)>,
     focus: FocusHandle,
-    comparison: Option<Entity<CompareView>>,
-    comparing: bool,
     _subscriptions: Vec<Subscription>,
 }
+
+/// Asks the window to compare this preset with others.
+pub struct CompareRequest(pub usize);
+
+impl EventEmitter<CompareRequest> for ValuesView {}
 
 impl ValuesView {
     pub fn new(
@@ -339,8 +341,6 @@ impl ValuesView {
             editor_subscription: None,
             status: None,
             focus: cx.focus_handle(),
-            comparison: None,
-            comparing: false,
             _subscriptions: subscriptions,
         }
     }
@@ -355,9 +355,6 @@ impl ValuesView {
 
     /// Keep the retained controls (including unapplied text), filter, sort and selected key.
     pub fn refresh(&mut self, catalog: &Arc<Catalog>, preset: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(comparison) = &self.comparison {
-            comparison.update(cx, |comparison, cx| comparison.refresh(catalog, preset, window, cx));
-        }
         self.catalog = catalog.clone();
         self.preset = preset;
         self.search.update(cx, |state, cx| state.set_placeholder(t!("values.filter"), window, cx));
@@ -370,7 +367,6 @@ impl ValuesView {
 
     /// Filters the table to `key` and selects its row, e.g. after a global search.
     pub fn reveal_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.comparing = false;
         // set_value does not emit a change event, so update the filter directly.
         self.search.update(cx, |search, cx| search.set_value(key.to_owned(), window, cx));
         self.filter.query = key.to_owned();
@@ -382,11 +378,6 @@ impl ValuesView {
     #[cfg(test)]
     pub fn table(&self) -> &Entity<TableState<ValuesDelegate>> {
         &self.table
-    }
-
-    #[cfg(test)]
-    pub fn comparison(&self) -> &Entity<CompareView> {
-        self.comparison.as_ref().expect("comparison opened")
     }
 
     /// Rebuilds the rows after an edit, keeping filter, sort and selection.
@@ -533,16 +524,12 @@ impl ValuesView {
                     .child(count),
             )
             .child(div().flex_1())
-            .child(Button::new("compare-with").small().label(t!("values.compare")).on_click(cx.listener(
-                |this, _, window, cx| {
-                    if this.comparison.is_none() {
-                        this.comparison =
-                            Some(cx.new(|cx| CompareView::new(&this.catalog, &this.edits, this.preset, window, cx)));
-                    }
-                    this.comparing = true;
-                    cx.notify();
-                },
-            )))
+            .child(
+                Button::new("compare-with")
+                    .small()
+                    .label(t!("values.compare"))
+                    .on_click(cx.listener(|this, _, _, cx| cx.emit(CompareRequest(this.preset)))),
+            )
             .child(
                 Button::new("undo")
                     .small()
@@ -691,19 +678,6 @@ fn truncate_chars(text: &str, max: usize) -> String {
 
 impl Render for ValuesView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.comparing {
-            return v_flex()
-                .size_full()
-                .gap_2()
-                .child(Button::new("close-comparison").small().label(t!("common.back_values")).on_click(cx.listener(
-                    |this, _, _, cx| {
-                        this.comparing = false;
-                        cx.notify();
-                    },
-                )))
-                .child(div().flex_1().min_h_0().child(self.comparison.as_ref().unwrap().clone()))
-                .into_any_element();
-        }
         let status = self.status.clone().map(|(ok, message)| {
             let color = if ok { cx.theme().success } else { cx.theme().danger };
             div()

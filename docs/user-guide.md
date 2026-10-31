@@ -54,11 +54,12 @@ Shortcuts are written for macOS; on Windows use Ctrl instead of ⌘. Toolbar too
 
 ## Comparing presets
 
-- In the Values tab, click "Compare with…" and pick another preset of the same kind, from any vendor or a template.
-- The effective values and sources are listed side by side, showing only differences by default; turn off "Only differences" to also see keys with the same value but a different source. A key one side does not set shows as "(missing)".
-- Filter by key or sort by column; select a row to see the inheritance levels of both sides below.
-- The comparison includes each side's unsaved edits, noted in the title. Values are compared as written: a string versus an array, a different array order or a different spelling of the same number all count as differences.
-- The comparison is read-only; "Back to values" returns with your edits, filter and selection unchanged.
+- Compare up to eight presets of the same kind, from any vendor and including templates. Start from the Values tab with "Compare with…", or tick presets in batch edit or preset management and click "Compare selected".
+- The comparison fills the window: one row per key, one column per preset with its effective value. The first preset is the base; values that differ from it are highlighted. A key a preset does not set shows as "(missing)".
+- Add presets with "Add a preset of the same kind…" and remove one with its × button; removing the base makes the next preset the base.
+- Only keys whose values are not all equal are shown by default; turn off "Only differences" to see every key. Filter by key or sort by any column; select a row to see every preset's inheritance levels for that key below.
+- The comparison includes unsaved edits, noted next to each preset. Values are compared as written: a string versus an array, a different array order or a different spelling of the same number all count as differences.
+- The comparison is read-only. "Back" returns to where you opened it (Values, batch edit or preset management) with your edits, filters and selection unchanged; opening it again from the same preset's Values tab keeps the presets you had added.
 
 ## Issues panel
 

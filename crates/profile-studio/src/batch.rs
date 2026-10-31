@@ -2,7 +2,7 @@
 use crate::batch_plan::{BatchPlan, Operation};
 use crate::catalog::Catalog;
 use crate::edits::Edits;
-use crate::preset_picker::{Choice, PresetPicker};
+use crate::preset_picker::{Choice, CompareSelected, PresetPicker};
 use crate::value_editor::{ValueEditor, ValueEditorEvent};
 use crate::values::{RedoEdit, SaveEdits, UndoEdit};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -96,6 +96,8 @@ impl TableDelegate for PreviewTable {
 
 pub enum BatchEvent {
     Close,
+    /// Compare these presets (indexes in load order).
+    Compare(Vec<usize>),
 }
 impl EventEmitter<BatchEvent> for BatchView {}
 
@@ -140,6 +142,9 @@ impl BatchView {
             cx.new(|cx| SelectState::new(SearchableVec::new(Vec::<Choice>::new()), None, window, cx).searchable(true));
         let preview = cx.new(|cx| TableState::new(PreviewTable { plan: None }, window, cx));
         let subscriptions = vec![
+            cx.subscribe(&picker, |_, _, CompareSelected(presets): &CompareSelected, cx| {
+                cx.emit(BatchEvent::Compare(presets.clone()));
+            }),
             cx.observe_in(&picker, window, |this, picker, window, cx| {
                 let kind = picker.read(cx).kind();
                 let selected = picker.read(cx).selected(cx);

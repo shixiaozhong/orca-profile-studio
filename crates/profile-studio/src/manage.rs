@@ -16,7 +16,7 @@ use gpui_kit::*;
 use profile_core::{ManagementPlan, NameRule, PresetDraft, RawValue, preset_file_name};
 
 use crate::catalog::Catalog;
-use crate::preset_picker::{Choice, PresetPicker};
+use crate::preset_picker::{Choice, CompareSelected, PresetPicker};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Operation {
@@ -43,6 +43,8 @@ pub enum ManagementEvent {
     Applied,
     Close,
     Models,
+    /// Compare these presets (indexes in load order).
+    Compare(Vec<usize>),
 }
 
 pub struct ManagementView {
@@ -110,6 +112,9 @@ impl ManagementView {
             let picker = picker.read(cx);
             (picker.selected(cx), picker.kind(), picker.vendor())
         };
+        subscriptions.push(cx.subscribe(&picker, |_, _, CompareSelected(presets): &CompareSelected, cx| {
+            cx.emit(ManagementEvent::Compare(presets.clone()));
+        }));
         subscriptions.push(cx.observe(&picker, |this, picker, cx| {
             let picker = picker.read(cx);
             let selection = (picker.selected(cx), picker.kind(), picker.vendor());
