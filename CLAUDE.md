@@ -194,6 +194,12 @@ from the package directory).
   actual parent/child changes separately from unselected descendant impacts. Impact rows must not
   become edit sessions or writes. `BatchPlan` preserves M11 staleness checks and groups the parent
   (only if changed) with the children for atomic undo/redo; retain the visible impact count.
+- Reverse references (M19): `Repository::references` / `model_references` (core `refs.rs`) find name
+  references in effective values; `Referrer::Preset::set_by` separates own values (what a rename
+  rewrites) from inherited ones. Only selectable presets are named (every vendor has same-named
+  templates), and `ambiguous` covers selectable duplicates. The studio's `ReferenceList`
+  (`references.rs`) is computed with `Compatibility` on selection and refresh, never in render; it
+  ignores unsaved edits and says so. Clicks go through `StudioApp::open_reference`.
 - Localization (M12): `i18n::set_language` switches the process-wide locale and defers an in-place
   refresh of all windows. Never reload profiles or rebase Edits just to translate a view. Preserve
   retained input entities, enum values, selection and undo history; update labels/placeholders and
@@ -260,12 +266,12 @@ from the package directory).
 
 [docs/roadmap.md](docs/roadmap.md) (Chinese) is the roadmap: stages and status, key design decisions
 of finished stages, scope / design / dependencies / done criteria of the next ones. Done: M0, M0.5,
-M1–M18 (M15: CI on GitHub Actions, real-data regression from a cached sparse checkout of the
+M1–M19 (M15: CI on GitHub Actions, real-data regression from a cached sparse checkout of the
 public OrcaSlicer fork at the pinned commit; M16: schema removed, profiles only; M17: `.app` bundle
 script, secondary- key bindings, per-platform menus and settings path, `/` in manifest sub_paths;
-M18: Windows CI job and portable zip). No stage is planned next. Git diff is pending (待定) and the OrcaSlicer upgrade check is
-deferred (暂缓); pending and deferred items get no M number until the user decides to do them.
-The G-code viewer and OrcaSlicer sync automation are deferred.
+M18: Windows CI job and portable zip; M19: reverse references). Planned next: M20 multi-column
+comparison, M21 compatibility matrix. The OrcaSlicer upgrade check is deferred (暂缓); pending and
+deferred items get no M number until the user decides to do them.
 When a stage is finished, move it to "已完成" there with its design decisions, mark it ✅, and update
 the roadmap paragraph in both READMEs, all in the stage's own commit (see the commit rule above for the 提交 column).
 The user committing a stage is its acceptance: there is no separate "awaiting validation" status.

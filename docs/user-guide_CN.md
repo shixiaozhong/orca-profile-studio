@@ -14,6 +14,7 @@
 - [预设对比](#预设对比)
 - [问题面板](#问题面板)
 - [兼容性](#兼容性)
+- [被引用](#被引用)
 - [搜索和命令面板](#搜索和命令面板)
 - [批量编辑](#批量编辑)
 - [提到父项](#提到父项)
@@ -73,6 +74,17 @@
 - 打印机列出兼容的工艺和耗材数量。
 
 规则和 OrcaSlicer 一致：条件表达式、`compatible_printers` 列表、公共耗材库的排除机制，见[配置格式说明](reference/profile_format_spec.md)第 6 节。
+
+## 被引用
+
+预设的 Overview 里有「被引用」一节，列出继承它或按名称指向它的地方：
+
+- 子孙预设的数量，以及直接继承它的子预设（包括其他厂商从公共耗材库继承的耗材）；
+- 哪些预设的 `compatible_printers`（打印机）、`compatible_prints` 或 `default_print_profile`（工艺）、`default_filament_profile`（耗材）指向它，以及哪些机型的 `default_materials` 列出了这个耗材。
+
+引用按最终值查找：一个耗材的 `compatible_printers` 是继承来的，它同样指向祖先列出的打印机，这一行会标上「继承自 …」。改名时只改写自己设了这个值的文件。模板不会被这些键按名称引用，所以只列出它的子预设；另有同类型的可选预设同名时，会提示这些引用也可能指向另一个。
+
+点击一行就跳过去：子预设打开 Overview，值的引用打开 Values 页并定位到对应的键。每组先显示 12 行，其余点「显示全部」。打印机型号的 Overview 列出 `printer_model` 指向它的打印机，包括设置这个值的模板。列表按已加载的文件计算，未保存的修改要保存后才计入。
 
 ## 搜索和命令面板
 
@@ -153,6 +165,7 @@ export ORCA_PROFILES_DIR=../OrcaSlicer/resources/profiles
 | `resolve <预设>` | 预设的继承链，以及继承链上的文件设置过的每个键的最终值；`--key` 只看某个键 |
 | `search <查询>` | 和 ⌘K 同一套搜索：预设、配置键和文件里写的值 |
 | `compat <预设>` | 耗材或工艺兼容的打印机，以及每台兼容的原因；对打印机列出它兼容的工艺和耗材 |
+| `refs <名称>` | 和「被引用」一样，列出继承或按名称指向预设的地方；对打印机型号列出使用它的打印机 |
 | `compat-check <表>` | 和 OrcaSlicer 导出的兼容性表逐项对照 |
 
 ```bash
@@ -161,6 +174,7 @@ cargo run --release -p profile-tool -- check --vendor Snapmaker --min info
 cargo run --release -p profile-tool -- resolve "Generic ABS @U1 0.2 nozzle" --key temperature
 cargo run --release -p profile-tool -- search "nozzle_temperature 270"
 cargo run --release -p profile-tool -- compat "0.07mm DETAIL @CORE One 0.25"
+cargo run --release -p profile-tool -- refs "Snapmaker U1 (0.4 nozzle)"
 ```
 
 `check` 默认在出现 `error` 及以上级别的问题时返回退出码 1（用 `--fail-on` 调整），可以直接放进 CI，在合并配置改动前拦住问题。

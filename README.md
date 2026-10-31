@@ -77,6 +77,7 @@ cargo run --release -p profile-tool -- --profiles ../OrcaSlicer check
 - **Structural checks**: 20+ kinds of problems in manifests, inheritance, duplicates, printer models and nozzle variants, compatibility conditions and file encoding, ranked by how OrcaSlicer actually behaves when loading; loading never stops at the first error
 - **Compatibility**: which printers each filament and process can be selected on, and why, computed with OrcaSlicer's rules and matched against OrcaSlicer's own verdicts on about 4 million combinations with zero differences
 - **Global search**: ⌘K searches preset names, option keys and the values files set, e.g. `nozzle_temperature 270`
+- **Used by**: what inherits from a preset and which compatibility lists, default presets and printer models name it, own or inherited, one click away
 - **Side-by-side comparison**: compare the effective values and sources of two presets of the same kind, across vendors, including unsaved edits
 - **Format-preserving edits**: saving replaces only the changed values and keeps indentation, array layout, BOM and line endings; undo, redo and a preview before every save
 - **Batch edits**: set or remove a key, add or remove array items across many presets with a per-preset preview and group undo; promote a value shared by siblings to their parent in one step
@@ -113,6 +114,7 @@ CI runs the tests and the real-data regression on all three; the desktop UI test
 | `resolve <preset>` | The inheritance chain and every key's effective value |
 | `search <query>` | Searches presets, option keys and the values files set |
 | `compat <preset>` | Compatible printers and why, or the processes and filaments a printer accepts |
+| `refs <name>` | What inherits from or names a preset, or the printers of a printer model |
 | `compat-check <table>` | Compares compatibility with a table exported by OrcaSlicer |
 
 The [user guide](docs/user-guide.md) covers every feature of the app and every command.

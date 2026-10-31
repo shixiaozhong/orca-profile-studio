@@ -198,3 +198,27 @@ fn compatibility_follows_conditions_lists_and_library_exclusion() {
     assert_eq!(index.compatible_with_printer(repo, u1, PresetKind::Process).len(), 16);
     assert_eq!(index.compatible_with_printer(repo, u1, PresetKind::Filament).len(), 169);
 }
+
+/// Name references and descendants (M19) on real data.
+#[test]
+fn references_follow_inheritance_and_name_lists() {
+    let Some(repo) = repo() else { return };
+    let one = |kind, name| repo.find(kind, name)[0];
+    let u1 = repo.references(one(PresetKind::Machine, "Snapmaker U1 (0.4 nozzle)"));
+    assert_eq!((u1.children.len(), u1.descendants, u1.referrers.len()), (0, 0, 51));
+    assert!(u1.referrers.iter().all(|referrer| referrer.is_own()));
+
+    let pla = repo.references(one(PresetKind::Filament, "Snapmaker PLA"));
+    assert_eq!(pla.referrers.len(), 93);
+    assert_eq!(pla.referrers.iter().filter(|referrer| !referrer.is_own()).count(), 90);
+
+    // Every vendor has its own fdm_filament_pla template; the library's is inherited across vendors.
+    let base = repo.find(PresetKind::Filament, "fdm_filament_pla");
+    let library = base.iter().find(|&&id| repo.vendor(repo.preset(id).vendor).name == "OrcaFilamentLibrary");
+    let library = repo.references(*library.unwrap());
+    assert_eq!((library.children.len(), library.descendants), (74, 159));
+    assert!(library.referrers.is_empty() && !library.ambiguous);
+
+    let model = repo.models().iter().position(|model| model.id == "Snapmaker U1").unwrap();
+    assert_eq!(repo.model_references(model).len(), 4);
+}

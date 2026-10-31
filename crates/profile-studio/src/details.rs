@@ -11,12 +11,13 @@ use profile_core::{PresetKind, RawValue, Severity};
 use crate::catalog::Catalog;
 use crate::tree::{Group, Node, kind_icon};
 
-pub fn render(catalog: &Catalog, node: Node, cx: &App) -> AnyElement {
+/// Details of a vendor, group or model; `references` is the model's "Used by" section.
+pub fn render(catalog: &Catalog, node: Node, references: Option<AnyElement>, cx: &App) -> AnyElement {
     match node {
         Node::Vendor(vendor) => render_vendor(catalog, vendor, cx),
         Node::Group(vendor, group) => render_group(catalog, vendor, group, cx),
-        Node::Model(model) => render_model(catalog, model, cx),
-        Node::Preset(preset) => render_preset(catalog, preset, None, cx),
+        Node::Model(model) => render_model(catalog, model, references, cx),
+        Node::Preset(preset) => render_preset(catalog, preset, None, references, cx),
     }
 }
 
@@ -67,16 +68,8 @@ fn render_group(catalog: &Catalog, vendor: usize, group: Group, cx: &App) -> Any
         .into_any_element()
 }
 
-fn render_model(catalog: &Catalog, model: usize, cx: &App) -> AnyElement {
-    let repo = &catalog.repo;
-    let info = &repo.models()[model];
-    let printers: Vec<usize> = catalog.vendors[info.vendor.index()]
-        .models
-        .iter()
-        .find(|entry| entry.model == Some(model))
-        .map(|entry| entry.printers.clone())
-        .unwrap_or_default();
-
+fn render_model(catalog: &Catalog, model: usize, references: Option<AnyElement>, cx: &App) -> AnyElement {
+    let info = &catalog.repo.models()[model];
     let mut details = v_flex()
         .child(header(IconName::Printer, info.id.clone(), t!("details.model_path", arg0 = info.path.display()), cx))
         .child(
@@ -90,10 +83,7 @@ fn render_model(catalog: &Catalog, model: usize, cx: &App) -> AnyElement {
                 .child(field(t!("details.bed_texture"), or_dash(&info.bed_texture), cx))
                 .child(field(t!("details.hotend"), or_dash(&info.hotend_model), cx)),
         )
-        .child(
-            section(t!("details.printer_count", arg0 = printers.len()), cx)
-                .children(printers.iter().map(|&index| list_line(repo.presets()[index].name().to_owned()))),
-        )
+        .children(references)
         .child(
             section(t!("details.material_count", arg0 = info.default_materials.len()), cx)
                 .children(info.default_materials.iter().map(|material| list_line(material.clone()))),
@@ -183,7 +173,13 @@ fn compatibility_section(
     section
 }
 
-pub fn render_preset(catalog: &Catalog, index: usize, compatibility: Option<&Compatibility>, cx: &App) -> AnyElement {
+pub fn render_preset(
+    catalog: &Catalog,
+    index: usize,
+    compatibility: Option<&Compatibility>,
+    references: Option<AnyElement>,
+    cx: &App,
+) -> AnyElement {
     let repo = &catalog.repo;
     let preset = &repo.presets()[index];
     let id = preset.id;
@@ -273,6 +269,7 @@ pub fn render_preset(catalog: &Catalog, index: usize, compatibility: Option<&Com
                 .filter(|compatibility| compatibility.preset == index)
                 .map(|compatibility| compatibility_section(repo, index, compatibility, cx)),
         )
+        .children(references)
         .child(issue_list)
         .into_any_element()
 }
@@ -303,14 +300,14 @@ fn header(icon: IconName, title: impl Into<SharedString>, subtitle: impl Into<Sh
         )
 }
 
-fn section(title: impl Into<SharedString>, cx: &App) -> Div {
+pub fn section(title: impl Into<SharedString>, cx: &App) -> Div {
     v_flex()
         .gap_1()
         .pt_4()
         .child(div().pb_1().text_xs().font_semibold().text_color(cx.theme().muted_foreground).child(title.into()))
 }
 
-fn field(label: impl Into<SharedString>, value: impl Into<SharedString>, cx: &App) -> Div {
+pub fn field(label: impl Into<SharedString>, value: impl Into<SharedString>, cx: &App) -> Div {
     h_flex()
         .gap_3()
         .items_start()

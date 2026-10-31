@@ -737,12 +737,39 @@ details.vendor_path:
 details.model_path:
   en: "machine model · %{arg0}"
   zh-CN: "打印机型号 · %{arg0}"
-details.printer_count:
-  en: "Printers (%{arg0})"
-  zh-CN: "打印机（%{arg0}）"
 details.material_count:
   en: "Default materials (%{arg0})"
   zh-CN: "默认耗材（%{arg0}）"
+refs.title:
+  en: "Used by"
+  zh-CN: "被引用"
+refs.descendants:
+  en: "Descendants"
+  zh-CN: "子孙预设"
+refs.ambiguous:
+  en: "Another preset of this kind has the same name, so these name references may mean either."
+  zh-CN: "另有同类型的同名预设，下面按名称的引用也可能指向它。"
+refs.none:
+  en: "No preset inherits from or names this preset."
+  zh-CN: "没有预设继承或按名称引用这个预设。"
+refs.no_printers:
+  en: "No printer uses this model."
+  zh-CN: "没有打印机使用这个型号。"
+refs.unsaved:
+  en: "From the loaded files; unsaved edits are not included."
+  zh-CN: "按已加载的文件计算，不含未保存的修改。"
+refs.children:
+  en: "Children (%{arg0})"
+  zh-CN: "子预设（%{arg0}）"
+refs.inherited:
+  en: "%{vendor} · inherited from %{parent}"
+  zh-CN: "%{vendor} · 继承自 %{parent}"
+refs.model:
+  en: "Machine model · %{vendor}"
+  zh-CN: "打印机型号 · %{vendor}"
+refs.show_all:
+  en: "Show all %{arg0}"
+  zh-CN: "显示全部 %{arg0} 项"
 details.compat_summary:
   en: "%{arg0} processes · %{arg1} filaments"
   zh-CN: "%{arg0} 个工艺 · %{arg1} 个耗材"

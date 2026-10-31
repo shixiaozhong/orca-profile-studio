@@ -17,6 +17,7 @@ mod json;
 mod manage;
 mod model;
 mod promote;
+mod refs;
 mod repository;
 mod search;
 mod stats;
@@ -33,6 +34,7 @@ pub use manage::{
 };
 pub use model::{MachineModel, Preset, PresetId, PresetKind, PresetMeta, RawValue, Vendor, VendorId, derived_alias};
 pub use promote::{PromotionError, PromotionImpact, PromotionPlan};
+pub use refs::{References, Referrer};
 pub use repository::{
     FILAMENT_LIBRARY, KeyTrace, LoadError, Origin, Repository, ResolvedValue, find_profiles_dir, is_profiles_dir,
 };

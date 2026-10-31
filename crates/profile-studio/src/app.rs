@@ -1,6 +1,7 @@
 //! The main window: toolbar, vendor tree, details pane and status bar.
 
 use std::cell::Cell;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -30,6 +31,7 @@ use crate::issues::{IssuesEvent, IssuesView};
 use crate::manage::{ManagementEvent, ManagementView};
 use crate::models::ModelsView;
 use crate::palette::{self, AppCommand, Target};
+use crate::references::{self, GroupKey, ReferenceList};
 use crate::settings::{self, ThemePreference};
 use crate::tree::{self as nav, Node, kind_icon};
 use crate::values::ValuesView;
@@ -121,6 +123,10 @@ pub struct StudioApp {
     palette_entries: PaletteEntries,
     /// The selected preset's compatibility, computed when it is selected.
     compatibility: Option<Compatibility>,
+    /// What refers to the selected preset or model, computed when it is selected.
+    references: Option<ReferenceList>,
+    /// Reference groups showing all their rows; reset when the selection changes.
+    references_expanded: HashSet<GroupKey>,
     /// The issues panel; created when first opened.
     issues: Option<Entity<IssuesView>>,
     issues_open: bool,
@@ -154,6 +160,11 @@ impl StudioApp {
                     }
                     _ => None,
                 };
+                this.references = match &this.state {
+                    LoadState::Ready(catalog) => ReferenceList::of(catalog, selected),
+                    _ => None,
+                };
+                this.references_expanded.clear();
                 cx.notify();
             }
         });
@@ -227,6 +238,8 @@ impl StudioApp {
             palette: None,
             palette_entries: PaletteEntries::default(),
             compatibility: None,
+            references: None,
+            references_expanded: HashSet::new(),
             issues: None,
             issues_open: false,
             _issues_events: None,
@@ -273,6 +286,7 @@ impl StudioApp {
             self._edit_events = None;
             self.palette_entries = PaletteEntries::default();
             self.compatibility = None;
+            self.references = None;
             self.issues = None;
             self.issues_open = false;
             self._issues_events = None;
@@ -379,6 +393,7 @@ impl StudioApp {
             Some(Node::Preset(preset)) => Some(Compatibility::compute(&catalog, preset)),
             _ => None,
         };
+        self.references = ReferenceList::of(&catalog, self.selected);
         self.state = LoadState::Ready(catalog.clone());
         self.tree.update(cx, |tree, cx| {
             let expanded: Vec<Node> =
@@ -935,10 +950,14 @@ impl StudioApp {
             render_row(&rows, ix, entry, &dirty, cx)
         })
         .size_full();
-        let scrolling = |content: AnyElement| div().id("details").size_full().overflow_y_scroll().child(content);
+        let scrolling =
+            |content: AnyElement| div().id("details").test_support().size_full().overflow_y_scroll().child(content);
         let details = match self.selected {
             Some(Node::Preset(index)) => self.render_preset(catalog, index, cx),
-            Some(node) => scrolling(details::render(catalog, node, cx)).into_any_element(),
+            Some(node) => {
+                let references = self.render_references(catalog, node, cx);
+                scrolling(details::render(catalog, node, references, cx)).into_any_element()
+            }
             None => scrolling(
                 div().text_sm().text_color(cx.theme().muted_foreground).child(t!("app.select_hint")).into_any_element(),
             )
@@ -985,9 +1004,16 @@ impl StudioApp {
         let content = match self.preset_tab {
             PresetTab::Overview => div()
                 .id("details")
+                .test_support()
                 .size_full()
                 .overflow_y_scroll()
-                .child(details::render_preset(catalog, index, self.compatibility.as_ref(), cx))
+                .child(details::render_preset(
+                    catalog,
+                    index,
+                    self.compatibility.as_ref(),
+                    self.render_references(catalog, Node::Preset(index), cx),
+                    cx,
+                ))
                 .into_any_element(),
             // The view is created by the handlers that select a preset or the tab (`sync_values`).
             PresetTab::Values => div()
@@ -999,6 +1025,38 @@ impl StudioApp {
     }
 
     /// The Values view of `preset`, created on first use; it needs a `Window` for its inputs.
+    fn render_references(&self, catalog: &Catalog, node: Node, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let list = self.references.as_ref().filter(|list| list.node == node)?;
+        let unsaved = self.edits.as_ref().is_some_and(|edits| !edits.read(cx).dirty().is_empty());
+        Some(references::render(catalog, list, &self.references_expanded, unsaved, cx).into_any_element())
+    }
+
+    /// Selects what a reference points at: a preset's Values tab at the referring key, the
+    /// Overview of a child, or a printer model.
+    pub fn open_reference(&mut self, target: references::Target, window: &mut Window, cx: &mut Context<Self>) {
+        match target {
+            references::Target::Preset { preset, key } => {
+                self.select_node(Node::Preset(preset), false, window, cx);
+                match key {
+                    Some(key) => {
+                        self.preset_tab = PresetTab::Values;
+                        if let Some(values) = self.ensure_values(preset, window, cx) {
+                            values.update(cx, |values, cx| values.reveal_key(key, window, cx));
+                        }
+                    }
+                    None => self.preset_tab = PresetTab::Overview,
+                }
+            }
+            references::Target::Model(model) => self.select_node(Node::Model(model), false, window, cx),
+        }
+        cx.notify();
+    }
+
+    pub fn expand_references(&mut self, group: GroupKey, cx: &mut Context<Self>) {
+        self.references_expanded.insert(group);
+        cx.notify();
+    }
+
     fn ensure_values(
         &mut self,
         preset: usize,
@@ -2201,6 +2259,134 @@ mod tests {
         .unwrap();
         let printer = app.read_with(cx, |app, _| app.compatibility.as_ref().unwrap().printers.clone());
         assert_eq!(printer, ["Prusa CORE One 0.25 nozzle"]);
+    }
+
+    /// Scrolls the Overview to its end, where the references are.
+    fn scroll_details_down(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
+        let delta = gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-5000.)));
+        window.scroll("details", delta, cx);
+        window.render_frame(cx);
+    }
+
+    /// A printer listed by one filament template and inherited by 13 filaments, and its model.
+    fn references_fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |path: &str, text: &str| {
+            let path = dir.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        let filaments: Vec<String> = (1..=13).map(|n| format!("Acme PLA {n:02}")).collect();
+        let entries: Vec<String> = filaments
+            .iter()
+            .map(|name| format!(r#"{{ "name": "{name}", "sub_path": "filament/{name}.json" }}"#))
+            .collect();
+        write(
+            "Acme.json",
+            &format!(
+                r#"{{ "name": "Acme", "version": "01.00.00.00",
+                "machine_model_list": [ {{ "name": "Acme One", "sub_path": "machine/Acme One.json" }} ],
+                "filament_list": [ {{ "name": "Acme PLA base", "sub_path": "filament/base.json" }}, {} ],
+                "machine_list": [
+                    {{ "name": "fdm_machine_common", "sub_path": "machine/fdm_machine_common.json" }},
+                    {{ "name": "Acme One 0.4 nozzle", "sub_path": "machine/one.json" }} ] }}"#,
+                entries.join(", ")
+            ),
+        );
+        write(
+            "Acme/machine/Acme One.json",
+            r#"{ "type": "machine_model", "name": "Acme One", "nozzle_diameter": "0.4" }"#,
+        );
+        write(
+            "Acme/machine/fdm_machine_common.json",
+            r#"{ "type": "machine", "name": "fdm_machine_common", "from": "system", "instantiation": "false",
+                "printer_model": "Acme One" }"#,
+        );
+        write(
+            "Acme/machine/one.json",
+            r#"{ "type": "machine", "name": "Acme One 0.4 nozzle", "from": "system", "instantiation": "true",
+                "inherits": "fdm_machine_common", "printer_variant": "0.4" }"#,
+        );
+        write(
+            "Acme/filament/base.json",
+            r#"{ "type": "filament", "name": "Acme PLA base", "from": "system", "instantiation": "false",
+                "filament_id": "A1", "compatible_printers": ["Acme One 0.4 nozzle"] }"#,
+        );
+        for name in &filaments {
+            write(
+                &format!("Acme/filament/{name}.json"),
+                &format!(
+                    r#"{{ "type": "filament", "name": "{name}", "from": "system", "instantiation": "true",
+                    "inherits": "Acme PLA base" }}"#
+                ),
+            );
+        }
+        dir
+    }
+
+    #[gpui_kit::test]
+    fn overview_lists_references_and_opens_them(cx: &mut TestAppContext) {
+        let _locale = crate::i18n::test_locale();
+        let dir = references_fixture();
+        let (window, app) = open(cx, dir.path().to_path_buf());
+        cx.run_until_parked();
+        let repo = &catalog(&app, cx).repo;
+        let id = |kind, name| repo.find(kind, name)[0].index();
+        let printer = id(PresetKind::Machine, "Acme One 0.4 nozzle");
+        let base = id(PresetKind::Filament, "Acme PLA base");
+        let last = id(PresetKind::Filament, "Acme PLA 13");
+        run_palette(window, "Acme One 0.4 nozzle", cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("refs-compatible_printers").label(), Some("compatible_printers 14"));
+            assert!(window.try_find(("ref-compatible_printers", base)).is_some());
+            // Twelve rows, then "Show all".
+            assert!(window.try_find(("ref-compatible_printers", last)).is_none());
+            scroll_details_down(window, cx);
+            window.click("refs-all-compatible_printers", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("refs-all-compatible_printers").is_none());
+            scroll_details_down(window, cx);
+            window.click(("ref-compatible_printers", last), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        // The inherited reference opens the filament's Values tab at the key.
+        app.read_with(cx, |app, _| {
+            assert_eq!(app.selected, Some(Node::Preset(last)));
+            assert_eq!(app.preset_tab, PresetTab::Values);
+        });
+        assert_eq!(first_row(&app, cx).0, "compatible_printers");
+
+        // The template lists its children; a child reference opens the child's Overview.
+        let common = id(PresetKind::Machine, "fdm_machine_common");
+        cx.update_window(window.into(), |_, window, cx| window.within("preset-tabs").click(0usize, cx)).unwrap();
+        run_palette(window, "fdm_machine_common", cx);
+        assert_eq!(app.read_with(cx, |app, _| app.selected), Some(Node::Preset(common)));
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("refs-children").label(), Some("children 1"));
+            window.click(("ref-children", printer), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        app.read_with(cx, |app, _| {
+            assert_eq!(app.selected, Some(Node::Preset(printer)));
+            assert_eq!(app.preset_tab, PresetTab::Overview);
+        });
+
+        // A model lists the printers naming it, including the template that sets the key.
+        click_node(window, &app, Node::Model(0), cx);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("refs-printer_model").label(), Some("printer_model 2"));
+            assert!(window.try_find(("ref-printer_model", common)).is_some());
+        })
+        .unwrap();
     }
 
     #[gpui_kit::test]

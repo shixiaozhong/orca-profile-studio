@@ -6,7 +6,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
-use profile_core::{Issue, Origin, PresetId, PresetKind, RawValue, Repository, SearchIndex, Severity, Stats, Verdict};
+use profile_core::{
+    Issue, Origin, PresetId, PresetKind, RawValue, Referrer, Repository, SearchIndex, Severity, Stats, Verdict,
+};
 
 #[derive(Parser)]
 #[command(name = "profile-tool", version, about = "Inspect and validate OrcaSlicer system profiles")]
@@ -51,6 +53,13 @@ enum Command {
     /// List the printers a filament or process is compatible with, or the presets a printer accepts
     Compat {
         /// Exact preset name
+        name: String,
+        #[arg(long, value_enum)]
+        kind: Option<KindArg>,
+    },
+    /// List what inherits from or names a preset, or the printers of a printer model
+    Refs {
+        /// Exact preset name, or a printer model name
         name: String,
         #[arg(long, value_enum)]
         kind: Option<KindArg>,
@@ -136,6 +145,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Command::Resolve { name, kind, key } => resolve(&repo, &name, kind.map(Into::into), key.as_deref())?,
         Command::Search { query, limit } => search(&repo, &query, limit),
         Command::Compat { name, kind } => compat(&repo, &name, kind.map(Into::into))?,
+        Command::Refs { name, kind } => refs(&repo, &name, kind.map(Into::into))?,
         Command::CompatCheck { table, limit } => return compat_check(&repo, &table, limit),
     }
     Ok(ExitCode::SUCCESS)
@@ -239,6 +249,64 @@ fn compat(repo: &Repository, name: &str, kind: Option<PresetKind>) -> Result<()>
             Verdict::Excluded | Verdict::NotListed => unreachable!("only compatible printers are listed"),
         };
         println!("  {:<60} {reason}", repo.preset(printer).name());
+    }
+    Ok(())
+}
+
+fn refs(repo: &Repository, name: &str, kind: Option<PresetKind>) -> Result<()> {
+    let kinds = kind.map_or(PresetKind::ALL.to_vec(), |kind| vec![kind]);
+    let label = |id: PresetId| {
+        let preset = repo.preset(id);
+        format!("{} ({} · {})", preset.name(), preset.kind, repo.vendor(preset.vendor).name)
+    };
+    let print_referrers = |referrers: &[Referrer]| {
+        println!("referenced by ({}):", referrers.len());
+        for referrer in referrers {
+            match *referrer {
+                Referrer::Preset { id, key, set_by } if id == set_by => println!("  {key:<26}{}", label(id)),
+                Referrer::Preset { id, key, set_by } => {
+                    println!("  {key:<26}{}, inherited from {}", label(id), repo.preset(set_by).name())
+                }
+                Referrer::Model(ix) => {
+                    let model = &repo.models()[ix];
+                    println!(
+                        "  {:<26}machine model {} ({})",
+                        "default_materials",
+                        model.id,
+                        repo.vendor(model.vendor).name
+                    )
+                }
+            }
+        }
+    };
+    if let Some(&id) = kinds.iter().flat_map(|&kind| repo.find(kind, name)).next() {
+        let refs = repo.references(id);
+        println!("{}", label(id));
+        if refs.ambiguous {
+            println!(
+                "note: several {} presets are named {name:?}; a name reference may mean any of them",
+                repo.preset(id).kind
+            );
+        }
+        println!("\nchildren ({}), descendants ({}):", refs.children.len(), refs.descendants);
+        for &child in &refs.children {
+            println!("  {}", label(child));
+        }
+        println!();
+        print_referrers(&refs.referrers);
+        return Ok(());
+    }
+    let models: Vec<usize> = (0..repo.models().len()).filter(|&ix| repo.models()[ix].id == name).collect();
+    if kind.is_some_and(|kind| kind != PresetKind::Machine) || models.is_empty() {
+        bail!("no preset or printer model named {name:?}");
+    }
+    for (n, ix) in models.into_iter().enumerate() {
+        let model = &repo.models()[ix];
+        if n > 0 {
+            println!();
+        }
+        println!("{} (machine model · {})\n", model.id, repo.vendor(model.vendor).name);
+        print_referrers(&repo.model_references(ix));
     }
     Ok(())
 }

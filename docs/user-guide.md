@@ -14,6 +14,7 @@ Shortcuts are written for macOS; on Windows use Ctrl instead of ⌘. Toolbar too
 - [Comparing presets](#comparing-presets)
 - [Issues panel](#issues-panel)
 - [Compatibility](#compatibility)
+- [Used by](#used-by)
 - [Search and command palette](#search-and-command-palette)
 - [Batch edits](#batch-edits)
 - [Promoting to the parent](#promoting-to-the-parent)
@@ -73,6 +74,17 @@ The preset's Overview has a "Compatibility" section:
 - for printers, how many processes and filaments they accept.
 
 The rules match OrcaSlicer: condition expressions, `compatible_printers` lists and the shared filament library's exclusions, as described in section 6 of the [profile format notes](reference/profile_format_spec.md) (in Chinese).
+
+## Used by
+
+The Overview of a preset has a "Used by" section listing everything that inherits from it or names it:
+
+- the number of descendants, and the children that inherit from it directly (including other vendors' filaments that inherit from the shared filament library);
+- the presets whose `compatible_printers` (printers), `compatible_prints` or `default_print_profile` (processes), or `default_filament_profile` (filaments) names it, and the printer models whose `default_materials` lists a filament.
+
+References are found in effective values: a filament that inherits its `compatible_printers` names the same printers as the ancestor that sets it, and is marked "inherited from …". Renaming only rewrites the files that set the value themselves. Templates are never named by these keys, so only their children are listed; when another selectable preset of the same kind has the same name, a warning says the references may mean either.
+
+Click a reference to open it: a child opens on its Overview, a value reference on the Values tab at that key. Each group shows twelve rows, then "Show all". A printer model's Overview lists the printers whose `printer_model` names it, including the templates that set it. The list comes from the loaded files: unsaved edits are not included until they are saved.
 
 ## Search and command palette
 
@@ -153,6 +165,7 @@ export ORCA_PROFILES_DIR=../OrcaSlicer/resources/profiles
 | `resolve <preset>` | The inheritance chain and the effective value of every key a file in it sets; `--key` for one key |
 | `search <query>` | The same search as ⌘K: presets, option keys and the values files set |
 | `compat <preset>` | For a filament or process, the compatible printers and why; for a printer, the processes and filaments it accepts |
+| `refs <name>` | What inherits from a preset or names it, as in "Used by"; for a printer model, the printers that use it |
 | `compat-check <table>` | Compares compatibility with a table exported by OrcaSlicer |
 
 ```bash
@@ -161,6 +174,7 @@ cargo run --release -p profile-tool -- check --vendor Snapmaker --min info
 cargo run --release -p profile-tool -- resolve "Generic ABS @U1 0.2 nozzle" --key temperature
 cargo run --release -p profile-tool -- search "nozzle_temperature 270"
 cargo run --release -p profile-tool -- compat "0.07mm DETAIL @CORE One 0.25"
+cargo run --release -p profile-tool -- refs "Snapmaker U1 (0.4 nozzle)"
 ```
 
 `check` exits with status 1 when a problem of `error` severity or worse is shown (adjust with `--fail-on`), so it can guard profile changes in CI before they are merged.

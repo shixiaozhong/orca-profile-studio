@@ -22,6 +22,7 @@ mod manage;
 mod models;
 mod palette;
 mod preset_picker;
+mod references;
 mod save;
 mod settings;
 mod tree;
