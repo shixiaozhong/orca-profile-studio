@@ -276,10 +276,10 @@ M1–M20 (M15: CI on GitHub Actions, real-data regression from a cached sparse c
 public OrcaSlicer fork at the pinned commit; M16: schema removed, profiles only; M17: `.app` bundle
 script, secondary- key bindings, per-platform menus and settings path, `/` in manifest sub_paths;
 M18: Windows CI job and portable zip; M19: reverse references; M20: multi-column comparison).
-No stage is planned next; pending and deferred items get no M number until the user decides to do
-them.
+No stage is planned next; items the user has not decided to do get no M number.
 When a stage is finished, move it to "已完成" there with its design decisions, mark it ✅, and update
-the roadmap paragraph in both READMEs, all in the stage's own commit (see the commit rule above for the 提交 column).
+both READMEs and both user guides where it changes what they describe, all in the stage's own commit
+(see the commit rule above for the 提交 column).
 The user committing a stage is its acceptance: there is no separate "awaiting validation" status.
 
 Changing the compat exporter is work in another repository (`../OrcaSlicer`); confirm with the user first.
